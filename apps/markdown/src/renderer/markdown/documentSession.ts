@@ -141,11 +141,23 @@ function visualFrontmatter(raw: string): string {
 }
 
 function envelopeFrontmatterInner(raw: string): string {
-  const opening = /^(---)(\r?\n)/.exec(raw)
-  if (!opening) return ''
-  const eol = opening[2]
-  const closing = raw.indexOf(`${eol}---${eol}`, opening[0].length)
-  return closing < 0 ? '' : raw.slice(opening[0].length, closing)
+  const lineAt = (from: number): { text: string, next: number } => {
+    const ending = /\r\n|\n|\r/.exec(raw.slice(from))
+    if (!ending) return { text: raw.slice(from), next: raw.length }
+    const end = from + ending.index
+    return { text: raw.slice(from, end), next: end + ending[0].length }
+  }
+  const opening = lineAt(0)
+  if (opening.text !== '---' || opening.next === raw.length) return ''
+  for (let from = opening.next; from < raw.length;) {
+    const line = lineAt(from)
+    if (line.text === '---') {
+      return raw.slice(opening.next, from).replace(/(?:\r\n|\n|\r)$/, '')
+    }
+    if (line.next === raw.length) break
+    from = line.next
+  }
+  return ''
 }
 
 function editedFrontmatterRaw(inner: string, envelope: RawDocEnvelope): string {

@@ -63,6 +63,19 @@ function sourceAccess(overrides: Partial<SourceProtectionAccess> = {}): SourcePr
   }
 }
 
+function sessionSourceAccess(session: ReturnType<typeof createMarkdownDocumentSession>): SourceProtectionAccess {
+  return {
+    mode: () => 'source',
+    source: () => session.serialize(),
+    sourceBlocks: () => session.sourceBlocks(),
+    frontmatter: () => session.frontmatter(),
+    context: () => '',
+    protectedIdsForOps: () => [],
+    propose: () => { throw new Error('not used') },
+    publish: () => {},
+  }
+}
+
 function createProtectedEditor(): Editor {
   const editor = createEditor()
   editor.commands.setContent({
@@ -225,20 +238,38 @@ describe('lossless source access', () => {
     )
     expect(session.enterSource().ok).toBe(true)
     expect(session.applySource('\uFEFF---\r\ntitle: LATEST\r\ntags:\r\n  - alpha\r\n---\r\n\r\nBody\r\n').ok).toBe(true)
-    const access: SourceProtectionAccess = {
-      mode: () => 'source',
-      source: () => session.serialize(),
-      sourceBlocks: () => session.sourceBlocks(),
-      frontmatter: () => session.frontmatter(),
-      context: () => '',
-      protectedIdsForOps: () => [],
-      propose: () => { throw new Error('not used') },
-      publish: () => {},
-    }
-
-    const read = executeTool(editor, call('read_frontmatter'), undefined, { read: () => 'title: Original', write: () => {} }, undefined, access)
+    const read = executeTool(editor, call('read_frontmatter'), undefined, { read: () => 'title: Original', write: () => {} }, undefined, sessionSourceAccess(session))
 
     expect(read.output).toBe('title: LATEST\r\ntags:\r\n  - alpha')
+  })
+
+  it.each([
+    ['an LF closing fence at EOF', '---\ntitle: LF EOF\n---', 'title: LF EOF'],
+    ['a BOM and CRLF closing fence at EOF', '\uFEFF---\r\ntitle: CRLF EOF\r\n---', 'title: CRLF EOF'],
+    ['mixed opening and closing EOLs', '---\r\ntitle: mixed\n---\n\nBody', 'title: mixed'],
+  ] as const)('reads frontmatter with %s without changing the source', (_description, source, expected) => {
+    const editor = createEditor()
+    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+    expect(session.enterSource().ok).toBe(true)
+    const read = executeTool(editor, call('read_frontmatter'), undefined, { read: () => 'title: stale', write: () => {} }, undefined, sessionSourceAccess(session))
+
+    expect(read.output).toBe(expected)
+    expect(session.serialize()).toBe(source)
+  })
+
+  it.each([
+    ['no frontmatter', 'Body\n---\n'],
+    ['an unclosed opening fence', '---\ntitle: unfinished\nBody'],
+    ['a fence only in the body', 'Body\n\n---\nnot frontmatter'],
+  ] as const)('does not misidentify %s as frontmatter', (_description, source) => {
+    const editor = createEditor()
+    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+    expect(session.enterSource().ok).toBe(true)
+
+    const read = executeTool(editor, call('read_frontmatter'), undefined, { read: () => 'title: stale', write: () => {} }, undefined, sessionSourceAccess(session))
+
+    expect(read.output).toBe('(the document has no frontmatter)')
+    expect(session.serialize()).toBe(source)
   })
 
   it('publishes a complete protected-fragment proposal without mutating the editor', () => {
