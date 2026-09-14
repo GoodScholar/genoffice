@@ -333,6 +333,122 @@ describe('MarkdownDocumentSession', () => {
     expect(session.view()).toMatchObject({ source: expected, revision: 3, dirty: false })
   })
 
+  it.each([
+    ['LF', 'Old\n\n', 'Old X\n\n\n\n', 'Old\n\n\n\n'],
+    ['CRLF', 'Old\r\n\r\n', 'Old X\r\n\r\n\r\n\r\n', 'Old\r\n\r\n\r\n\r\n'],
+    ['no final newline', 'Old', 'Old X\n\n\n\n', 'Old\n\n\n\n'],
+  ])('keeps one empty-tail separator while editing the preceding block with %s', (_name, source, expected, afterUndo) => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+    editor.chain().setMeta('addToHistory', false).setContent(session.view().visual.doc).run()
+    editor.commands.insertContentAt(editor.state.doc.content.size, { type: 'paragraph' })
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    editor.view.dispatch(editor.state.tr.insertText(' X', 4))
+    const visual = { doc: editor.getJSON(), frontmatterInner: '' }
+
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ source: expected, revision: 2 })
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ source: expected, revision: 2 })
+    editor.commands.undo()
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe(afterUndo)
+    editor.commands.redo()
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe(expected)
+  })
+
+  it('keeps the empty-tail relation when an older save ticket returns', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('Old\n\n', createTiptapMarkdownCodec(editor))
+    const ticket = session.beginSave()
+    editor.chain().setMeta('addToHistory', false).setContent(session.view().visual.doc).run()
+    editor.commands.insertContentAt(editor.state.doc.content.size, { type: 'paragraph' })
+    const visual = { doc: editor.getJSON(), frontmatterInner: '' }
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true })
+    session.markSaved('Old\n\n', ticket)
+
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ source: 'Old\n\n\n\n', revision: 1, dirty: true })
+  })
+
+  it('absorbs a frontmatter edit into the empty-tail logical base', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('---\ntitle: before\n---\n\nOld\n\n', createTiptapMarkdownCodec(editor))
+    editor.chain().setMeta('addToHistory', false).setContent(session.view().visual.doc).run()
+    editor.commands.insertContentAt(editor.state.doc.content.size, { type: 'paragraph' })
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: 'title: before' })).toMatchObject({ ok: true })
+
+    const visual = { doc: editor.getJSON(), frontmatterInner: 'title: after' }
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({
+      source: '---\ntitle: after\n---\n\nOld\n\n\n\n',
+      revision: 2,
+    })
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ revision: 2 })
+  })
+
+  it('rebases an older save result onto a preceding edit with the empty-tail relation intact', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('Old\n\n', createTiptapMarkdownCodec(editor))
+    const ticket = session.beginSave()
+    editor.chain().setMeta('addToHistory', false).setContent(session.view().visual.doc).run()
+    editor.commands.insertContentAt(editor.state.doc.content.size, { type: 'paragraph' })
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    editor.view.dispatch(editor.state.tr.insertText(' X', 4))
+    const visual = { doc: editor.getJSON(), frontmatterInner: '' }
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe('Old X\n\n\n\n')
+
+    expect(session.markSaved('Old\n\n', ticket)).toMatchObject({ source: 'Old X\n\n\n\n', dirty: true })
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ source: 'Old X\n\n\n\n', revision: 2 })
+  })
+
+  it('keeps the empty-tail relation when an image save rewrite returns', () => {
+    const session = createMarkdownDocumentSession('![image](old.png)\n\n', createCodec())
+    const ticket = session.beginSave()
+    const visual = cloneVisual(session.view().visual)
+    visual.doc.content?.push({ type: 'paragraph', attrs: { sourceId: USER_TRAILING_EMPTY_PARAGRAPH_SOURCE_ID } })
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true })
+
+    expect(session.markSaved('![image](assets/image.png)\n\n', ticket, [{ from: 'old.png', to: 'assets/image.png' }])).toMatchObject({
+      source: '![image](assets/image.png)\n\n\n\n',
+      dirty: true,
+    })
+    expect(session.applyVisual(session.view().visual)).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ source: '![image](assets/image.png)\n\n\n\n', revision: 1 })
+  })
+
   it('preserves a saved user-empty separator on reload without claiming its transient visual node', () => {
     const editor = new Editor({
       extensions: buildExtensions({
