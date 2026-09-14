@@ -33,7 +33,11 @@ export interface MarkdownDocumentSession {
   enterVisual(): SessionUpdate
   serialize(): string
   beginSave(): SaveTicket
-  markSaved(sourceActuallyWritten: string, ticket: SaveTicket): SessionView
+  markSaved(
+    sourceActuallyWritten: string,
+    ticket: SaveTicket,
+    imageRewrites?: ReadonlyArray<{ from: string, to: string }>,
+  ): SessionView
 }
 
 interface SourceUnitState {
@@ -152,6 +156,33 @@ function completeProjectedGroups(visual: VisualProjection): Array<{ sourceId?: s
     else groups.push({ sourceId, nodes: [node] })
   }
   return groups
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** Conservatively rewrite only a Markdown image destination, never arbitrary matching prose. */
+function rewriteKnownImageSources(raw: string, rewrites: ReadonlyArray<{ from: string, to: string }>): string {
+  return rewrites.reduce(
+    (current, { from, to }) => current.replace(
+      new RegExp(`(!\\[(?:\\\\.|[^\\]])*\\]\\(\\s*(?:<)?)${escapeRegExp(from)}(?=>|\\s|\\))`, 'g'),
+      `$1${to}`,
+    ),
+    raw,
+  )
+}
+
+function rebaseKnownImageSources(
+  current: SourceUnitState,
+  original: SourceUnitState,
+  actual: SourceUnitState,
+  rewrites: ReadonlyArray<{ from: string, to: string }> | undefined,
+): SourceUnitState | undefined {
+  if (!rewrites?.length || original.trailingRaw !== actual.trailingRaw) return undefined
+  if (rewriteKnownImageSources(original.raw, rewrites) !== actual.raw) return undefined
+  const raw = rewriteKnownImageSources(current.raw, rewrites)
+  return raw === current.raw ? undefined : { ...current, raw }
 }
 
 function withFreshRanges(state: DocumentState): DocumentState {
@@ -412,7 +443,11 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     return ticket
   }
 
-  const markSaved = (sourceActuallyWritten: string, ticket: SaveTicket): SessionView => {
+  const markSaved = (
+    sourceActuallyWritten: string,
+    ticket: SaveTicket,
+    imageRewrites?: ReadonlyArray<{ from: string, to: string }>,
+  ): SessionView => {
     const saved = tickets.get(ticket)
     if (!saved || saved.revision !== ticket.revision || saved.source !== ticket.source) throw new Error('Invalid save ticket')
     tickets.delete(ticket)
@@ -470,7 +505,11 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
         : unitText(unit) !== unitText(original)
       if (!actual) return userChanged ? [unit] : []
       const mainChanged = unitText(actual) !== unitText(original)
-      if (userChanged && mainChanged) hasConflict = true
+      if (userChanged && mainChanged) {
+        const imageRebased = rebaseKnownImageSources(unit, original, actual, imageRewrites)
+        if (imageRebased) return [imageRebased]
+        hasConflict = true
+      }
       return [userChanged ? unit : actual]
     })
     const body = rebased.map(unitText).join('')

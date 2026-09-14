@@ -4,7 +4,7 @@ import { buildExtensions } from '../src/renderer/editor/extensions'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
 import { createTiptapMarkdownCodec, type VisualProjection } from '../src/renderer/markdown/sourceProjection'
 import { losslessMarkdownEnabled } from '../src/renderer/markdown/featureFlag'
-import { applyProjectionProvenance, requestSourceBackedSave } from '../src/renderer/App'
+import { applyProjectionProvenance, requestSourceBackedSave, synchronizeSourceBackedSave } from '../src/renderer/App'
 
 const editors: Editor[] = []
 afterAll(() => editors.forEach((editor) => editor.destroy()))
@@ -131,5 +131,35 @@ describe('source-backed save sessions', () => {
     expect(save).not.toHaveBeenCalled()
     expect(onFailure).toHaveBeenCalledOnce()
     expect(session.view().mode).toBe('source')
+  })
+
+  it('reports an IPC rejection once without leaving visual mode', async () => {
+    const { editor, session } = createHarness('First.')
+    const save = vi.fn(async () => { throw new Error('disk unavailable') })
+    const onFailure = vi.fn()
+
+    await expect(requestSourceBackedSave(session, editor, 'save', save, onFailure)).rejects.toThrow('disk unavailable')
+    expect(save).toHaveBeenCalledOnce()
+    expect(onFailure).toHaveBeenCalledOnce()
+    expect(session.view().mode).toBe('visual')
+  })
+
+  it('keeps live image attrs synchronized with a concurrent Save As alt edit', () => {
+    const { editor, session } = createHarness('![image](old.png)')
+    const ticket = session.beginSave()
+    const visual = JSON.parse(JSON.stringify(session.view().visual)) as VisualProjection
+    visual.doc.content![0]!.attrs = { ...visual.doc.content![0]!.attrs, alt: 'edited alt' }
+    const update = session.applyVisual(visual)
+    expect(update).toEqual(expect.objectContaining({ ok: true }))
+    editor.chain().setMeta('addToHistory', false).setContent(session.view().visual.doc).run()
+
+    const saved = synchronizeSourceBackedSave(session, editor, ticket, {
+      ok: true,
+      path: '/tmp/copy.md',
+      text: '![image](assets/image.png)',
+      imageRewrites: [{ from: 'old.png', to: 'assets/image.png' }],
+    })
+    expect(saved).toMatchObject({ dirty: true, source: '![edited alt](assets/image.png)' })
+    expect(editor.state.doc.firstChild?.attrs).toMatchObject({ alt: 'edited alt', src: 'assets/image.png' })
   })
 })

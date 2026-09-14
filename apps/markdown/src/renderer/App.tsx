@@ -151,10 +151,29 @@ export async function requestSourceBackedSave(
     onFailure()
     throw error
   }
-  return {
-    ticket,
-    result: await save({ text: ticket.source, imageSources: imageSourcesFromEditor(editor), mode, suggestedName }),
+  try {
+    return {
+      ticket,
+      result: await save({ text: ticket.source, imageSources: imageSourcesFromEditor(editor), mode, suggestedName }),
+    }
+  } catch (error) {
+    onFailure()
+    throw error
   }
+}
+
+type SuccessfulMarkdownSave = Extract<SaveMarkdownResult, { ok: true, path: string }>
+
+export function synchronizeSourceBackedSave(
+  session: MarkdownDocumentSession,
+  editor: Editor,
+  ticket: SaveTicket,
+  result: SuccessfulMarkdownSave,
+) {
+  if (result.imageRewrites?.length) applyImageRewrites(editor, result.imageRewrites)
+  const saved = session.markSaved(result.text, ticket, result.imageRewrites)
+  applyProjectionProvenance(editor, saved.visual.doc)
+  return saved
 }
 
 /** Measure a document image via the DOM (the editor already displays it) */
@@ -411,15 +430,7 @@ export default function App() {
         }
         const { ticket, result } = saveAttempt
         if (result.ok && 'path' in result) {
-          if (result.imageRewrites?.length && editorRef.current) {
-            applyImageRewrites(editorRef.current, result.imageRewrites)
-          }
-          const saved = session.markSaved(result.text, ticket)
-          if (editorRef.current) {
-            // `markSaved` rebases concurrent user edits before returning this view;
-            // update only provenance so neither path replaces the undoable document.
-            applyProjectionProvenance(editorRef.current, saved.visual.doc)
-          }
+          const saved = synchronizeSourceBackedSave(session, current, ticket, result)
           setImageBaseDir(dirOf(result.path))
           setFilePath(result.path)
           mirrorSessionDirty(session)

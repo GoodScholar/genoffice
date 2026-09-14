@@ -53,6 +53,14 @@ function visualWithText(visual: VisualProjection, from: string, to: string): Vis
   return next
 }
 
+function visualWithImageAlt(visual: VisualProjection, alt: string): VisualProjection {
+  const visit = (node: JSONContent): JSONContent => {
+    if (node.type === 'image') return { ...node, attrs: { ...node.attrs, alt } }
+    return node.content ? { ...node, content: node.content.map(visit) } : node
+  }
+  return { ...visual, doc: visit(visual.doc) }
+}
+
 function withoutProtected(node: JSONContent): JSONContent | null {
   if (node.type === 'protectedSourceInline' || node.type === 'protectedSourceBlock') return null
   return node.content
@@ -225,6 +233,23 @@ describe('MarkdownDocumentSession', () => {
       dirty: false,
       source: '![new](assets/new.png)\n\nFirst.\n\nSecond.',
     })
+  })
+
+  it('rebases a Save As image path into a concurrent alt edit without changing the envelope', () => {
+    const source = '---\ntitle: keep\n---\n\n![image](old.png)\n\nTail.'
+    const session = createMarkdownDocumentSession(source, createCodec())
+    const ticket = session.beginSave()
+    expect(session.applyVisual(visualWithImageAlt(session.view().visual, 'edited alt')).ok).toBe(true)
+
+    expect(session.markSaved(
+      '---\ntitle: keep\n---\n\n![image](assets/image.png)\n\nTail.',
+      ticket,
+      [{ from: 'old.png', to: 'assets/image.png' }],
+    )).toMatchObject({
+      dirty: true,
+      source: '---\ntitle: keep\n---\n\n![edited alt](assets/image.png)\n\nTail.',
+    })
+    expect(session.serialize()).toBe('---\ntitle: keep\n---\n\n![edited alt](assets/image.png)\n\nTail.')
   })
 
   it('keeps the user version and exposes a rebase conflict when the same unit changed during save', () => {
