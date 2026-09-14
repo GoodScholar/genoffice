@@ -65,6 +65,27 @@ export function buildPrintHtml(editorRoot: HTMLElement, title: string): string {
   // a rendered mermaid block prints as its diagram; an unrendered one keeps its source
   for (const block of clone.querySelectorAll('[data-mermaid="rendered"] pre')) block.remove()
 
+  // Protected nodes are source text, never live HTML. Recreate their existing
+  // NodeView code text so editor controls and any injected descendants cannot
+  // become part of the printable DOM.
+  for (const chrome of clone.querySelectorAll('.protected-source-actions, .protected-source-reason')) chrome.remove()
+  for (const source of clone.querySelectorAll('.protected-source')) {
+    const code = source.querySelector('code')
+    if (!code) {
+      source.remove()
+      continue
+    }
+    const safeCode = document.createElement('code')
+    safeCode.textContent = code.textContent ?? ''
+    if (code.parentElement?.tagName === 'PRE') {
+      const pre = document.createElement('pre')
+      pre.append(safeCode)
+      source.replaceWith(pre)
+    } else {
+      source.replaceWith(safeCode)
+    }
+  }
+
   const escapedTitle = title.replace(/&/g, '&amp;').replace(/</g, '&lt;')
   // <base> lets the inlined KaTeX CSS resolve its relative font URLs from the
   // print iframe (which otherwise has no document URL to resolve against)

@@ -13,6 +13,38 @@ function editorRoot(innerHtml: string): HTMLElement {
   return root
 }
 
+function protectedSourceRoot(raw: string, inline = false): HTMLElement {
+  const root = document.createElement('div')
+  root.setAttribute('contenteditable', 'true')
+  const source = document.createElement('div')
+  source.className = `protected-source protected-source-${inline ? 'inline' : 'block'}`
+  source.setAttribute('data-protected-source', 'raw-html')
+  source.setAttribute('onclick', 'throw new Error("must not print")')
+  source.tabIndex = 0
+  const code = document.createElement('code')
+  code.textContent = raw
+  if (inline) source.append(code)
+  else {
+    const pre = document.createElement('pre')
+    pre.append(code)
+    source.append(pre)
+  }
+  const reason = document.createElement('span')
+  reason.className = 'protected-source-reason'
+  reason.textContent = 'Protected source · raw-html'
+  const actions = document.createElement('span')
+  actions.className = 'protected-source-actions'
+  const edit = document.createElement('button')
+  edit.textContent = 'Edit source'
+  const convert = document.createElement('button')
+  convert.textContent = 'Try convert'
+  convert.setAttribute('data-protected-convert', '')
+  actions.append(edit, convert)
+  source.append(reason, actions)
+  root.append(source)
+  return root
+}
+
 describe('buildPrintHtml', () => {
   it('builds a self-contained document with base, title, and styles', () => {
     const html = buildPrintHtml(editorRoot('<h1>Hello</h1><p>World</p>'), 'Notes')
@@ -41,5 +73,19 @@ describe('buildPrintHtml', () => {
     expect(html).not.toContain('contenteditable')
     expect(html).not.toContain('md-codeblock-bar')
     expect(html).toContain('<p>text</p>')
+  })
+
+  it('prints protected source as inert code without NodeView controls or status', () => {
+    const raw = '<script>window.pwned = true</script>\n<img src=x onerror="window.pwned = true">\n</style><p>escape</p>'
+    const printed = new DOMParser().parseFromString(buildPrintHtml(protectedSourceRoot(raw), 'Notes'), 'text/html')
+
+    expect(printed.body.querySelector('code')?.textContent).toBe(raw)
+    expect(printed.body.querySelector('.protected-source-actions')).toBeNull()
+    expect(printed.body.querySelector('.protected-source-reason')).toBeNull()
+    expect(printed.body.querySelector('button')).toBeNull()
+    expect(printed.body.querySelector('script')).toBeNull()
+    expect(printed.body.querySelector('img')).toBeNull()
+    expect(printed.body.querySelector('p')).toBeNull()
+    expect(printed.body.querySelector('[onclick], [tabindex], [data-protected-source], [data-protected-convert]')).toBeNull()
   })
 })
