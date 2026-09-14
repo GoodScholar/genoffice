@@ -201,9 +201,10 @@ describe('source-mode history checkpoint', () => {
   })
 
   it('restores an empty source snapshot through a real history transaction', () => {
-    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }), content: '' })
+    let session: ReturnType<typeof createMarkdownDocumentSession> | undefined
+    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [], protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange() {}, getCurrentSource: () => session?.serialize() } }), content: '' })
     const codec: MarkdownCodec = { lex: (source) => source ? [{ type: 'paragraph', raw: source }] : [], parse: (source) => ({ type: 'doc', content: source ? [{ type: 'paragraph', content: [{ type: 'text', text: source.trim() }] }] : [] }), serialize: () => '' }
-    const session = createMarkdownDocumentSession('', codec)
+    session = createMarkdownDocumentSession('', codec)
     const before: SourceModeSnapshot = { source: '', visual: session.view().visual }
     session.enterSource()
     session.applySource('---\ntitle: after\n---\n\nBody\n')
@@ -333,11 +334,13 @@ describe('source-mode history checkpoint', () => {
   })
 
   it('keeps the source replacement separate and restores body plus frontmatter through real undo and redo', () => {
+    let session: ReturnType<typeof createMarkdownDocumentSession> | undefined
     const editor = new Editor({
       element: document.createElement('div'),
       extensions: buildExtensions({
         slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
         slashItems: () => [],
+        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange() {}, getCurrentSource: () => session?.serialize() },
       }),
       content: 'Old.',
       contentType: 'markdown',
@@ -347,7 +350,7 @@ describe('source-mode history checkpoint', () => {
       parse: (source) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: source.trim().replace(/^---[\s\S]*?---\s*/, '') }] }] }),
       serialize: (doc) => String(doc.content?.[0]?.content?.[0]?.text ?? ''),
     }
-    const session = createMarkdownDocumentSession('---\ntitle: before\n---\n\nBefore.\n', codec)
+    session = createMarkdownDocumentSession('---\ntitle: before\n---\n\nBefore.\n', codec)
     editor.commands.setContent(session.view().visual.doc)
     const start: SourceModeSnapshot = { source: session.view().source, visual: session.view().visual }
     editor.commands.setContent('Before visual edit.', { contentType: 'markdown' })

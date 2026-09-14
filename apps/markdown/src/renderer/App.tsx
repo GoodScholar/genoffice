@@ -208,7 +208,8 @@ export function restoreSourceHistoryTransaction(
   transaction: Transaction,
 ): ReturnType<MarkdownDocumentSession['view']> | undefined {
   const source = sourceSnapshotFromTransaction(transaction)
-  if (source === undefined || !protectedSourceAuthority(editor).accepts(transaction)) return undefined
+  // onTransaction 运行于 session 恢复之前，因此这里正好是历史事务的真实源码前端点。
+  if (source === undefined || !protectedSourceAuthority(editor).accepts(transaction, session.serialize())) return undefined
   const restored = session.restoreHistorySource(source)
   return restored.ok ? restored.view : undefined
 }

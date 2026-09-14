@@ -1,7 +1,7 @@
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Editor, Extension } from '@tiptap/core'
-import { NodeSelection } from '@tiptap/pm/state'
+import { NodeSelection, type Transaction } from '@tiptap/pm/state'
 import { redo, undo, undoDepth } from '@tiptap/pm/history'
 import { Plugin } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -73,16 +73,17 @@ function createDuplicateProtectedEditor(onConfirmChange = vi.fn()): Editor {
 }
 
 function createLosslessEditor(source: string, onConfirmChange = vi.fn()): { editor: Editor, session: ReturnType<typeof createMarkdownDocumentSession> } {
+  let session: ReturnType<typeof createMarkdownDocumentSession> | undefined
   const editor = new Editor({
     element: document.createElement('div'),
     extensions: buildExtensions({
       slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
       slashItems: () => [],
-      protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange },
+      protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange, getCurrentSource: () => session?.serialize() },
     }),
     content: '',
   })
-  const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+  session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
   replaceEditorBaseline(editor, session.view().visual.doc)
   editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
   return { editor, session }
@@ -354,16 +355,17 @@ describe('protected source change guard', () => {
 
   it('commits an approved change to the session only after dispatch, then saves and restores it through undo/redo', () => {
     const requestSink = vi.fn()
+    let session: ReturnType<typeof createMarkdownDocumentSession> | undefined
     const editor = new Editor({
       element: document.createElement('div'),
       extensions: buildExtensions({
         slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
         slashItems: () => [],
-        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange: requestSink },
+        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange: requestSink, getCurrentSource: () => session?.serialize() },
       }),
       content: '',
     })
-    const session = createMarkdownDocumentSession('Before\n\n<!-- raw -->\n', createTiptapMarkdownCodec(editor))
+    session = createMarkdownDocumentSession('Before\n\n<!-- raw -->\n', createTiptapMarkdownCodec(editor))
     editor.commands.setContent(session.view().visual.doc)
     editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
     const position = anyProtectedPosition(editor)
@@ -454,11 +456,13 @@ describe('protected source change guard', () => {
   it('discards a pending signature when an append transaction throws, then retries cleanly', () => {
     const requestSink = vi.fn()
     let throwAppend = true
+    let failedRoot: Transaction | undefined
     const throwingAppender = Extension.create({
       addProseMirrorPlugins() {
         return [new Plugin({
           appendTransaction(transactions) {
             if (throwAppend && transactions.some((transaction) => transaction.getMeta(APPROVED_PROTECTED_CHANGE) === true)) {
+              failedRoot = transactions.find((transaction) => transaction.getMeta(APPROVED_PROTECTED_CHANGE) === true)
               throw new Error('append failed')
             }
             return null
@@ -483,7 +487,71 @@ describe('protected source change guard', () => {
     expect(applyProtectedChange(editor, request, session)).toMatchObject({ ok: false })
     expect(session.serialize()).toBe(beforeSource)
     throwAppend = false
+    const beforeRetry = editor.getJSON()
+    editor.view.dispatch(failedRoot!)
+    expect(editor.getJSON()).toEqual(beforeRetry)
     expect(applyProtectedChange(editor, request, session)).toEqual({ ok: true })
+    editor.destroy()
+  })
+
+  it('finalizes one approved event after an appended visual change and restores its final source', () => {
+    const requestSink = vi.fn()
+    let session: ReturnType<typeof createMarkdownDocumentSession> | undefined
+    const appender = Extension.create({
+      addProseMirrorPlugins() {
+        return [new Plugin({
+          appendTransaction(transactions, _oldState, state) {
+            if (!transactions.some((transaction) => transaction.getMeta(APPROVED_PROTECTED_CHANGE) === true)) return null
+            return state.tr.insertText(' X', state.doc.content.size - 1)
+          },
+        })]
+      },
+    })
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: [...buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange: requestSink, getCurrentSource: () => session?.serialize() },
+      }), appender],
+      content: '',
+    })
+    session = createMarkdownDocumentSession('Before\n\n<!-- raw -->\n', createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
+    editor.on('update', ({ editor: updated }) => {
+      session?.applyVisual({ doc: updated.getJSON(), frontmatterInner: session.view().visual.frontmatterInner })
+    })
+    const position = anyProtectedPosition(editor)
+    const atom = editor.state.doc.nodeAt(position)!
+    editor.view.dispatch(editor.state.tr.delete(position, position + atom.nodeSize))
+    const request = requestSink.mock.calls[0][0] as ProtectedChangeRequest
+
+    expect(applyProtectedChange(editor, request, session)).toEqual({ ok: true })
+    const finalSource = session.serialize()
+    expect(finalSource).toContain(' X')
+    expect(undo(editor.state, editor.view.dispatch)).toBe(true)
+    expect(session.serialize()).toContain('<!-- raw -->')
+    expect(redo(editor.state, editor.view.dispatch)).toBe(true)
+    expect(session.serialize()).toBe(finalSource)
+    editor.destroy()
+  })
+
+  it('keeps recent source-aware approvals reversible after 125 isolated events', () => {
+    const requestSink = vi.fn()
+    const source = Array.from({ length: 125 }, (_, index) => `<!-- raw-${index} -->`).join('\n\n') + '\n'
+    const { editor, session } = createLosslessEditor(source, requestSink)
+
+    for (let index = 0; index < 125; index += 1) {
+      const position = anyProtectedPosition(editor)
+      const atom = editor.state.doc.nodeAt(position)!
+      editor.view.dispatch(editor.state.tr.delete(position, position + atom.nodeSize))
+      const request = requestSink.mock.calls.at(-1)![0] as ProtectedChangeRequest
+      expect(applyProtectedChange(editor, request, session)).toEqual({ ok: true })
+    }
+    for (let index = 0; index < 104; index += 1) expect(undo(editor.state, editor.view.dispatch)).toBe(true)
+    for (let index = 0; index < 104; index += 1) expect(redo(editor.state, editor.view.dispatch)).toBe(true)
+    expect(session.serialize()).toBe('')
     editor.destroy()
   })
 

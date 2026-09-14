@@ -32,7 +32,7 @@ export interface ProtectedSourceAuthority {
   authorize(transaction: Transaction): void
   revoke(transaction: Transaction): void
   allows(transaction: Transaction, state: EditorState): boolean
-  accepts(transaction: Transaction): boolean
+  accepts(transaction: Transaction, currentSource?: string): boolean
 }
 
 interface ProtectedSourceSignature {
@@ -45,13 +45,22 @@ interface ProtectedSourceSignature {
 interface ProtectedSourceGuardState {
   pending: WeakMap<Transaction, ProtectedSourceSignature>
   accepted?: Transaction
-  acceptedSignature?: ProtectedSourceSignature
-  transitions: ProtectedSourceSignature[]
+  transitions: TransitionEvent[]
+}
+
+/** 一次确认只对应一个可逆事件；append 只补充这个事件的最终端点。 */
+interface TransitionEvent {
+  root: Transaction
+  before: ProtectedSourceSignature
+  rootAfter: ProtectedSourceSignature
+  finalAfter: ProtectedSourceSignature
 }
 
 const MAX_PROTECTED_TRANSITIONS = 128
 
 const protectedSourceGuardKey = new PluginKey<ProtectedSourceGuardState>('protectedSourceGuard')
+interface ProtectedSourceFinalization { root: Transaction, source: string }
+const protectedSourceFinalizeKey = new PluginKey<ProtectedSourceFinalization>('protectedSourceFinalize')
 
 function transitionKey(signature: ProtectedSourceSignature): string {
   return `${JSON.stringify(signature.beforeDoc)}\u0000${JSON.stringify(signature.afterDoc)}\u0000${signature.beforeSource ?? ''}\u0000${signature.afterSource ?? ''}`
@@ -70,18 +79,13 @@ function sameSignature(left: ProtectedSourceSignature, right: ProtectedSourceSig
   return transitionKey(left) === transitionKey(right)
 }
 
-function inverseSignature(signature: ProtectedSourceSignature): ProtectedSourceSignature {
-  return {
-    beforeDoc: signature.afterDoc,
-    afterDoc: signature.beforeDoc,
-    beforeSource: signature.afterSource,
-    afterSource: signature.beforeSource,
-  }
+function registerTransition(transitions: TransitionEvent[], event: TransitionEvent): TransitionEvent[] {
+  const next = [...transitions.filter((candidate) => candidate.root !== event.root), event]
+  return next.slice(-MAX_PROTECTED_TRANSITIONS)
 }
 
-function registerTransition(transitions: ProtectedSourceSignature[], signature: ProtectedSourceSignature): ProtectedSourceSignature[] {
-  const next = [...transitions.filter((candidate) => transitionKey(candidate) !== transitionKey(signature)), signature]
-  return next.slice(-MAX_PROTECTED_TRANSITIONS)
+function updateTransition(transitions: TransitionEvent[], root: Transaction, finalAfter: ProtectedSourceSignature): TransitionEvent[] {
+  return transitions.map((event) => event.root === root ? { ...event, finalAfter } : event)
 }
 
 function guardState(state: EditorState): ProtectedSourceGuardState {
@@ -90,16 +94,44 @@ function guardState(state: EditorState): ProtectedSourceGuardState {
   return value
 }
 
+function matchesHistoryEvent(event: TransitionEvent, actual: ProtectedSourceSignature, currentSource?: string): boolean {
+  if (actual.beforeSource === undefined && actual.afterSource === undefined) {
+    return sameSignature({ ...event.before, afterDoc: event.rootAfter.afterDoc }, actual)
+      || sameSignature({
+        beforeDoc: event.finalAfter.afterDoc,
+        afterDoc: event.before.beforeDoc,
+      }, actual)
+  }
+  if (currentSource === undefined || actual.beforeSource === undefined || actual.afterSource === undefined) return false
+  // Redo carries the root snapshot in its natural direction.  Undo carries
+  // its inverse snapshot (root-after -> before), while the live source is the
+  // final endpoint after appendTransaction.  Check both independently.
+  const redo = currentSource === event.before.beforeSource
+    && actual.beforeSource === event.before.beforeSource
+    && actual.afterSource === event.rootAfter.afterSource
+    && (sameSignature({ ...event.before, afterDoc: event.rootAfter.afterDoc, afterSource: event.rootAfter.afterSource }, actual)
+      || sameSignature({ ...event.before, afterDoc: event.finalAfter.afterDoc, afterSource: event.rootAfter.afterSource }, actual))
+  const undo = currentSource === event.finalAfter.afterSource
+    && sameSignature({
+      beforeDoc: event.finalAfter.afterDoc,
+      afterDoc: event.before.beforeDoc,
+      beforeSource: event.rootAfter.afterSource,
+      afterSource: event.before.beforeSource,
+    }, actual)
+  return redo || undo
+}
+
+function trustedAppend(state: ProtectedSourceGuardState, transaction: Transaction): boolean {
+  return state.accepted !== undefined && transaction.getMeta('appendedTransaction') === state.accepted
+}
+
 function allows(state: ProtectedSourceGuardState, transaction: Transaction, editorState: EditorState, currentSource?: string): boolean {
   const actual = transactionSignature(transaction)
   actual.beforeDoc = editorState.doc.toJSON()
   const pending = state.pending.get(transaction)
   if (pending && sameSignature(pending, actual)) return true
-  return state.transitions.some((transition) => {
-    const forward = sameSignature(transition, actual)
-    const backward = sameSignature(inverseSignature(transition), actual)
-    return (forward || backward) && (actual.beforeSource === undefined || currentSource === undefined || currentSource === actual.beforeSource)
-  })
+  if (actual.beforeSource !== undefined && currentSource === undefined) return false
+  return state.transitions.some((transition) => matchesHistoryEvent(transition, actual, currentSource))
 }
 
 /** 每个 EditorState 保存独立的不可公开伪造授权记录。 */
@@ -114,10 +146,28 @@ export function protectedSourceAuthority(editor: Editor): ProtectedSourceAuthori
     allows(transaction, editorState) {
       return allows(guardState(editor.state), transaction, editorState)
     },
-    accepts(transaction) {
-      return guardState(editor.state).accepted === transaction
+    accepts(transaction, currentSource) {
+      const state = guardState(editor.state)
+      if (state.accepted === transaction) return true
+      const actual = transactionSignature(transaction)
+      return state.transitions.some((transition) => matchesHistoryEvent(transition, actual, currentSource))
     },
   }
+}
+
+function finalizeProtectedTransition(editor: Editor, root: Transaction, source: string | undefined): boolean {
+  if (source === undefined || guardState(editor.state).accepted !== root) return false
+  editor.view.dispatch(editor.state.tr
+    .setMeta(protectedSourceFinalizeKey, { root, source })
+    .setMeta('addToHistory', false)
+    .setMeta('uiOnly', true))
+  const event = guardState(editor.state).transitions.find((candidate) => candidate.root === root)
+  return Boolean(event && sameSignature(event.finalAfter, {
+    beforeDoc: event.before.beforeDoc,
+    afterDoc: editor.state.doc.toJSON(),
+    beforeSource: event.before.beforeSource,
+    afterSource: source,
+  }))
 }
 
 const sourceAttr = {
@@ -234,6 +284,8 @@ export function applyProtectedChange(
   if (JSON.stringify(editor.state.doc.toJSON()) !== JSON.stringify(request.baseDoc)) {
     return { ok: false, error: 'Protected change is stale' }
   }
+  let authority: ProtectedSourceAuthority | undefined
+  let signed: Transaction | undefined
   try {
     editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true))
     let transaction = editor.state.tr
@@ -252,23 +304,23 @@ export function applyProtectedChange(
       transaction = transaction.step(new SourceSnapshotStep(beforeSource, preview.view.source))
     }
     transaction = closeHistory(transaction.setMeta(APPROVED_PROTECTED_CHANGE, true).setMeta('addToHistory', true))
-    const authority = protectedSourceAuthority(editor)
+    authority = protectedSourceAuthority(editor)
     authority.authorize(transaction)
+    signed = transaction
     const expectedSource = sourceSnapshotPairFromTransaction(transaction)?.source
     editor.view.dispatch(transaction)
     if (!authority.accepts(transaction)) {
-      authority.revoke(transaction)
       return { ok: false, error: 'Protected change was rejected' }
     }
-    if (expectedSource !== undefined && session?.serialize() !== expectedSource) {
-      authority.revoke(transaction)
+    if (expectedSource !== undefined && !finalizeProtectedTransition(editor, transaction, session?.serialize())) {
       return { ok: false, error: 'Protected change was rejected' }
     }
-    authority.revoke(transaction)
     editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true))
     return { ok: true }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  } finally {
+    if (authority && signed) authority.revoke(signed)
   }
 }
 
@@ -293,17 +345,33 @@ export const ProtectedSourceGuard = Extension.create<ProtectedSourceOptions>({
           }
         },
         apply(transaction, value, oldState) {
-          if (!allows(value, transaction, oldState)) {
-            if (transaction.getMeta('appendedTransaction') !== value.accepted || !value.acceptedSignature) {
-              return { ...value, accepted: undefined, acceptedSignature: undefined }
+          const finalization = transaction.getMeta(protectedSourceFinalizeKey)
+          if (finalization && finalization.root === value.accepted) {
+            const event = value.transitions.find((candidate) => candidate.root === finalization.root)
+            if (!event) return { ...value, accepted: undefined }
+            return {
+              ...value,
+              transitions: updateTransition(value.transitions, finalization.root, {
+                ...event.rootAfter,
+                afterDoc: transaction.doc.toJSON(),
+                afterSource: finalization.source,
+              }),
             }
-            const signature = { ...value.acceptedSignature, afterDoc: transaction.doc.toJSON() }
-            const transitions = registerTransition(value.transitions, signature)
-            return { ...value, transitions, acceptedSignature: signature }
+          }
+          if (trustedAppend(value, transaction)) {
+            const event = value.transitions.find((candidate) => candidate.root === value.accepted)
+            return event && value.accepted
+              ? { ...value, transitions: updateTransition(value.transitions, value.accepted, { ...event.finalAfter, afterDoc: transaction.doc.toJSON() }) }
+              : { ...value, accepted: undefined }
+          }
+          if (!allows(value, transaction, oldState)) {
+            return { ...value, accepted: undefined }
           }
           const signature = value.pending.get(transaction)
-          const transitions = signature ? registerTransition(value.transitions, signature) : value.transitions
-          return { ...value, accepted: transaction, acceptedSignature: signature, transitions }
+          const transitions = signature
+            ? registerTransition(value.transitions, { root: transaction, before: signature, rootAfter: signature, finalAfter: signature })
+            : value.transitions
+          return { ...value, accepted: signature ? transaction : undefined, transitions }
         },
       },
       props: {
@@ -321,6 +389,7 @@ export const ProtectedSourceGuard = Extension.create<ProtectedSourceOptions>({
         const snapshot = sourceSnapshotPairFromTransaction(transaction)
         const authority = guardState(state)
         if (snapshot && !allows(authority, transaction, state, options.getCurrentSource?.())) return false
+        if (trustedAppend(authority, transaction)) return true
         if (!transaction.docChanged) return true
         const before = protectedRawMultiset(state.doc)
         if (before.size === 0) return true
