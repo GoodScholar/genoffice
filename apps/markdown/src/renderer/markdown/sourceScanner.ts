@@ -177,7 +177,7 @@ function ambiguous(range: SourceRange): NonNullable<ScannedUnit['protection']> {
 }
 
 function inlineProtection(unit: SourceToken, range: SourceRange): ScannedUnit['protection'] {
-  if (!unit.tokens?.length) return null
+  if (!unit.tokens?.length || !containsHtml(unit.tokens)) return null
   const fragments: HtmlFragment[] = []
   if (!collectHtmlFragments(unit.tokens, unit.raw, range.from, fragments)) return ambiguous(range)
   if (fragments.length === 0) return null
@@ -271,7 +271,12 @@ export function scanMarkdownSource(
     }
     const range = { from: cursor, to: cursor + raw.length }
     cursor = range.to
-    const blank = tokens[index + 1]?.type === 'space' ? '' : blankLines.exec(bodyRaw.slice(cursor))?.[0] ?? ''
+    const next = tokens[index + 1]
+    // Some real codec tokens (for example task lists) own their leading blank
+    // lines. Do not consume those bytes twice as the preceding unit's suffix.
+    const blank = next?.type === 'space' || /^(?:[ \t]*\r?\n)/.test(next?.raw ?? '')
+      ? ''
+      : blankLines.exec(bodyRaw.slice(cursor))?.[0] ?? ''
     cursor += blank.length
 
     let protection: ScannedUnit['protection'] = null

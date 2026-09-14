@@ -4,6 +4,11 @@ import { projectScan, serializeProjectedGroup, type MarkdownCodec, type Projecte
 import { scanMarkdownSource, type SourceRange } from './sourceScanner'
 import { rewriteMarkdownImageSources } from '../../shared/markdown-image-sources'
 import { createSourcePatch, validateSourcePatch, type SourcePatch, type SourceReadBlock } from './sourcePatch'
+import {
+  isGeneratedTrailingParagraph,
+  isUserTrailingEmptyParagraph,
+  USER_TRAILING_EMPTY_PARAGRAPH_SOURCE_ID,
+} from './generatedTrailingNode'
 
 export type EditorMode = 'visual' | 'source'
 
@@ -119,11 +124,7 @@ function withoutEmptyParagraphs(nodes: JSONContent[]): JSONContent[] {
 
 function withoutGeneratedTrailingParagraph(nodes: JSONContent[]): JSONContent[] {
   const last = nodes[nodes.length - 1]
-  return last?.type === 'paragraph'
-    && !last.attrs?.sourceId
-    && (last.content?.length ?? 0) === 0
-    ? nodes.slice(0, -1)
-    : nodes
+  return isGeneratedTrailingParagraph(last) ? nodes.slice(0, -1) : nodes
 }
 
 function normaliseEol(value: string, envelope: RawDocEnvelope): string {
@@ -376,6 +377,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     if (state.fallbackReason) return { ok: false, view: currentView(), error: state.fallbackReason }
     const frontmatterChanged = next.frontmatterInner !== state.visual.frontmatterInner
     const candidateNodes = withoutGeneratedTrailingParagraph(next.doc.content ?? [])
+    const userTrailingEmpty = isUserTrailingEmptyParagraph(candidateNodes[candidateNodes.length - 1])
     const expected = new Map(state.units.flatMap((unit) => unit.protectedFragments.map((fragment) => [fragment.id, fragment.raw] as const)))
     const found = collectProtected(candidateNodes)
     for (const [id, raw] of expected) {
@@ -444,6 +446,9 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
         }
 
         let serialized = normaliseEol(serializeProjectedGroup(group.nodes, codec), state.envelope)
+        if (group.sourceId === USER_TRAILING_EMPTY_PARAGRAPH_SOURCE_ID && serialized === '') {
+          serialized = state.envelope.eol + state.envelope.eol
+        }
         if (previous) {
           if (previous.raw.endsWith('\n') && !serialized.endsWith('\n')) serialized += state.envelope.eol
           if (!previous.raw.endsWith('\n')) serialized = serialized.replace(/(?:\r?\n)+$/, '')
@@ -466,15 +471,30 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       ? { ...state.envelope, frontmatterRaw: editedFrontmatterRaw(next.frontmatterInner, state.envelope) }
       : state.envelope
     const nextSource = sourcePrefix(envelope) + body
-    if (nextSource === state.source) return success()
+    if (nextSource === state.source) {
+      return projectionFingerprint(candidateNodes) === projectionFingerprint(state.visual.doc.content ?? [])
+        ? success()
+        : { ok: false, view: currentView(), error: 'Visual projection cannot be represented by a safe source rewrite' }
+    }
     const projected = createState(nextSource, codec)
     const projectedNodes = projected.visual.doc.content ?? []
     const sameProjection = projectionFingerprint(candidateNodes) === projectionFingerprint(projectedNodes)
       || (approvedIds.size > 0 && projectionFingerprint(withoutEmptyParagraphs(candidateNodes)) === projectionFingerprint(withoutEmptyParagraphs(projectedNodes)))
-    if (projected.fallbackReason || !sameProjection) {
+    const projectedWithoutUserEmpty = userTrailingEmpty ? candidateNodes.slice(0, -1) : candidateNodes
+    const userEmptyProjection = userTrailingEmpty
+      && projectionFingerprint(projectedWithoutUserEmpty) === projectionFingerprint(projectedNodes)
+    if (projected.fallbackReason || (!sameProjection && !userEmptyProjection)) {
       return { ok: false, view: currentView(), error: 'Visual projection cannot be represented by a safe source rewrite' }
     }
-    state = projected
+    state = userTrailingEmpty
+      ? {
+          ...projected,
+          visual: {
+            ...projected.visual,
+            doc: { ...projected.visual.doc, content: candidateNodes },
+          },
+        }
+      : projected
     revision += 1
     mode = state.fallbackReason ? 'source' : 'visual'
     selection = undefined

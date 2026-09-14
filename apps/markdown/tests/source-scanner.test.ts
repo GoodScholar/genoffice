@@ -55,6 +55,13 @@ describe('scanMarkdownSource', () => {
     })
   })
 
+  it('does not misclassify a plain final newline as ambiguous inline HTML', () => {
+    const scan = scanMarkdownSource('Old\n', markedLex)
+
+    expect(scan).toMatchObject({ fallbackToSource: false })
+    expect(scan.units[0]).toMatchObject({ raw: 'Old\n', protection: null })
+  })
+
   it('protects the entire unit when inline HTML is malformed or cannot be aligned', () => {
     const source = 'Before <u>unfinished after\n'
     const scan = scanMarkdownSource(source, lex([

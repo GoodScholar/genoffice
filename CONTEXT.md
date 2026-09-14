@@ -38,4 +38,6 @@ _Avoid_: AI 自主改写未知语法、对保留片段静默应用修改、完�
 
 The scanner must project preserved fragments into protected nodes with their original `raw` text and stable ids. Unconfirmed visual operations cannot delete, modify, or rewrite those bytes; edits to ordinary content are limited to a safe local source window.
 
+The editor may append one empty paragraph for a caret after a non-text block. That paragraph carries explicit generated-node provenance and is ignored only while it remains empty; ordinary empty paragraphs and all user edits remain subject to normal safe projection checks.
+
 The successful Markdown-save IPC response `text` is the exact text written by the main process. The session uses it to synchronize the save baseline and retains any newer in-flight edits instead of overwriting them with an older response.

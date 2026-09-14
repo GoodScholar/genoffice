@@ -5,6 +5,10 @@ import { Editor, type JSONContent } from '@tiptap/core'
 import { buildExtensions } from '../src/renderer/editor/extensions'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
 import { createTiptapMarkdownCodec, type MarkdownCodec, type VisualProjection } from '../src/renderer/markdown/sourceProjection'
+import {
+  GENERATED_TRAILING_NODE_SOURCE_ID,
+  USER_TRAILING_EMPTY_PARAGRAPH_SOURCE_ID,
+} from '../src/renderer/markdown/generatedTrailingNode'
 
 const editors: Editor[] = []
 afterAll(() => editors.forEach((editor) => editor.destroy()))
@@ -81,6 +85,13 @@ describe('MarkdownDocumentSession', () => {
       expect(session.serialize()).toBe(input)
       expect(session.view()).toMatchObject({ source: input, dirty: false })
     }
+  })
+
+  it('opens the core GFM fixture in visual mode', () => {
+    const session = createMarkdownDocumentSession(fixture('core-gfm.md'), createCodec())
+
+    expect(session.view().mode).toBe('visual')
+    expect(session.view().fallbackReason).toBeUndefined()
   })
 
   it('reuses untouched raw frontmatter without changing revision', () => {
@@ -174,7 +185,7 @@ describe('MarkdownDocumentSession', () => {
     expect(session.view().visual.doc.content?.map((node) => node.content?.[0]?.text)).toEqual(['Last.', 'First.'])
   })
 
-  it('rewrites a TipTap visual edit beside protected details without changing the protected source', () => {
+  it('rewrites a real TipTap edit before a protected details block without changing protected source', () => {
     const source = 'Old\n\n<details>P</details>\n\nTail\n'
     const editor = new Editor({
       extensions: buildExtensions({
@@ -191,6 +202,192 @@ describe('MarkdownDocumentSession', () => {
     const update = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: session.view().visual.frontmatterInner })
     expect(update).toMatchObject({ ok: true })
     expect(session.serialize()).toBe('NEW\n\n<details>P</details>\n\nTail\n')
+  })
+
+  it.each([
+    ['LF', 'Old\n\n', 'Old\n\nNew paragraph\n'],
+    ['CRLF', 'Old\r\n\r\n', 'Old\r\n\r\nNew paragraph\r\n'],
+    ['protected before', '<details>P</details>\n\nOld\n\n', '<details>P</details>\n\nOld\n\nNew paragraph\n'],
+  ])('writes a real TipTap-inserted paragraph with %s boundaries', (_name, source, expected) => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+    editor.commands.setContent(session.view().visual.doc)
+    editor.commands.insertContentAt(editor.state.doc.content.size, {
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'New paragraph' }],
+    })
+
+    expect(editor.getJSON().content?.at(-1)?.attrs?.sourceId).toBeNull()
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe(expected)
+  })
+
+  it.each([
+    ['heading', { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Added heading' }] }, '## Added heading'],
+    ['bullet list', { type: 'bulletList', content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Added item' }] }] }] }, '- Added item'],
+  ])('writes a real TipTap-inserted %s with null provenance', (_name, node, expected) => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('Old\n\n', createTiptapMarkdownCodec(editor))
+    editor.commands.setContent(session.view().visual.doc)
+    editor.commands.insertContentAt(editor.state.doc.content.size, node)
+
+    expect(editor.getJSON().content?.at(-2)?.attrs?.sourceId).toBeNull()
+    expect(editor.getJSON().content?.at(-1)?.attrs?.sourceId).toBe(GENERATED_TRAILING_NODE_SOURCE_ID)
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toContain(expected)
+  })
+
+  it('writes a new paragraph before a protected trailing block without rewriting its raw source', () => {
+    const source = 'Old\n\n<details>P</details>\n'
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+    editor.commands.setContent(session.view().visual.doc)
+    editor.commands.insertContentAt(editor.state.doc.firstChild!.nodeSize, {
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'New paragraph' }],
+    })
+
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe('Old\n\nNew paragraph\n\n<details>P</details>\n')
+  })
+
+  it('retains a user-inserted empty paragraph as an explicit, editable source separator', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('Old\n\n', createTiptapMarkdownCodec(editor))
+    editor.commands.setContent(session.view().visual.doc)
+    editor.commands.insertContentAt(editor.state.doc.content.size, { type: 'paragraph' })
+
+    expect(editor.getJSON().content?.at(-1)?.attrs?.sourceId).toBe(USER_TRAILING_EMPTY_PARAGRAPH_SOURCE_ID)
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe('Old\n\n\n\n')
+    expect(session.view().visual.doc.content?.at(-1)?.attrs?.sourceId).toBe(USER_TRAILING_EMPTY_PARAGRAPH_SOURCE_ID)
+
+    editor.commands.insertContentAt(editor.state.doc.content.size - 1, 'User text')
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toContain('User text')
+  })
+
+  it('preserves a saved user-empty separator on reload without claiming its transient visual node', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('Old\n\n', createTiptapMarkdownCodec(editor))
+    editor.commands.setContent(session.view().visual.doc)
+    editor.commands.insertContentAt(editor.state.doc.content.size, { type: 'paragraph' })
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+
+    const reloaded = createMarkdownDocumentSession(session.serialize(), createCodec())
+    expect(reloaded.serialize()).toBe('Old\n\n\n\n')
+    expect(reloaded.view()).toMatchObject({ dirty: false, revision: 0 })
+    expect(reloaded.view().visual.doc.content).toHaveLength(1)
+  })
+
+  it('does not tag the empty baseline document as a user edit', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
+
+    editor.view.dispatch(editor.state.tr.setMeta('uiOnly', true))
+    expect(editor.getJSON().content?.at(-1)?.attrs?.sourceId).toBeNull()
+    expect(session.view()).toMatchObject({ dirty: false, revision: 0, source: '' })
+  })
+
+  it('ignores only the unchanged paragraph explicitly appended by the trailing-node plugin', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('---\n', createTiptapMarkdownCodec(editor))
+    editor.commands.setContent(session.view().visual.doc)
+
+    const generated = editor.getJSON().content?.at(-1)
+    expect(generated).toMatchObject({ type: 'paragraph', attrs: { sourceId: GENERATED_TRAILING_NODE_SOURCE_ID } })
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ dirty: false, revision: 0 })
+
+    editor.commands.insertContentAt(editor.state.doc.content.size - 1, 'User text')
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toContain('User text')
+  })
+
+  it('keeps trailing-node state across a UI-only transaction before another protected-tail edit', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('<details>P</details>\n', createTiptapMarkdownCodec(editor))
+    editor.commands.setContent(session.view().visual.doc)
+    editor.view.dispatch(editor.state.tr.setMeta('uiOnly', true))
+    const trailing = editor.state.doc.lastChild!
+    const from = editor.state.doc.content.size - trailing.nodeSize
+    editor.commands.insertContentAt({ from, to: editor.state.doc.content.size }, { type: 'horizontalRule' })
+
+    expect(editor.getJSON().content?.at(-1)?.attrs?.sourceId).toBe(GENERATED_TRAILING_NODE_SOURCE_ID)
+  })
+
+  it('folds a generated trailing paragraph into the originating editor update', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    let updates = 0
+    editor.on('update', () => { updates += 1 })
+
+    editor.commands.setContent({ type: 'doc', content: [{ type: 'horizontalRule' }] })
+
+    expect(updates).toBe(1)
+    expect(editor.getJSON().content?.at(-1)?.attrs?.sourceId).toBe(GENERATED_TRAILING_NODE_SOURCE_ID)
   })
 
   it('rejects visual edits that remove a protected fragment without changing session state', () => {

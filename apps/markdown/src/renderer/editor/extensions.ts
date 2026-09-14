@@ -15,6 +15,7 @@ import { AiHighlight } from './aiHighlight'
 import { AiQueueAnchors } from './aiQueueAnchors'
 import { InactiveSelection } from './inactiveSelection'
 import { SearchHighlight } from './searchHighlight'
+import { GeneratedTrailingNode, UserTrailingEmptyParagraph } from './generatedTrailingNode'
 import {
   ProtectedSourceBlock,
   ProtectedSourceGuard,
@@ -50,7 +51,11 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
       codeBlock: false,
       // underline would serialize as `++text++` — not part of GFM
       underline: false,
+      // The replacements below retain durable markers for session projection.
+      trailingNode: false,
     }),
+    GeneratedTrailingNode,
+    UserTrailingEmptyParagraph,
     CodeBlock.extend({
       addNodeView() {
         return ReactNodeViewRenderer(CodeBlockView)
