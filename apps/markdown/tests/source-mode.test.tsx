@@ -8,6 +8,7 @@ import {
   applyProjectionProvenance,
   replaceSourceModeVisualDocument,
   restoreSourceHistoryTransaction,
+  replaceEditorBaseline,
   type SourceModeSnapshot,
 } from '../src/renderer/App'
 import { SourceEditor } from '../src/renderer/components/SourceEditor'
@@ -172,6 +173,38 @@ describe('source-mode visual handoff', () => {
 })
 
 describe('source-mode history checkpoint', () => {
+  it('restores an empty source snapshot through a real history transaction', () => {
+    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }), content: '' })
+    const codec: MarkdownCodec = { lex: (source) => source ? [{ type: 'paragraph', raw: source }] : [], parse: (source) => ({ type: 'doc', content: source ? [{ type: 'paragraph', content: [{ type: 'text', text: source.trim() }] }] : [] }), serialize: () => '' }
+    const session = createMarkdownDocumentSession('', codec)
+    const before: SourceModeSnapshot = { source: '', visual: session.view().visual }
+    session.enterSource()
+    session.applySource('---\ntitle: after\n---\n\nBody\n')
+    completeSourceModeTransition(session, editor, before)
+    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, transaction))
+
+    expect(undo(editor.state, editor.view.dispatch)).toBe(true)
+    expect(session.view()).toMatchObject({ source: '', dirty: false, mode: 'visual' })
+    expect(redo(editor.state, editor.view.dispatch)).toBe(true)
+    expect(session.view().source).toContain('title: after')
+    editor.destroy()
+  })
+  it('resets history when replacing an editor baseline', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }),
+      content: 'Old', contentType: 'markdown',
+    })
+    editor.commands.setContent('Changed', { contentType: 'markdown' })
+    expect(undoDepth(editor.state)).toBeGreaterThan(0)
+
+    replaceEditorBaseline(editor, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'New' }] }] })
+
+    expect(editor.getText()).toBe('New')
+    expect(undoDepth(editor.state)).toBe(0)
+    expect(undo(editor.state, editor.view.dispatch)).toBe(false)
+    editor.destroy()
+  })
   it('serializes an invertible no-document source snapshot step in the history transaction', () => {
     const editor = new Editor({
       element: document.createElement('div'),

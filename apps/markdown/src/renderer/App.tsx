@@ -7,7 +7,7 @@ import {
 import { EditorContent, useEditor } from '@tiptap/react'
 import { FindPanel, type FindFocusRequest, type FindPanelStrings } from '@genoffice/ui'
 import type { Editor, JSONContent } from '@tiptap/core'
-import { TextSelection, type Transaction } from '@tiptap/pm/state'
+import { EditorState, TextSelection, type Transaction } from '@tiptap/pm/state'
 import { closeHistory } from '@tiptap/pm/history'
 import { useI18n } from './i18n/locale'
 import {
@@ -158,6 +158,15 @@ export function replaceSourceModeVisualDocument(editor: Editor, visualDoc: JSONC
   editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true))
 }
 
+/** Install a newly loaded document as a fresh ProseMirror history baseline. */
+export function replaceEditorBaseline(editor: Editor, visualDoc: JSONContent): void {
+  editor.view.updateState(EditorState.create({
+    schema: editor.schema,
+    doc: editor.schema.nodeFromJSON(visualDoc),
+    plugins: editor.state.plugins,
+  }))
+}
+
 /** Leave source mode without recording a no-op round trip. */
 export function completeSourceModeTransition(
   session: MarkdownDocumentSession,
@@ -181,7 +190,7 @@ export function restoreSourceHistoryTransaction(
   transaction: Transaction,
 ): ReturnType<MarkdownDocumentSession['view']> | undefined {
   const source = sourceSnapshotFromTransaction(transaction)
-  if (!source) return undefined
+  if (source === undefined) return undefined
   const restored = session.restoreHistorySource(source)
   return restored.ok ? restored.view : undefined
 }
@@ -417,11 +426,7 @@ export default function App() {
             const session = createMarkdownDocumentSession(raw, createTiptapMarkdownCodec(editor))
             sessionRef.current = session
             syncingProjectionRef.current = true
-            editor
-              .chain()
-              .setMeta('addToHistory', false)
-              .setContent(session.view().visual.doc)
-              .run()
+            replaceEditorBaseline(editor, session.view().visual.doc)
             syncingProjectionRef.current = false
             mirrorSessionDirty(session)
             setEditorMode(session.view().mode)
@@ -446,7 +451,7 @@ export default function App() {
             const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
             sessionRef.current = session
             syncingProjectionRef.current = true
-            editor.chain().setMeta('addToHistory', false).setContent(session.view().visual.doc).run()
+            replaceEditorBaseline(editor, session.view().visual.doc)
             syncingProjectionRef.current = false
             mirrorSessionDirty(session)
             setEditorMode(session.view().mode)
@@ -532,7 +537,7 @@ export default function App() {
         return
       }
       syncingProjectionRef.current = true
-      current.chain().setMeta('addToHistory', false).setContent(entered.view.visual.doc).run()
+      replaceEditorBaseline(current, entered.view.visual.doc)
       applyProjectionProvenance(current, entered.view.visual.doc)
       syncingProjectionRef.current = false
       synchronizeSessionChrome(entered.view)

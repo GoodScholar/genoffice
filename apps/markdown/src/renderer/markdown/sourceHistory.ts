@@ -3,7 +3,7 @@ import { Step, StepMap, StepResult, type Mappable } from '@tiptap/pm/transform'
 import type { Transaction } from '@tiptap/pm/state'
 
 /** A history-only source snapshot. It deliberately leaves the ProseMirror doc unchanged. */
-export class SourceSnapshotStep extends Step {
+class SourceSnapshotStepImpl extends Step {
   constructor(readonly beforeSource: string, readonly source: string) {
     super()
   }
@@ -28,13 +28,22 @@ export class SourceSnapshotStep extends Step {
     return { stepType: 'genofficeSourceSnapshot', beforeSource: this.beforeSource, source: this.source }
   }
 
-  static fromJSON(_schema: Schema, json: { beforeSource: string, source: string }): SourceSnapshotStep {
-    return new SourceSnapshotStep(json.beforeSource, json.source)
+  static fromJSON(_schema: Schema, json: { beforeSource: string, source: string }): SourceSnapshotStepImpl {
+    return new SourceSnapshotStepImpl(json.beforeSource, json.source)
   }
 }
 
-Step.jsonID('genofficeSourceSnapshot', SourceSnapshotStep)
+type SourceSnapshotStepConstructor = typeof SourceSnapshotStepImpl
+const sourceSnapshotStepKey = Symbol.for('genoffice.markdown.SourceSnapshotStep')
+const sourceHistoryGlobal = globalThis as typeof globalThis & { [sourceSnapshotStepKey]?: SourceSnapshotStepConstructor }
+
+export const SourceSnapshotStep: SourceSnapshotStepConstructor = sourceHistoryGlobal[sourceSnapshotStepKey]
+  ?? (() => {
+    Step.jsonID('genofficeSourceSnapshot', SourceSnapshotStepImpl)
+    sourceHistoryGlobal[sourceSnapshotStepKey] = SourceSnapshotStepImpl
+    return SourceSnapshotStepImpl
+  })()
 
 export function sourceSnapshotFromTransaction(transaction: Transaction): string | undefined {
-  return transaction.steps.find((step): step is SourceSnapshotStep => step instanceof SourceSnapshotStep)?.source
+  return transaction.steps.find((step): step is InstanceType<typeof SourceSnapshotStep> => step instanceof SourceSnapshotStep)?.source
 }
