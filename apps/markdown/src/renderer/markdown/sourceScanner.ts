@@ -34,7 +34,8 @@ export interface SourceScan {
   error?: string
 }
 
-const fenceLine = /^(?: {0,3})(`{3,}|~{3,})[^`~\r\n]*\r?$/
+const openingFenceLine = /^(?: {0,3})(`{3,})[^`\r\n]*\r?$|^(?: {0,3})(~{3,})[^\r\n]*\r?$/
+const closingFenceLine = /^(?: {0,3})(`{3,}|~{3,})[ \t]*\r?$/
 const legacyOpenLine = /^(?: {0,3}):::(?:callout|toggle)\b.*\r?$/
 const legacyCloseLine = /^(?: {0,3}):::\s*\r?$/
 const blankLines = /^(?:[ \t]*\r?\n)+/
@@ -49,10 +50,12 @@ function fencedRanges(source: string): SourceRange[] {
   let opening: { marker: string, from: number } | null = null
   let offset = 0
   for (const line of source.split(/(?<=\n)/)) {
-    const match = fenceLine.exec(line.replace(/\n$/, ''))
-    if (!opening && match) {
-      opening = { marker: match[1], from: offset }
-    } else if (opening && match && match[1][0] === opening.marker[0] && match[1].length >= opening.marker.length) {
+    const normalized = line.replace(/\n$/, '')
+    const openingMatch = openingFenceLine.exec(normalized)
+    const closingMatch = closingFenceLine.exec(normalized)
+    if (!opening && openingMatch) {
+      opening = { marker: openingMatch[1] ?? openingMatch[2], from: offset }
+    } else if (opening && closingMatch && closingMatch[1][0] === opening.marker[0] && closingMatch[1].length >= opening.marker.length) {
       ranges.push({ from: opening.from, to: offset + line.length })
       opening = null
     }
@@ -104,40 +107,100 @@ function isBoundedHtml(raw: string): boolean {
   return matched && stack.length === 0 && !/<[^>]*$/.test(raw)
 }
 
-function inlineProtection(unit: SourceToken, range: SourceRange): ScannedUnit['protection'] {
-  if (!unit.tokens?.length) return null
+interface HtmlFragment {
+  raw: string
+  range: SourceRange
+}
+
+function containsHtml(tokens: SourceToken[] | undefined): boolean {
+  return Boolean(tokens?.some((token) => token.type === 'html' || containsHtml(token.tokens)))
+}
+
+function wrappedInlineRaw(token: SourceToken): { raw: string, offset: number } | null {
+  const patterns: Record<string, RegExp> = {
+    strong: /^(\*\*|__)([\s\S]*)\1$/,
+    em: /^(\*|_)([\s\S]*)\1$/,
+    del: /^~~([\s\S]*)~~$/,
+  }
+  const match = patterns[token.type]?.exec(token.raw)
+  if (!match || !token.tokens) return null
+  const inner = token.tokens.map((child) => child.raw).join('')
+  const content = token.type === 'del' ? match[1] : match[2]
+  if (inner !== content) return null
+  return { raw: content, offset: token.type === 'del' ? 2 : match[1].length }
+}
+
+function collectHtmlFragments(
+  tokens: SourceToken[],
+  raw: string,
+  from: number,
+  fragments: HtmlFragment[],
+): boolean {
   let cursor = 0
-  const ranges: SourceRange[] = []
-  const reasons: ProtectedReason[] = []
-  for (const token of unit.tokens) {
-    if (!unit.raw.startsWith(token.raw, cursor)) {
-      return {
-        display: 'block',
-        reason: 'ambiguous-inline-html',
-        ranges: [range],
-      }
-    }
+  for (const token of tokens) {
+    if (!raw.startsWith(token.raw, cursor)) return false
     if (token.type === 'html') {
-      if (!isBoundedHtml(token.raw)) {
-        return {
-          display: 'block',
-          reason: 'ambiguous-inline-html',
-          ranges: [range],
-        }
+      fragments.push({ raw: token.raw, range: { from: from + cursor, to: from + cursor + token.raw.length } })
+    } else if (containsHtml(token.tokens)) {
+      const wrapped = wrappedInlineRaw(token)
+      if (!wrapped || !collectHtmlFragments(token.tokens!, wrapped.raw, from + cursor + wrapped.offset, fragments)) {
+        return false
       }
-      ranges.push({ from: range.from + cursor, to: range.from + cursor + token.raw.length })
-      reasons.push(token.raw.startsWith('<!--') ? 'html-comment' : 'raw-html')
     }
     cursor += token.raw.length
   }
-  if (cursor !== unit.raw.length) {
-    return {
-      display: 'block',
-      reason: 'ambiguous-inline-html',
-      ranges: [range],
+  return cursor === raw.length
+}
+
+type HtmlPart =
+  | { kind: 'comment', reason: ProtectedReason }
+  | { kind: 'open', name: string }
+  | { kind: 'close', name: string }
+  | { kind: 'complete', reason: ProtectedReason }
+  | { kind: 'invalid' }
+
+function htmlPart(raw: string): HtmlPart {
+  if (/^<!--(?:[^-]|-(?!->))*-->$/s.test(raw)) return { kind: 'comment', reason: 'html-comment' }
+  if (raw.startsWith('<!--')) return { kind: 'invalid' }
+  const tag = /^<(\/)?([A-Za-z][\w:-]*)(?:\s+[^<>]*?)?\s*(\/?)>$/.exec(raw)
+  if (tag) {
+    const name = tag[2].toLowerCase()
+    if (tag[1]) return { kind: 'close', name }
+    if (tag[3] || voidHtmlTags.has(name)) return { kind: 'complete', reason: 'raw-html' }
+    return { kind: 'open', name }
+  }
+  return isBoundedHtml(raw) ? { kind: 'complete', reason: 'raw-html' } : { kind: 'invalid' }
+}
+
+function ambiguous(range: SourceRange): NonNullable<ScannedUnit['protection']> {
+  return { display: 'block', reason: 'ambiguous-inline-html', ranges: [range] }
+}
+
+function inlineProtection(unit: SourceToken, range: SourceRange): ScannedUnit['protection'] {
+  if (!unit.tokens?.length) return null
+  const fragments: HtmlFragment[] = []
+  if (!collectHtmlFragments(unit.tokens, unit.raw, range.from, fragments)) return ambiguous(range)
+  if (fragments.length === 0) return null
+
+  const open: Array<{ name: string, from: number }> = []
+  const ranges: SourceRange[] = []
+  const reasons: ProtectedReason[] = []
+  for (const fragment of fragments) {
+    const part = htmlPart(fragment.raw)
+    if (part.kind === 'invalid') return ambiguous(range)
+    if (part.kind === 'open') {
+      open.push({ name: part.name, from: fragment.range.from })
+    } else if (part.kind === 'close') {
+      const start = open.pop()
+      if (!start || start.name !== part.name) return ambiguous(range)
+      ranges.push({ from: start.from, to: fragment.range.to })
+      reasons.push('raw-html')
+    } else {
+      ranges.push(fragment.range)
+      reasons.push(part.reason)
     }
   }
-  if (ranges.length === 0) return null
+  if (open.length > 0) return ambiguous(range)
   return {
     display: 'inline',
     reason: reasons.every((reason) => reason === 'html-comment') ? 'html-comment' : 'raw-html',
@@ -145,15 +208,10 @@ function inlineProtection(unit: SourceToken, range: SourceRange): ScannedUnit['p
   }
 }
 
-function rawProtection(raw: string, range: SourceRange): ScannedUnit['protection'] {
-  const trimmed = raw.trim()
-  if (/^<!--(?:[^-]|-(?!->))*-->$/s.test(trimmed)) {
-    return { display: 'block', reason: 'html-comment', ranges: [range] }
-  }
-  if (/^<\/?[A-Za-z][\w:-]*(?:\s+[^<>]*?)?\s*\/?>/s.test(trimmed)) {
-    return { display: 'block', reason: 'raw-html', ranges: [range] }
-  }
-  return null
+function topLevelHtmlProtection(raw: string, range: SourceRange): ScannedUnit['protection'] {
+  const part = htmlPart(raw.trim())
+  if (part.kind === 'invalid' || part.kind === 'open' || part.kind === 'close') return ambiguous(range)
+  return { display: 'block', reason: part.reason, ranges: [range] }
 }
 
 function failed(error: string): SourceScan {
@@ -177,21 +235,33 @@ export function scanMarkdownSource(
   const units: ScannedUnit[] = []
   let cursor = 0
 
-  for (const token of tokens) {
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]
     if (!token.raw || !bodyRaw.startsWith(token.raw, cursor)) {
       return failed('Lexer token raw does not continuously cover the source')
     }
+    if (token.type === 'space') {
+      if (!/^[ \t\r\n]+$/.test(token.raw) || units.length === 0) {
+        return failed('Lexer space token cannot be assigned to a preceding unit')
+      }
+      const previous = units[units.length - 1]
+      previous.trailingRaw += token.raw
+      cursor += token.raw.length
+      continue
+    }
     const range = { from: cursor, to: cursor + token.raw.length }
     cursor = range.to
-    const blank = blankLines.exec(bodyRaw.slice(cursor))?.[0] ?? ''
+    const blank = tokens[index + 1]?.type === 'space' ? '' : blankLines.exec(bodyRaw.slice(cursor))?.[0] ?? ''
     cursor += blank.length
 
     let protection: ScannedUnit['protection'] = null
     if (!codeRanges.some((fence) => intersects(range, fence))) {
       if (legacyRanges.some((legacy) => intersects(range, legacy))) {
         protection = { display: 'block', reason: 'legacy-fenced-div', ranges: [range] }
+      } else if (token.type === 'html') {
+        protection = topLevelHtmlProtection(token.raw, range)
       } else {
-        protection = rawProtection(token.raw, range) ?? inlineProtection(token, range)
+        protection = inlineProtection(token, range)
       }
     }
     units.push({ id: `${idPrefix}-b${units.length}`, raw: token.raw, range, trailingRaw: blank, protection })

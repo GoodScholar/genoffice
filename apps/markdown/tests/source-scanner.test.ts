@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { marked } from 'marked'
 import { scanMarkdownSource, type SourceToken } from '../src/renderer/markdown/sourceScanner'
 
 const lex = (tokens: SourceToken[]): ((source: string) => SourceToken[]) => () => tokens
+const markedLex = (source: string): SourceToken[] => marked.lexer(source) as SourceToken[]
 
 describe('scanMarkdownSource', () => {
   it('covers the source with ordered token raw values and assigns blank lines to trailingRaw', () => {
@@ -80,5 +82,60 @@ describe('scanMarkdownSource', () => {
 
     expect(thrown).toMatchObject({ fallbackToSource: true, error: 'lexer failed', units: [] })
     expect(discontinuous).toMatchObject({ fallbackToSource: true, units: [] })
+  })
+
+  it('consumes a real marked space token into the preceding trailingRaw', () => {
+    const source = 'A\n\nB'
+    const scan = scanMarkdownSource(source, markedLex)
+
+    expect(scan).toMatchObject({ fallbackToSource: false })
+    expect(scan.units).toEqual([
+      expect.objectContaining({ raw: 'A', trailingRaw: '\n\n' }),
+      expect.objectContaining({ raw: 'B', trailingRaw: '' }),
+    ])
+  })
+
+  it('protects a precisely bounded HTML pair split by the real marked inline lexer', () => {
+    const source = 'Before <u>text</u> after'
+    const scan = scanMarkdownSource(source, markedLex)
+
+    expect(scan.units[0]?.protection).toEqual({
+      display: 'inline',
+      reason: 'raw-html',
+      ranges: [{ from: 7, to: 18 }],
+    })
+  })
+
+  it('protects an unclosed top-level HTML comment from the real marked lexer', () => {
+    const source = '<!-- unclosed comment'
+    const scan = scanMarkdownSource(source, markedLex)
+
+    expect(scan.units[0]?.protection).toEqual({
+      display: 'block',
+      reason: 'ambiguous-inline-html',
+      ranges: [{ from: 0, to: source.length }],
+    })
+  })
+
+  it('finds HTML nested inside real marked inline tokens', () => {
+    const scan = scanMarkdownSource('**<img src="x">**', markedLex)
+
+    expect(scan.units[0]?.protection).toEqual({
+      display: 'inline',
+      reason: 'raw-html',
+      ranges: [{ from: 2, to: 15 }],
+    })
+  })
+
+  it('does not treat a fenced-code line with an info string as a closing fence', () => {
+    const source = '```js\ncode\n```wrong\n<div>literal</div>\n```\n<div>outside</div>'
+    const scan = scanMarkdownSource(source, markedLex)
+
+    expect(scan.fallbackToSource).toBe(false)
+    expect(scan.units[1]?.protection).toEqual({
+      display: 'block',
+      reason: 'raw-html',
+      ranges: [{ from: source.indexOf('<div>outside</div>'), to: source.length }],
+    })
   })
 })
