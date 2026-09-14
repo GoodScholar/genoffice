@@ -280,6 +280,10 @@ function fail(output: string, summary: string): ToolExecution {
   return { output, isError: true, summary }
 }
 
+function visualWriteIsCurrent(protection?: SourceProtectionAccess): boolean {
+  return protection?.mode() !== 'source' && protection?.isCurrent?.() !== false
+}
+
 function clampIndex(value: unknown, max: number): number | null {
   const n = Number(value)
   if (!Number.isInteger(n) || n < 0 || n > max) return null
@@ -342,6 +346,7 @@ async function insertImageFromUrl(
   input: { afterIndex?: unknown; alt?: unknown },
   signal: AbortSignal | undefined,
   labels: { fail: string; done: string },
+  protection?: SourceProtectionAccess,
 ): Promise<ToolExecution> {
   const fetched = await window.markdownApi.fetchImage(url)
   // never write after the user hit stop (the download may resolve long after the abort)
@@ -361,6 +366,9 @@ async function insertImageFromUrl(
       'the document has no saved location yet, so there is nowhere to store the image file — ask the user to save the document first, then retry',
       labels.fail,
     )
+  }
+  if (!visualWriteIsCurrent(protection)) {
+    return { ...fail('the document is no longer active in visual mode; the image was not inserted', labels.fail), mutated: false }
   }
   // downloads can take long: user edits made meanwhile must keep the freshness
   // baseline stale, so only our own insertion may mark the doc seen
@@ -425,13 +433,18 @@ async function writeDocument(
   try {
     result = await writer.write(
       { plan, title: str(call.input.title), context: str(call.input.context) },
-      (markdown) => draft.update(markdown),
+      (markdown) => {
+        if (visualWriteIsCurrent(protection)) draft.update(markdown)
+      },
       signal,
     )
   } finally {
     rendered = draft.finish()
   }
   if (editor.isDestroyed) return fail('the document was closed', label)
+  if (!visualWriteIsCurrent(protection)) {
+    return { ...fail('the document is no longer active in visual mode; the draft was not committed', label), mutated: false }
+  }
   if (!result.ok || !result.markdown?.trim()) {
     return fail(
       `The writer produced nothing (${result.error ?? 'no output'}); the document is unchanged. Tell the user briefly and offer to try again.`,
@@ -597,7 +610,7 @@ export function executeTool(
       return insertImageFromUrl(editor, url, call.input, signal, {
         fail: t('aiToolInsertImage'),
         done: t('aiToolInsertImageDone'),
-      })
+      }, protection)
     }
 
     case 'generate_image': {
@@ -617,7 +630,7 @@ export function executeTool(
           return insertImageFromUrl(editor, generated.url, call.input, signal, {
             fail: t('aiToolGenImage'),
             done: t('aiToolGenImageDone'),
-          })
+          }, protection)
         })
     }
 

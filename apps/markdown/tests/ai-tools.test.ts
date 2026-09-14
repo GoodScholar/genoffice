@@ -631,6 +631,19 @@ describe('insert_image', () => {
     expect(result.mutated).toBe(true)
     expect(editor.getMarkdown()).toContain('![chart](assets/pic.png)')
   })
+
+  it('does not insert after the visual session becomes inactive during download', async () => {
+    let release: ((value: { base64: string, mime: string }) => void) | undefined
+    const download = new Promise<{ base64: string, mime: string }>((resolve) => { release = resolve })
+    withApi({ fetchImage: () => download, saveImage: async () => 'assets/pic.png' })
+    const editor = createEditor('# A')
+    let current = true
+    const pending = executeTool(editor, call('insert_image', { url: 'https://example.com/x.png' }), undefined, undefined, undefined, sourceAccess({ isCurrent: () => current })) as Promise<{ isError?: boolean, mutated?: boolean }>
+    current = false
+    release?.({ base64: PNG, mime: 'image/png' })
+    await expect(pending).resolves.toMatchObject({ isError: true, mutated: false })
+    expect(editor.getMarkdown()).not.toContain('assets/pic.png')
+  })
 })
 
 describe('blank/selection edge cases (Bugbot #871)', () => {

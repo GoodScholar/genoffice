@@ -115,6 +115,14 @@ function projectionFingerprint(nodes: JSONContent[]): string {
     if (typeof record.type === 'string' && record.type.startsWith('protectedSource') && result.attrs && typeof result.attrs === 'object') {
       delete (result.attrs as Record<string, unknown>).id
     }
+    // Markdown parser paragraphs carry a source unit id. TipTap omits an empty
+    // paragraph's content array, while the projection writes `content: []`.
+    // Do not generalise this to nested table/list nodes: there emptiness is structural.
+    const sourceId = record.attrs && typeof record.attrs === 'object'
+      ? (record.attrs as Record<string, unknown>).sourceId
+      : undefined
+    if (result.type === 'paragraph' && sourceId != null
+      && Array.isArray(result.content) && result.content.length === 0) delete result.content
     if (result.attrs && typeof result.attrs === 'object' && Object.keys(result.attrs as Record<string, unknown>).length === 0) delete result.attrs
     return result
   }

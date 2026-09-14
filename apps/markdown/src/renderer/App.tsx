@@ -16,6 +16,7 @@ import {
   type DocEnvelope,
 } from './markdown/docText'
 import { createMarkdownDocumentSession, type MarkdownDocumentSession, type SaveTicket } from './markdown/documentSession'
+import { isGeneratedTrailingParagraph } from './markdown/generatedTrailingNode'
 import { createTiptapMarkdownCodec } from './markdown/sourceProjection'
 import { SourceSnapshotStep, sourceSnapshotFromTransaction } from './markdown/sourceHistory'
 import { buildExtensions } from './editor/extensions'
@@ -156,10 +157,28 @@ export function replaceSourceModeVisualDocument(editor: Editor, visualDoc: JSONC
   transaction = transaction.step(new SourceSnapshotStep(beforeSource, afterSource))
   protectedSourceAuthority(editor).authorize(transaction)
   editor.view.dispatch(closeHistory(transaction))
-  if (!editor.state.doc.eq(next)) throw new Error('Source-mode visual document was rejected')
+  const actual = editor.state.doc
+  const appendedGeneratedTail = actual.childCount === next.childCount + 1
+    && isGeneratedTrailingParagraph(actual.lastChild?.toJSON())
+    && actual.content.cut(0, actual.content.size - actual.lastChild!.nodeSize).eq(next.content)
+  if (!actual.eq(next) && !appendedGeneratedTail) throw new Error('Source-mode visual document was rejected')
   // This zero-step barrier belongs to no history event, but prevents the next
   // visual edit from merging into the source-mode replacement.
   editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true))
+}
+
+/** Restore an AI rollback snapshot only through the existing signed source-history bridge. */
+export function restoreAiSourceSnapshot(editor: Editor, session: MarkdownDocumentSession, source: string): { ok: true } | { ok: false; error: string } {
+  const preview = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+  const fallbackReason = preview.view().fallbackReason
+  if (fallbackReason) return { ok: false, error: fallbackReason }
+  const beforeSource = session.serialize()
+  try {
+    replaceSourceModeVisualDocument(editor, preview.view().visual.doc, beforeSource, source)
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+  return session.serialize() === source ? { ok: true } : { ok: false, error: 'AI snapshot restore was rejected' }
 }
 
 /** Install a newly loaded document as a fresh ProseMirror history baseline. */
@@ -365,14 +384,6 @@ export default function App() {
     () => setZoom((value) => Math.min(MAX_ZOOM, Math.round(value) + ZOOM_STEP)),
     [],
   )
-
-  const markDirty = useCallback(() => {
-    if (statusRef.current !== 'ready' || dirtyRef.current) return
-    dirtyRef.current = true
-    setDirty(true)
-    setSaveState('idle')
-    window.markdownApi.setDirty(true)
-  }, [])
 
   const mirrorSessionDirty = useCallback((session = sessionRef.current) => {
     const nextDirty = session?.view().dirty ?? false
@@ -984,22 +995,16 @@ export default function App() {
       onFrontmatterChange(inner)
       setFmOpen(inner.trim() !== '')
     },
-    // snapshots carry body + the raw frontmatter block (structured, no
-    // file-text round-trip) so a rollback also reverts set_frontmatter and
-    // an untouched block restores byte-for-byte
-    getSnapshot: () => ({
-      body: editorRef.current?.getMarkdown() ?? '',
-      frontmatter: envelopeRef.current.frontmatter,
-    }),
+    // Session source avoids a markdown round-trip, keeping frontmatter and protected raw exact.
+    getSnapshot: () => {
+      const session = sessionRef.current
+      return { source: session?.serialize() ?? '', owner: session }
+    },
     restoreSnapshot: (snapshot) => {
       const current = editorRef.current
-      if (!current) return
-      envelopeRef.current.frontmatter = snapshot.frontmatter
-      const inner = frontmatterInner(snapshot.frontmatter)
-      setFmText(inner)
-      setFmOpen(inner !== '')
-      current.commands.setContent(snapshot.body, { contentType: 'markdown' })
-      markDirty()
+      const session = sessionRef.current
+      if (!current || !session || snapshot.owner !== session || editorModeRef.current !== 'visual') return false
+      return restoreAiSourceSnapshot(current, session, snapshot.source).ok
     },
     onRunDone: (mutated) => {
       // AI wrote into a never-saved document → name it from the content and save silently
@@ -1012,6 +1017,8 @@ export default function App() {
       if (!session) return undefined
       return {
         mode: () => session.view().mode,
+        isCurrent: () => sessionRef.current === session && editorModeRef.current === 'visual'
+          && session.view().mode === 'visual' && !editorRef.current?.isDestroyed,
         source: () => session.serialize(),
         sourceBlocks: () => session.sourceBlocks(),
         frontmatter: () => session.frontmatter(),

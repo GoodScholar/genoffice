@@ -95,13 +95,12 @@ interface ChatEntry {
 /** longest selection excerpt echoed on a user bubble */
 const SCOPE_TEXT_MAX = 200
 
-/** structured, not the serialized file text: a body starting with `---` must
- *  never be re-parsed as a frontmatter block on rollback */
+/** A full source snapshot bound to the session that produced it. */
 export interface DocSnapshot {
-  /** document body as markdown */
-  body: string
-  /** raw frontmatter block (fences included), kept byte-for-byte */
-  frontmatter: string
+  /** complete session source, including frontmatter and protected raw fragments */
+  source: string
+  /** opaque session identity; a snapshot must not cross an open/reload boundary */
+  owner: unknown
 }
 
 interface Snapshot {
@@ -122,10 +121,10 @@ export interface MarkdownAiDeps {
   getFrontmatter(): string
   /** replace the properties block; empty string removes it */
   setFrontmatter(inner: string): void
-  /** document body + frontmatter, for pre-mutation snapshots */
+  /** complete source-backed snapshot, for pre-mutation rollback */
   getSnapshot(): DocSnapshot
-  /** rollback: replace the document (body and frontmatter) with a snapshot */
-  restoreSnapshot(snapshot: DocSnapshot): void
+  /** rollback succeeds only when the current source session accepts this snapshot */
+  restoreSnapshot(snapshot: DocSnapshot): boolean
   /** fired when a run with at least one mutation finishes (auto-save hook) */
   onRunDone(mutated: boolean): void
   sourceProtection?(): SourceProtectionAccess | undefined
@@ -703,8 +702,7 @@ export function AiPanel({
 
   const rollback = (snapshot: Snapshot): void => {
     if (busy) return
-    depsRef.current.restoreSnapshot(snapshot.doc)
-    setSnapshots((prev) => prev.filter((s) => s !== snapshot))
+    if (depsRef.current.restoreSnapshot(snapshot.doc)) setSnapshots((prev) => prev.filter((s) => s !== snapshot))
   }
 
   // Re-derive the display width on window resize (max is 60% of the window);

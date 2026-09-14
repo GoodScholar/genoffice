@@ -25,7 +25,7 @@ test.describe('markdown editor', () => {
     }
   })
 
-  test('legacy fenced divs degrade on open; slash menu inserts a GFM task list', async () => {
+  test('legacy fenced divs remain protected on open; slash menu inserts a GFM task list', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'genoffice-md-'))
     const mdPath = join(dir, 'legacy.md')
     await writeFile(mdPath, '# Doc\n\n:::callout {type="info"}\nBe careful.\n:::\n')
@@ -40,9 +40,9 @@ test.describe('markdown editor', () => {
       const editorPage = await waitForPageWithUrl(app, '://markdown/')
       const editor = editorPage.locator('.doc-editor')
       await expect(editor.locator('h1')).toHaveText('Doc')
-      // the legacy callout fences are stripped on open; the body text survives
+      // Legacy fences are shown as protected raw source and survive a neighboring edit.
       await expect(editor).toContainText('Be careful.')
-      await expect(editor).not.toContainText(':::')
+      await expect(editor).toContainText(':::callout {type="info"}')
 
       await editor.click()
       await editorPage.keyboard.press('ControlOrMeta+End')
@@ -58,8 +58,7 @@ test.describe('markdown editor', () => {
 
       const saved = await readFile(mdPath, 'utf8')
       expect(saved).toContain('- [ ] Heads up!')
-      expect(saved).toContain('Be careful.')
-      expect(saved).not.toContain(':::')
+      expect(saved).toContain(':::callout {type="info"}\nBe careful.\n:::')
     } finally {
       await closeAndSaveVideo(launched, 'markdown-slash-task')
     }

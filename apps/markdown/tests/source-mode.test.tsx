@@ -7,6 +7,7 @@ import {
   completeSourceModeTransition,
   applyProjectionProvenance,
   replaceSourceModeVisualDocument,
+  restoreAiSourceSnapshot,
   restoreSourceHistoryTransaction,
   replaceEditorBaseline,
   type SourceModeSnapshot,
@@ -17,6 +18,7 @@ import { buildExtensions } from '../src/renderer/editor/extensions'
 import { LocaleProvider } from '../src/renderer/i18n/locale'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
 import { createTiptapMarkdownCodec, type MarkdownCodec } from '../src/renderer/markdown/sourceProjection'
+import { GENERATED_TRAILING_NODE_SOURCE_ID } from '../src/renderer/markdown/generatedTrailingNode'
 import { SourceSnapshotStep, sourceSnapshotFromTransaction, sourceSnapshotPairFromTransaction } from '../src/renderer/markdown/sourceHistory'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -168,6 +170,29 @@ describe('source-mode visual handoff', () => {
 
     expect(update).toMatchObject({ ok: false, view: expect.objectContaining({ mode: 'source' }) })
     expect(session.serialize()).toBe('\uFEFFsource\r\nthat must stay')
+    editor.destroy()
+  })
+
+  it('accepts the generated tail appended after a protected source-mode projection', () => {
+    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: [] }), content: '' })
+    const session = createMarkdownDocumentSession('<details>raw</details>\n', createTiptapMarkdownCodec(editor))
+    expect(() => replaceSourceModeVisualDocument(editor, session.view().visual.doc, 'before', session.serialize())).not.toThrow()
+    expect(editor.getJSON().content?.at(-1)?.attrs?.sourceId).toBe(GENERATED_TRAILING_NODE_SOURCE_ID)
+    editor.destroy()
+  })
+
+  it('restores a full protected source snapshot through the signed history path', () => {
+    let currentSession: ReturnType<typeof createMarkdownDocumentSession> | undefined
+    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: [], protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange() {}, getCurrentSource: () => currentSession?.serialize() } }), content: '' })
+    const original = '---\ntitle: Before\n---\n\n# Before\n\n<details>raw</details>\n'
+    const snapshot = '---\ntitle: Restored\n---\n\n# Restored\n\n<details>raw</details>\n'
+    const session = currentSession = createMarkdownDocumentSession(original, createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
+    expect(restoreAiSourceSnapshot(editor, session, snapshot)).toEqual({ ok: true })
+    expect(session.serialize()).toBe(snapshot)
+    expect(editor.commands.undo()).toBe(true)
+    expect(session.serialize()).toBe(original)
     editor.destroy()
   })
 })

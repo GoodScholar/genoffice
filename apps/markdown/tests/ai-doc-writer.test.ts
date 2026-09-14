@@ -11,6 +11,7 @@ import {
 } from '../src/renderer/ai/doc-writer'
 import { executeTool } from '../src/renderer/ai/tools'
 import { MARKDOWN_RULES } from '../src/renderer/ai/markdown-skill'
+import type { SourceProtectionAccess } from '../src/renderer/markdown/sourcePatch'
 
 const editors: Editor[] = []
 afterEach(() => {
@@ -198,6 +199,26 @@ describe('write_document tool', () => {
     )
     expect(exec.isError).toBeFalsy()
     expect(texts(editor)).toEqual(['draft', 'more', 'mine'])
+  })
+
+  it('does not commit a streamed draft after the visual session becomes inactive', async () => {
+    const editor = createEditor()
+    let current = true
+    let release: (() => void) | undefined
+    const wait = new Promise<void>((resolve) => { release = resolve })
+    const writer: AiDocWriter = { write: async (_spec, onProgress) => {
+      onProgress('draft')
+      await wait
+      return { ok: true, markdown: '# Hidden' }
+    } }
+    const protection = { mode: () => current ? 'visual' as const : 'source' as const, isCurrent: () => current } as SourceProtectionAccess
+    const pending = executeTool(editor, { id: 't', name: 'write_document', input: { plan: 'p' } }, undefined, undefined, writer, protection) as Promise<{ isError?: boolean, mutated?: boolean, output: string }>
+    current = false
+    release?.()
+    const result = await pending
+    expect(result).toMatchObject({ isError: true, mutated: false })
+    expect(result.output).toContain('no longer active')
+    expect(texts(editor)).toEqual([''])
   })
 
   it('a discarded write leaves the document unchanged', async () => {

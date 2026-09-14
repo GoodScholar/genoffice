@@ -139,6 +139,24 @@ describe('MarkdownDocumentSession', () => {
     expect(session.serialize()).toBe(withCrLf('| A | B |\n| :--- | ---: |\n| one | two |\n\n\nFirst paragraph.\n\n<div data-x="raw">keep</div>\n\nChanged paragraph.'))
   })
 
+  it.each([
+    ['LF', '# Title\n\n<div>raw</div>\n'],
+    ['CRLF', '# Title\r\n\r\n<div>raw</div>\r\n'],
+  ])('keeps a protected HTML block while editing an empty source-bound paragraph with %s', (_name, source) => {
+    const editor = new Editor({
+      extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }),
+      content: '',
+    })
+    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+    editor.view.dispatch(editor.state.tr.insertText('Changed ', 2))
+
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toContain('Changed')
+    expect(session.serialize()).toContain('<div>raw</div>')
+    editor.destroy()
+  })
+
   it('moves an unchanged unit with its original trailing separator and removes a deleted unit separator', () => {
     const source = 'First.\n\n\nSecond.\n\nThird.\n'
     const session = createMarkdownDocumentSession(source, createCodec())
