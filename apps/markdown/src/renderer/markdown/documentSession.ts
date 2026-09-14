@@ -30,6 +30,7 @@ export interface MarkdownDocumentSession {
   view(): SessionView
   applyVisual(next: VisualProjection): SessionUpdate
   applySource(next: string): SessionUpdate
+  restoreHistorySource(next: string): SessionUpdate
   enterSource(fragmentId?: string): SessionUpdate
   enterVisual(): SessionUpdate
   serialize(): string
@@ -407,6 +408,16 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     return success(changedRange(next))
   }
 
+  const restoreHistorySource = (next: string): SessionUpdate => {
+    state = createState(next, codec)
+    revision += 1
+    mode = state.fallbackReason ? 'source' : 'visual'
+    selection = undefined
+    conflictReason = undefined
+    if (state.fallbackReason) return { ok: false, view: currentView(), error: state.fallbackReason }
+    return success(changedRange(next))
+  }
+
   const enterSource = (fragmentId?: string): SessionUpdate => {
     mode = 'source'
     selection = fragmentId
@@ -514,5 +525,5 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     return currentView()
   }
 
-  return { view: currentView, applyVisual, applySource, enterSource, enterVisual, serialize, beginSave, markSaved }
+  return { view: currentView, applyVisual, applySource, restoreHistorySource, enterSource, enterVisual, serialize, beginSave, markSaved }
 }

@@ -7,7 +7,7 @@ import {
   completeSourceModeTransition,
   applyProjectionProvenance,
   replaceSourceModeVisualDocument,
-  restoreSourceModeHistoryCheckpoint,
+  restoreSourceHistoryTransaction,
   type SourceModeSnapshot,
 } from '../src/renderer/App'
 import { SourceEditor } from '../src/renderer/components/SourceEditor'
@@ -16,6 +16,7 @@ import { buildExtensions } from '../src/renderer/editor/extensions'
 import { LocaleProvider } from '../src/renderer/i18n/locale'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
 import { createTiptapMarkdownCodec, type MarkdownCodec } from '../src/renderer/markdown/sourceProjection'
+import { SourceSnapshotStep, sourceSnapshotFromTransaction } from '../src/renderer/markdown/sourceHistory'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -145,7 +146,7 @@ describe('source-mode visual handoff', () => {
       type: 'doc',
       content: [expect.objectContaining({ type: 'paragraph', content: [{ type: 'text', text: 'After.' }] })],
     })
-    replaceSourceModeVisualDocument(editor, session.view().visual.doc)
+    replaceSourceModeVisualDocument(editor, session.view().visual.doc, 'Before.\n', 'After.\n')
 
     expect(editor.getText()).toBe('After.')
     editor.destroy()
@@ -171,6 +172,18 @@ describe('source-mode visual handoff', () => {
 })
 
 describe('source-mode history checkpoint', () => {
+  it('serializes an invertible no-document source snapshot step in the history transaction', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }),
+      content: 'Body', contentType: 'markdown',
+    })
+    const transaction = editor.state.tr.step(new SourceSnapshotStep('before', 'after'))
+    expect(transaction.doc).toBe(editor.state.doc)
+    expect(sourceSnapshotFromTransaction(transaction)).toEqual('after')
+    expect(transaction.steps[0]!.invert(editor.state.doc).toJSON()).toMatchObject({ source: 'before' })
+    editor.destroy()
+  })
   it('does not dispatch or add history for an unchanged source round trip', () => {
     const editor = new Editor({
       element: document.createElement('div'),
@@ -228,20 +241,17 @@ describe('source-mode history checkpoint', () => {
     const transition = completeSourceModeTransition(session, editor, visualStart)
     expect(transition).toMatchObject({ ok: true, changed: true })
     expect(undoDepth(editor.state)).toBe(2)
-    const checkpoint = transition.checkpoint!
-
-    let restored: ReturnType<typeof restoreSourceModeHistoryCheckpoint>
-    const dispatchAndRestore = (transaction: Parameters<typeof editor.view.dispatch>[0]) => {
-      editor.view.dispatch(transaction)
-      restored = restoreSourceModeHistoryCheckpoint(session, editor, transaction, checkpoint)
-    }
-    expect(undo(editor.state, dispatchAndRestore)).toBe(true)
+    let restored: ReturnType<typeof restoreSourceHistoryTransaction>
+    editor.on('transaction', ({ transaction }) => {
+      restored = restoreSourceHistoryTransaction(session, transaction)
+    })
+    expect(undo(editor.state, editor.view.dispatch)).toBe(true)
     expect(editor.getText()).toBe('Before visual edit.')
     expect(restored).toBeDefined()
     expect(session.view()).toMatchObject({ source: visualStart.source, mode: 'visual' })
     expect(session.view().visual.frontmatterInner).toBe('title: before')
     expect(editor.getText()).toBe('Before visual edit.')
-    expect(redo(editor.state, dispatchAndRestore)).toBe(true)
+    expect(redo(editor.state, editor.view.dispatch)).toBe(true)
     expect(restored).toBeDefined()
     expect(session.view()).toMatchObject({ source: '---\ntitle: after\n---\n\nAfter source edit.\n', mode: 'visual' })
     expect(session.view().visual.frontmatterInner).toBe('title: after')

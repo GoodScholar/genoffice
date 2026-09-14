@@ -8,7 +8,7 @@ import { EditorContent, useEditor } from '@tiptap/react'
 import { FindPanel, type FindFocusRequest, type FindPanelStrings } from '@genoffice/ui'
 import type { Editor, JSONContent } from '@tiptap/core'
 import { TextSelection, type Transaction } from '@tiptap/pm/state'
-import { closeHistory, isHistoryTransaction } from '@tiptap/pm/history'
+import { closeHistory } from '@tiptap/pm/history'
 import { useI18n } from './i18n/locale'
 import {
   buildFrontmatterRaw,
@@ -21,6 +21,7 @@ import {
 import { createMarkdownDocumentSession, type MarkdownDocumentSession, type SaveTicket } from './markdown/documentSession'
 import { losslessMarkdownEnabled } from './markdown/featureFlag'
 import { createTiptapMarkdownCodec } from './markdown/sourceProjection'
+import { SourceSnapshotStep, sourceSnapshotFromTransaction } from './markdown/sourceHistory'
 import { buildExtensions } from './editor/extensions'
 import { tiptapFindTarget } from './editor/findTarget'
 import { collectOutline, type OutlineItem } from './editor/outline'
@@ -140,37 +141,18 @@ export interface SourceModeSnapshot {
   visual: ReturnType<MarkdownDocumentSession['view']>['visual']
 }
 
-export interface SourceModeHistoryCheckpoint {
-  before: SourceModeSnapshot
-  after: SourceModeSnapshot
-}
-
 export type SourceModeTransition =
   | { ok: false; error: string }
   | { ok: true; changed: false; view: ReturnType<MarkdownDocumentSession['view']> }
-  | { ok: true; changed: true; view: ReturnType<MarkdownDocumentSession['view']>; checkpoint: SourceModeHistoryCheckpoint }
-
-function visualDocumentFingerprint(document: JSONContent): string {
-  const stripProvenance = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(stripProvenance)
-    if (!value || typeof value !== 'object') return value
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .filter(([key]) => key !== 'sourceId')
-        .map(([key, child]) => [key, stripProvenance(child)]),
-    )
-  }
-  return JSON.stringify(stripProvenance(document))
-}
+  | { ok: true; changed: true; view: ReturnType<MarkdownDocumentSession['view']> }
 
 /** Apply a completed source-mode edit as one isolated visual-editor undo step. */
-export function replaceSourceModeVisualDocument(editor: Editor, visualDoc: JSONContent): void {
+export function replaceSourceModeVisualDocument(editor: Editor, visualDoc: JSONContent, beforeSource: string, afterSource: string): void {
   const next = editor.schema.nodeFromJSON(visualDoc)
-  editor.view.dispatch(closeHistory(
-    editor.state.tr
-      .replaceWith(0, editor.state.doc.content.size, next.content)
-      .setMeta('addToHistory', true),
-  ))
+  let transaction = editor.state.tr.setMeta('addToHistory', true)
+  if (!editor.state.doc.eq(next)) transaction = transaction.replaceWith(0, editor.state.doc.content.size, next.content)
+  transaction = transaction.step(new SourceSnapshotStep(beforeSource, afterSource))
+  editor.view.dispatch(closeHistory(transaction))
   // This zero-step barrier belongs to no history event, but prevents the next
   // visual edit from merging into the source-mode replacement.
   editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true))
@@ -185,36 +167,23 @@ export function completeSourceModeTransition(
   const entered = session.enterVisual()
   if (!entered.ok) return { ok: false, error: entered.error }
   if (entered.view.source === before.source) return { ok: true, changed: false, view: entered.view }
-  const beforeVisual = { ...before.visual, doc: editor.getJSON() }
-  replaceSourceModeVisualDocument(editor, entered.view.visual.doc)
+  replaceSourceModeVisualDocument(editor, entered.view.visual.doc, before.source, entered.view.source)
   return {
     ok: true,
     changed: true,
     view: entered.view,
-    checkpoint: {
-      before: { ...before, visual: beforeVisual },
-      after: { source: entered.view.source, visual: { ...entered.view.visual, doc: editor.getJSON() } },
-    },
   }
 }
 
-/** Session metadata follows the ProseMirror history transaction; it is not a second history stack. */
-export function restoreSourceModeHistoryCheckpoint(
+/** Restore session source only when a history transaction carries the source snapshot step. */
+export function restoreSourceHistoryTransaction(
   session: MarkdownDocumentSession,
-  editor: Editor,
   transaction: Transaction,
-  checkpoint: SourceModeHistoryCheckpoint,
 ): ReturnType<MarkdownDocumentSession['view']> | undefined {
-  if (!isHistoryTransaction(transaction)) return undefined
-  const document = visualDocumentFingerprint(editor.getJSON())
-  const snapshot = [checkpoint.before, checkpoint.after].find(
-    (candidate) => visualDocumentFingerprint(candidate.visual.doc) === document,
-  )
-  if (!snapshot) return undefined
-  const restored = session.applySource(snapshot.source)
-  if (!restored.ok) return undefined
-  const visual = session.enterVisual()
-  return visual.ok ? visual.view : undefined
+  const source = sourceSnapshotFromTransaction(transaction)
+  if (!source) return undefined
+  const restored = session.restoreHistorySource(source)
+  return restored.ok ? restored.view : undefined
 }
 
 type SaveInvoker = (request: SaveMarkdownRequest) => Promise<SaveMarkdownResult>
@@ -317,7 +286,6 @@ export default function App() {
   const syncingProjectionRef = useRef(false)
   const editorModeRef = useRef<'visual' | 'source'>('visual')
   const sourceModeStartRef = useRef<SourceModeSnapshot | null>(null)
-  const sourceModeCheckpointRef = useRef<SourceModeHistoryCheckpoint | null>(null)
   const editorRef = useRef<Editor | null>(null)
   const filePathRef = useRef<string | null>(null)
   const slashMenuRef = useRef<SlashMenuHandle>(null)
@@ -385,22 +353,24 @@ export default function App() {
     content: '',
     autofocus: true,
     editorProps: { attributes: { class: 'doc-editor' } },
+    onTransaction: ({ transaction }) => {
+      const session = sessionRef.current
+      if (!losslessMarkdown || !session || syncingProjectionRef.current) return
+      const restored = restoreSourceHistoryTransaction(session, transaction)
+      if (!restored) return
+      const envelope = parseDocText(restored.source)
+      envelopeRef.current = envelope
+      setFmText(restored.visual.frontmatterInner)
+      setFmOpen(restored.visual.frontmatterInner.trim() !== '')
+      setSourceText(restored.source)
+      setSourceModeError(null)
+      mirrorSessionDirty(session)
+    },
     // uiOnly transactions (toggle fold state) never reach the file — not dirty
     onUpdate: ({ editor: updated, transaction }) => {
       if (!transaction.getMeta('uiOnly')) {
         const session = sessionRef.current
         if (losslessMarkdown && session && !syncingProjectionRef.current && editorModeRef.current === 'visual') {
-          const restored = sourceModeCheckpointRef.current
-            ? restoreSourceModeHistoryCheckpoint(session, updated, transaction, sourceModeCheckpointRef.current)
-            : undefined
-          if (restored) {
-            synchronizeSessionChrome(restored)
-            setSourceText(restored.source)
-            setSourceModeError(null)
-            mirrorSessionDirty(session)
-            setOutlineItems(collectOutline(updated))
-            return
-          }
           const update = session.applyVisual({
             doc: updated.getJSON(),
             frontmatterInner: session.view().visual.frontmatterInner,
@@ -555,10 +525,20 @@ export default function App() {
     const before = sourceModeStartRef.current
     if (!before) {
       const entered = session.enterVisual()
-      if (entered.ok) session.enterSource()
-      setEditorMode('source')
-      setSourceText(entered.view.source)
-      setSourceModeError(entered.ok ? 'Source mode has no visual checkpoint' : entered.error)
+      if (!entered.ok) {
+        setEditorMode('source')
+        setSourceText(entered.view.source)
+        setSourceModeError(entered.error)
+        return
+      }
+      syncingProjectionRef.current = true
+      current.chain().setMeta('addToHistory', false).setContent(entered.view.visual.doc).run()
+      applyProjectionProvenance(current, entered.view.visual.doc)
+      syncingProjectionRef.current = false
+      synchronizeSessionChrome(entered.view)
+      setEditorMode('visual')
+      setSourceModeError(null)
+      mirrorSessionDirty(session)
       return
     }
     try {
@@ -571,7 +551,6 @@ export default function App() {
         return
       }
       if (transition.changed) {
-        sourceModeCheckpointRef.current = transition.checkpoint
         applyProjectionProvenance(current, transition.view.visual.doc)
       }
       synchronizeSessionChrome(transition.view)
