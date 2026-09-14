@@ -381,6 +381,7 @@ export default function App() {
     // Task 7 负责 proposal 服务；服务缺失时 NodeView 保持该操作禁用。
     onConvert: () => {},
     onConfirmChange: (request: ProtectedChangeRequest) => setProtectedChangeRequest(request),
+    getCurrentSource: () => sessionRef.current?.serialize(),
   }), [enterSourceMode])
 
   const insertImage = useCallback(() => {
