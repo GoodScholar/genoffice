@@ -95,6 +95,12 @@ function guardState(state: EditorState): ProtectedSourceGuardState {
 }
 
 function matchesHistoryEvent(event: TransitionEvent, actual: ProtectedSourceSignature, currentSource?: string): boolean {
+  const sourceAware = event.before.beforeSource !== undefined
+    || event.rootAfter.afterSource !== undefined
+    || event.finalAfter.afterSource !== undefined
+  // A source-aware event is never a document-only capability.  Its history
+  // step must carry the checked source endpoints as well.
+  if (sourceAware && (actual.beforeSource === undefined || actual.afterSource === undefined)) return false
   if (actual.beforeSource === undefined && actual.afterSource === undefined) {
     return sameSignature({ ...event.before, afterDoc: event.rootAfter.afterDoc }, actual)
       || sameSignature({
@@ -385,23 +391,60 @@ export const ProtectedSourceGuard = Extension.create<ProtectedSourceOptions>({
           })
         },
       },
+      appendTransaction(transactions, _oldState, state) {
+        const authority = guardState(state)
+        for (const transaction of transactions) {
+          const root = transaction.getMeta('appendedTransaction')
+          if (!root || authority.accepted !== root) continue
+          const rootBefore = protectedRawMultiset(root.doc)
+          const appendedAfter = protectedRawMultiset(transaction.doc)
+          if (sameProtectedRawMultiset(rootBefore, appendedAfter)) continue
+          options.onConfirmChange({
+            ids: changedProtectedIds(rootBefore, appendedAfter),
+            kind: protectedChangeKind(transaction, rootBefore, appendedAfter),
+            baseDoc: root.doc.toJSON(),
+            steps: transaction.steps.map((step) => step.toJSON()),
+          })
+          throw new Error('Protected append exceeds the approved change')
+        }
+        return null
+      },
       filterTransaction(transaction, state) {
         const snapshot = sourceSnapshotPairFromTransaction(transaction)
         const authority = guardState(state)
         if (snapshot && !allows(authority, transaction, state, options.getCurrentSource?.())) return false
-        if (trustedAppend(authority, transaction)) return true
+        if (trustedAppend(authority, transaction)) {
+          const before = protectedRawMultiset(state.doc)
+          const after = protectedRawMultiset(transaction.doc)
+          if (sameProtectedRawMultiset(before, after)) return true
+          options.onConfirmChange({
+            ids: changedProtectedIds(before, after),
+            kind: protectedChangeKind(transaction, before, after),
+            baseDoc: state.doc.toJSON(),
+            steps: transaction.steps.map((step) => step.toJSON()),
+          })
+          // ProseMirror only commits the root after every appended transaction
+          // has been filtered. Throwing aborts this applyTransaction batch, so
+          // an append cannot widen the root approval before a new confirmation.
+          throw new Error('Protected append exceeds the approved change')
+        }
         if (!transaction.docChanged) return true
         const before = protectedRawMultiset(state.doc)
         if (before.size === 0) return true
         const after = protectedRawMultiset(transaction.doc)
         if (sameProtectedRawMultiset(before, after)) return true
         if (allows(authority, transaction, state, options.getCurrentSource?.())) return true
-        options.onConfirmChange({
+        const request: ProtectedChangeRequest = {
           ids: changedProtectedIds(before, after),
           kind: protectedChangeKind(transaction, before, after),
           baseDoc: state.doc.toJSON(),
           steps: transaction.steps.map((step) => step.toJSON()),
-        })
+        }
+        options.onConfirmChange(request)
+        // appendTransaction receives this filter call before ProseMirror writes
+        // its public appendedTransaction meta.  While a root is pending in the
+        // candidate state, reject by throwing so the whole batch is discarded.
+        if (authority.accepted !== undefined) throw new Error('Protected append exceeds the approved change')
         return false
       },
     })]

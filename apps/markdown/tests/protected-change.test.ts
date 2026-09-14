@@ -234,6 +234,25 @@ describe('protected source change guard', () => {
     editor.destroy()
   })
 
+  it('does not let a source-aware history endpoint authorize a raw replacement without a snapshot', () => {
+    const requestSink = vi.fn()
+    const { editor, session } = createLosslessEditor('<details>A</details>\n', requestSink)
+    const position = anyProtectedPosition(editor)
+    const atom = editor.state.doc.nodeAt(position)!
+    editor.view.dispatch(editor.state.tr.setNodeMarkup(position, undefined, { ...atom.attrs, raw: '<details>B</details>' }))
+    const request = requestSink.mock.calls[0][0] as ProtectedChangeRequest
+    expect(applyProtectedChange(editor, request, session)).toEqual({ ok: true })
+    const before = editor.getJSON()
+    const beforeSource = session.serialize()
+    const original = editor.schema.nodeFromJSON(request.baseDoc)
+    editor.view.dispatch(editor.state.tr.replaceWith(0, editor.state.doc.content.size, original.content))
+
+    expect(editor.getJSON()).toEqual(before)
+    expect(session.serialize()).toBe(beforeSource)
+    expect(requestSink).toHaveBeenCalledTimes(2)
+    editor.destroy()
+  })
+
   it('keeps accepted transactions local to their editor state and baseline', () => {
     const extensions = buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] })
     const content = { type: 'doc', content: [{ type: 'protectedSourceBlock', attrs: { id: 'local', raw: '<a>', reason: 'raw-html' } }] }
@@ -534,6 +553,59 @@ describe('protected source change guard', () => {
     expect(session.serialize()).toContain('<!-- raw -->')
     expect(redo(editor.state, editor.view.dispatch)).toBe(true)
     expect(session.serialize()).toBe(finalSource)
+    editor.destroy()
+  })
+
+  it('rejects an appended transaction that expands an approval to another protected atom', () => {
+    const requestSink = vi.fn()
+    let session: ReturnType<typeof createMarkdownDocumentSession> | undefined
+    let appended = 0
+    const destructiveAppender = Extension.create({
+      addProseMirrorPlugins() {
+        return [new Plugin({
+          appendTransaction(transactions, _oldState, state) {
+            if (!transactions.some((transaction) => transaction.getMeta(APPROVED_PROTECTED_CHANGE) === true)) return null
+            appended += 1
+            let protectedPos = -1
+            let protectedSize = 0
+            state.doc.descendants((node, pos) => {
+              if (protectedPos < 0 && node.type.name === 'protectedSourceBlock') {
+                protectedPos = pos
+                protectedSize = node.nodeSize
+              }
+            })
+            return protectedPos < 0 ? null : state.tr.delete(protectedPos, protectedPos + protectedSize)
+          },
+        })]
+      },
+    })
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: [...buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange: requestSink, getCurrentSource: () => session?.serialize() },
+      }), destructiveAppender],
+      content: '',
+    })
+    session = createMarkdownDocumentSession('<details>A</details>\n\n<details>B</details>\n', createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
+    let protectedCount = 0
+    editor.state.doc.descendants((node) => { if (node.type.name === 'protectedSourceBlock') protectedCount += 1 })
+    expect(protectedCount).toBe(2)
+    const beforeDoc = editor.getJSON()
+    const beforeSource = session.serialize()
+    const position = anyProtectedPosition(editor)
+    const atom = editor.state.doc.nodeAt(position)!
+    editor.view.dispatch(editor.state.tr.delete(position, position + atom.nodeSize))
+    const request = requestSink.mock.calls[0][0] as ProtectedChangeRequest
+
+    const result = applyProtectedChange(editor, request, session)
+    expect(appended).toBe(1)
+    expect(result).toMatchObject({ ok: false })
+    expect(editor.getJSON()).toEqual(beforeDoc)
+    expect(session.serialize()).toBe(beforeSource)
     editor.destroy()
   })
 
