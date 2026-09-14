@@ -85,4 +85,72 @@ describe('projectScan', () => {
 
     expect(serializeProjectedGroup(result.visual.doc.content ?? [], codec)).toContain('<u>kept</u>')
   })
+
+  it.each([
+    ['bold', '**a <u>kept</u> b**', 'bold'],
+    ['italic', '*a <u>kept</u> b*', 'italic'],
+    ['strike', '~~a <u>kept</u> b~~', 'strike'],
+  ])('preserves %s marks across a protected inline fragment in both directions', (_name, source, mark) => {
+    const editor = createEditor()
+    const codec = createTiptapMarkdownCodec(editor)
+    const result = project(source)
+    const atom = findNodes(result.visual.doc, 'protectedSourceInline')[0]
+
+    expect(atom?.marks).toEqual([expect.objectContaining({ type: mark })])
+    expect(serializeProjectedGroup(result.visual.doc.content ?? [], codec)).toBe(source)
+  })
+
+  it('restores raw source containing replacement-pattern characters verbatim', () => {
+    const codec: MarkdownCodec = {
+      lex: () => [],
+      parse: () => ({ type: 'doc' }),
+      serialize: (doc) => String(doc.content?.[0]?.content?.[0]?.text),
+    }
+    const nodes: JSONContent[] = [{
+      type: 'paragraph',
+      content: [{
+        type: 'protectedSourceInline',
+        attrs: { id: 's0-b0-i0', raw: '<u>$& $$ $` $\'</u>', reason: 'raw-html' },
+      }],
+    }]
+
+    expect(serializeProjectedGroup(nodes, codec)).toBe('<u>$& $$ $` $\'</u>')
+  })
+
+  it('falls back to a protected block when the source exhausts private-use sentinels', () => {
+    let privateUse = ''
+    for (let point = 0xe000; point <= 0xf8ff; point += 1) privateUse += String.fromCharCode(point)
+    const source = `${privateUse} <u>kept</u>`
+    const scan = scanMarkdownSource(source, (input) => marked.lexer(input))
+    const editor = createEditor()
+
+    expect(() => projectScan(scan, createTiptapMarkdownCodec(editor))).not.toThrow()
+    expect(projectScan(scan, createTiptapMarkdownCodec(editor)).visual.doc.content).toEqual([
+      expect.objectContaining({
+        type: 'protectedSourceBlock',
+        attrs: expect.objectContaining({ raw: source, reason: 'parse-failure' }),
+      }),
+    ])
+  })
+
+  it.each([
+    ['missing', 'plain markdown'],
+    ['duplicated', '\uE000s0-b0-i0\uE000\uE000s0-b0-i0\uE000'],
+    ['unexpected extra', '\uE000s0-b0-i0\uE000\uE000unexpected\uE000'],
+  ])('throws a consistency error when a serialization sentinel is %s', (_case, output) => {
+    const codec: MarkdownCodec = {
+      lex: () => [],
+      parse: () => ({ type: 'doc' }),
+      serialize: () => output,
+    }
+    const nodes: JSONContent[] = [{
+      type: 'paragraph',
+      content: [{
+        type: 'protectedSourceInline',
+        attrs: { id: 's0-b0-i0', raw: '<u>kept</u>', reason: 'raw-html' },
+      }],
+    }]
+
+    expect(() => serializeProjectedGroup(nodes, codec)).toThrow('Protected source serialization')
+  })
 })

@@ -129,6 +129,7 @@ function replaceSentinelText(node: JSONContent, sentinels: Sentinel[], seen: Map
           reason: next.sentinel.fragment.reason,
           sourceId: null,
         },
+        ...(node.marks ? { marks: node.marks } : {}),
       })
       cursor = next.index + next.sentinel.value.length
     }
@@ -180,7 +181,12 @@ export function projectScan(scan: SourceScan, codec: MarkdownCodec): ProjectionR
       continue
     }
 
-    const sentinels = inlineFragments(scan, index)
+    let sentinels: Sentinel[] | null
+    try {
+      sentinels = inlineFragments(scan, index)
+    } catch {
+      sentinels = null
+    }
     if (!sentinels) {
       const reason: ProtectedReason = 'parse-failure'
       fragments.push({ id: unit.id, raw: unit.raw, range: unit.range, display: 'block', reason })
@@ -237,7 +243,7 @@ export function serializeProjectedGroup(nodes: JSONContent[], codec: MarkdownCod
       }
       const sentinel = { id, value: `${character}${id}${character}`, fragment }
       sentinels.push(sentinel)
-      return { type: 'text', text: sentinel.value }
+      return { type: 'text', text: sentinel.value, ...(node.marks ? { marks: node.marks } : {}) }
     }
     return node.content ? { ...node, content: node.content.map(rewrite) } : node
   }
@@ -249,5 +255,8 @@ export function serializeProjectedGroup(nodes: JSONContent[], codec: MarkdownCod
   if (output.split(character).length - 1 !== sentinels.length * 2) {
     throw new Error('Protected source serialization introduced an unexpected sentinel')
   }
-  return sentinels.reduce((current, sentinel) => current.replace(sentinel.value, sentinel.fragment.raw), output)
+  return sentinels.reduce(
+    (current, sentinel) => current.replace(sentinel.value, () => sentinel.fragment.raw),
+    output,
+  )
 }
