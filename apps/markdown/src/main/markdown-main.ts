@@ -674,6 +674,7 @@ function registerMarkdownIpc(): void {
         return done({
           ok: true,
           path: target,
+          text: textToWrite,
           ...(prepared?.rewrites.length ? { imageRewrites: prepared.rewrites } : {}),
         })
       } catch (err) {

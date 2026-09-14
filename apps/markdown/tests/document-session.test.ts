@@ -76,6 +76,41 @@ describe('MarkdownDocumentSession', () => {
     }
   })
 
+  it('reuses untouched raw frontmatter without changing revision', () => {
+    const source = '---\r\ntitle: exact\r\n---\r\n\r\nBody.\r\n'
+    const session = createMarkdownDocumentSession(source, createCodec())
+    const view = session.view()
+
+    expect(session.applyVisual(view.visual)).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ revision: 0, dirty: false })
+    expect(session.serialize()).toBe(source)
+  })
+
+  it.each([
+    ['LF', '\n'],
+    ['CRLF', '\r\n'],
+  ])('rewrites edited frontmatter with %s EOL while preserving the body', (_name, eol) => {
+    const source = `---${eol}title: before${eol}---${eol}${eol}Before <u>protected</u> after.${eol}`
+    const session = createMarkdownDocumentSession(source, createCodec())
+    const original = session.view()
+
+    expect(session.applyVisual({ ...original.visual, frontmatterInner: 'title: after' })).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ revision: 1, dirty: true })
+    expect(session.serialize()).toBe(`---${eol}title: after${eol}---${eol}${eol}Before <u>protected</u> after.${eol}`)
+    expect(session.view().protectedFragments.map(({ raw, reason, display }) => ({ raw, reason, display }))).toEqual(
+      original.protectedFragments.map(({ raw, reason, display }) => ({ raw, reason, display })),
+    )
+  })
+
+  it('removes explicitly cleared frontmatter while preserving the body raw', () => {
+    const source = '---\ntitle: before\n---\n\nBefore <u>protected</u> after.\n'
+    const session = createMarkdownDocumentSession(source, createCodec())
+
+    expect(session.applyVisual({ ...session.view().visual, frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe('Before <u>protected</u> after.\n')
+    expect(session.view()).toMatchObject({ revision: 1, dirty: true })
+  })
+
   it('rewrites only the edited group while keeping surrounding raw source and document boundaries', () => {
     const source = withCrLf('| A | B |\n| :--- | ---: |\n| one | two |\n\n\nFirst paragraph.\n\n<div data-x="raw">keep</div>\n\nSecond paragraph.')
     const session = createMarkdownDocumentSession(source, createCodec())

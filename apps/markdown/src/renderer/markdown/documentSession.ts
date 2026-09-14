@@ -119,6 +119,13 @@ function visualFrontmatter(raw: string): string {
   return frontmatterInner(raw.replace(/\r\n/g, '\n'))
 }
 
+function editedFrontmatterRaw(inner: string, envelope: RawDocEnvelope): string {
+  const trimmed = inner.replace(/^(?:\r?\n)+|(?:\r?\n)+$/g, '')
+  if (trimmed === '') return ''
+  const value = normaliseEol(trimmed, envelope)
+  return `---${envelope.eol}${value}${envelope.eol}---${envelope.eol}${envelope.eol}`
+}
+
 function collectProtected(nodes: JSONContent[]): Map<string, { raw: string, count: number }> {
   const found = new Map<string, { raw: string, count: number }>()
   const visit = (node: JSONContent): void => {
@@ -292,6 +299,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
 
   const applyVisual = (next: VisualProjection): SessionUpdate => {
     if (state.fallbackReason) return { ok: false, view: currentView(), error: state.fallbackReason }
+    const frontmatterChanged = next.frontmatterInner !== state.visual.frontmatterInner
     const candidateNodes = next.doc.content ?? []
     const expected = new Map(state.units.flatMap((unit) => unit.protectedFragments.map((fragment) => [fragment.id, fragment.raw] as const)))
     const found = collectProtected(candidateNodes)
@@ -349,7 +357,10 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     } else {
       body = body.replace(/(?:\r?\n)+$/, '')
     }
-    const nextSource = sourcePrefix(state.envelope) + body
+    const envelope = frontmatterChanged
+      ? { ...state.envelope, frontmatterRaw: editedFrontmatterRaw(next.frontmatterInner, state.envelope) }
+      : state.envelope
+    const nextSource = sourcePrefix(envelope) + body
     if (nextSource === state.source) return success()
     const projected = createState(nextSource, codec)
     if (projected.fallbackReason || projectionFingerprint(candidateNodes) !== projectionFingerprint(projected.visual.doc.content ?? [])) {

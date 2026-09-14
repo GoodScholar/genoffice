@@ -17,6 +17,9 @@ import {
   stripLegacyFencedDivs,
   type DocEnvelope,
 } from './markdown/docText'
+import { createMarkdownDocumentSession, type MarkdownDocumentSession } from './markdown/documentSession'
+import { losslessMarkdownEnabled } from './markdown/featureFlag'
+import { createTiptapMarkdownCodec } from './markdown/sourceProjection'
 import { buildExtensions } from './editor/extensions'
 import { tiptapFindTarget } from './editor/findTarget'
 import { collectOutline, type OutlineItem } from './editor/outline'
@@ -149,10 +152,13 @@ export default function App() {
   const dirtyRef = useRef(false)
   const savingRef = useRef(false)
   const envelopeRef = useRef<DocEnvelope>(EMPTY_ENVELOPE)
+  const sessionRef = useRef<MarkdownDocumentSession | null>(null)
+  const syncingProjectionRef = useRef(false)
   const editorRef = useRef<Editor | null>(null)
   const filePathRef = useRef<string | null>(null)
   const slashMenuRef = useRef<SlashMenuHandle>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const losslessMarkdown = losslessMarkdownEnabled(window.location.search, import.meta.env.DEV)
 
   const zoomOut = useCallback(
     () => setZoom((value) => Math.max(MIN_ZOOM, Math.round(value) - ZOOM_STEP)),
@@ -169,6 +175,14 @@ export default function App() {
     setDirty(true)
     setSaveState('idle')
     window.markdownApi.setDirty(true)
+  }, [])
+
+  const mirrorSessionDirty = useCallback((session = sessionRef.current) => {
+    const nextDirty = session?.view().dirty ?? false
+    dirtyRef.current = nextDirty
+    setDirty(nextDirty)
+    window.markdownApi.setDirty(nextDirty)
+    if (nextDirty) setSaveState('idle')
   }, [])
 
   const insertImage = useCallback(() => {
@@ -200,7 +214,23 @@ export default function App() {
     editorProps: { attributes: { class: 'doc-editor' } },
     // uiOnly transactions (toggle fold state) never reach the file — not dirty
     onUpdate: ({ editor: updated, transaction }) => {
-      if (!transaction.getMeta('uiOnly')) markDirty()
+      if (!transaction.getMeta('uiOnly')) {
+        const session = sessionRef.current
+        if (losslessMarkdown && session && !syncingProjectionRef.current) {
+          const update = session.applyVisual({
+            doc: updated.getJSON(),
+            frontmatterInner: session.view().visual.frontmatterInner,
+          })
+          if (!update.ok) {
+            session.enterSource()
+            setSaveState('failed')
+          } else {
+            mirrorSessionDirty(session)
+          }
+        } else if (!losslessMarkdown) {
+          markDirty()
+        }
+      }
       setOutlineItems(collectOutline(updated))
     },
   })
@@ -225,19 +255,40 @@ export default function App() {
           const envelope = parseDocText(raw)
           envelopeRef.current = envelope
           setImageBaseDir(dirOf(path))
-          // the initial load must not be undoable — Cmd+Z right after opening
-          // would otherwise blank the document (and Cmd+S overwrite the file)
-          editor
-            .chain()
-            .setMeta('addToHistory', false)
-            .setContent(stripLegacyFencedDivs(envelope.body), { contentType: 'markdown' })
-            .run()
+          if (losslessMarkdown) {
+            const session = createMarkdownDocumentSession(raw, createTiptapMarkdownCodec(editor))
+            sessionRef.current = session
+            syncingProjectionRef.current = true
+            editor
+              .chain()
+              .setMeta('addToHistory', false)
+              .setContent(session.view().visual.doc)
+              .run()
+            syncingProjectionRef.current = false
+            mirrorSessionDirty(session)
+          } else {
+            // the initial load must not be undoable — Cmd+Z right after opening
+            // would otherwise blank the document (and Cmd+S overwrite the file)
+            editor
+              .chain()
+              .setMeta('addToHistory', false)
+              .setContent(stripLegacyFencedDivs(envelope.body), { contentType: 'markdown' })
+              .run()
+          }
           setFilePath(path)
           const inner = frontmatterInner(envelope.frontmatter)
           setFmText(inner)
           if (inner) setFmOpen(true)
         } else {
           envelopeRef.current = { ...EMPTY_ENVELOPE }
+          if (losslessMarkdown) {
+            const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
+            sessionRef.current = session
+            syncingProjectionRef.current = true
+            editor.chain().setMeta('addToHistory', false).setContent(session.view().visual.doc).run()
+            syncingProjectionRef.current = false
+            mirrorSessionDirty(session)
+          }
         }
         statusRef.current = 'ready'
         setStatus('ready')
@@ -252,15 +303,29 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [editor])
+  }, [editor, losslessMarkdown, mirrorSessionDirty])
 
   const onFrontmatterChange = useCallback(
     (inner: string) => {
       setFmText(inner)
       envelopeRef.current.frontmatter = buildFrontmatterRaw(inner)
+      const session = sessionRef.current
+      if (losslessMarkdown && session) {
+        const update = session.applyVisual({
+          doc: editorRef.current?.getJSON() ?? session.view().visual.doc,
+          frontmatterInner: inner,
+        })
+        if (!update.ok) {
+          session.enterSource()
+          setSaveState('failed')
+          return
+        }
+        mirrorSessionDirty(session)
+        return
+      }
       markDirty()
     },
-    [markDirty],
+    [losslessMarkdown, markDirty, mirrorSessionDirty],
   )
 
   /** Serialize and write to disk; false when canceled/failed (caller keeps the tab open) */
@@ -270,6 +335,50 @@ export default function App() {
     savingRef.current = true
     setSaveState('saving')
     try {
+      const session = sessionRef.current
+      if (losslessMarkdown && session) {
+        let ticket
+        try {
+          // `beginSave` validates the projected source before any IPC can write it.
+          ticket = session.beginSave()
+        } catch (err) {
+          console.error('[markdown] source-backed save consistency check failed:', err)
+          setSaveState('failed')
+          return false
+        }
+        const imageSources = imageSourcesFromEditor(current)
+        const result = await window.markdownApi.save({
+          text: ticket.source,
+          imageSources,
+          mode,
+          suggestedName,
+        })
+        if (result.ok && 'path' in result) {
+          if (result.imageRewrites?.length && editorRef.current) {
+            applyImageRewrites(editorRef.current, result.imageRewrites)
+          }
+          const saved = session.markSaved(result.text, ticket)
+          if (editorRef.current) {
+            // For a concurrent edit, `markSaved` returns the rebased current view,
+            // never the older write response, so protected/raw image rewrites stay
+            // in sync without discarding the newer visual edit.
+            syncingProjectionRef.current = true
+            editorRef.current
+              .chain()
+              .setMeta('addToHistory', false)
+              .setContent(saved.visual.doc)
+              .run()
+            syncingProjectionRef.current = false
+          }
+          setImageBaseDir(dirOf(result.path))
+          setFilePath(result.path)
+          mirrorSessionDirty(session)
+          setSaveState(saved.dirty ? 'idle' : 'saved')
+          return true
+        }
+        setSaveState(result.ok ? 'idle' : 'failed')
+        return false
+      }
       // edits landing while the write is in flight (AI streaming, fast typing)
       // must keep the document dirty — compare doc identity after the await
       const docAtSave = current.state.doc
@@ -309,7 +418,7 @@ export default function App() {
     } finally {
       savingRef.current = false
     }
-  }, [])
+  }, [losslessMarkdown, mirrorSessionDirty])
 
   /** `outPath` (headless export only) skips the save dialog; resolves true when a file was written. */
   const runExport = useCallback(async (format: ExportFormat, outPath?: string) => {
