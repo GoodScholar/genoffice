@@ -271,4 +271,25 @@ describe('MarkdownDocumentSession', () => {
       fallbackReason: expect.stringContaining('rebase conflict'),
     })
   })
+
+  it('keeps user-edited unit separators when the save result leaves that unit unchanged', () => {
+    const session = createMarkdownDocumentSession('A\n\nB', createCodec())
+    const ticket = session.beginSave()
+    expect(session.applySource('A\n\n\nB').ok).toBe(true)
+
+    expect(session.markSaved('A\n\nB', ticket)).toMatchObject({ source: 'A\n\n\nB', dirty: true })
+    expect(session.serialize()).toBe('A\n\n\nB')
+  })
+
+  it('reports a conflict instead of merging separator and raw changes to the same unit', () => {
+    const session = createMarkdownDocumentSession('A\n\nB', createCodec())
+    const ticket = session.beginSave()
+    expect(session.applySource('A\n\n\nB').ok).toBe(true)
+
+    expect(session.markSaved('X\n\nB', ticket)).toMatchObject({
+      source: 'A\n\n\nB',
+      dirty: true,
+      fallbackReason: expect.stringContaining('rebase conflict'),
+    })
+  })
 })
