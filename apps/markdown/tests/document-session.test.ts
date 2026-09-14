@@ -118,6 +118,20 @@ describe('MarkdownDocumentSession', () => {
     expect(session.serialize()).toBe('First.\n\nNew paragraph.')
   })
 
+  it('creates only the required canonical boundary when an EOF unit moves before another unit', () => {
+    const session = createMarkdownDocumentSession('First.\n\nLast.', createCodec())
+    const original = session.view().visual
+    const next = cloneVisual(original)
+    next.doc.content = [
+      ...nodesForSourceId(original, 's0-b1'),
+      ...nodesForSourceId(original, 's0-b0'),
+    ]
+
+    expect(session.applyVisual(next).ok).toBe(true)
+    expect(session.serialize()).toBe('Last.\n\nFirst.')
+    expect(session.view().visual.doc.content?.map((node) => node.content?.[0]?.text)).toEqual(['Last.', 'First.'])
+  })
+
   it('rejects visual edits that remove a protected fragment without changing session state', () => {
     const source = 'Before <u>protected</u> after.\n'
     const session = createMarkdownDocumentSession(source, createCodec())
@@ -187,5 +201,53 @@ describe('MarkdownDocumentSession', () => {
     const view = session.markSaved('![new](assets/new.png)\n\nMain change.', ticket)
     expect(view).toMatchObject({ dirty: true, source: '![new](assets/new.png)\n\nUser change.' })
     expect(view.fallbackReason).toContain('rebase conflict')
+  })
+
+  it('rebases frontmatter independently from body units without overwriting a newer user envelope', () => {
+    const original = '---\ntitle: old\n---\n\nBody.'
+    const userEnvelope = '---\ntitle: user\n---\n\nBody.'
+    const writtenEnvelope = '---\ntitle: written\n---\n\nBody.'
+    const user = createMarkdownDocumentSession(original, createCodec())
+    const userTicket = user.beginSave()
+    expect(user.applySource(userEnvelope).ok).toBe(true)
+    expect(user.markSaved(original, userTicket)).toMatchObject({ source: userEnvelope, dirty: true })
+
+    const conflict = createMarkdownDocumentSession(original, createCodec())
+    const conflictTicket = conflict.beginSave()
+    expect(conflict.applySource(userEnvelope).ok).toBe(true)
+    expect(conflict.markSaved(writtenEnvelope, conflictTicket)).toMatchObject({
+      source: userEnvelope,
+      dirty: true,
+      fallbackReason: expect.stringContaining('rebase conflict'),
+    })
+
+    const mainOnly = createMarkdownDocumentSession(original, createCodec())
+    const mainTicket = mainOnly.beginSave()
+    expect(mainOnly.applyVisual(visualWithText(mainOnly.view().visual, 'Body.', 'User body.')).ok).toBe(true)
+    expect(mainOnly.markSaved(writtenEnvelope, mainTicket)).toMatchObject({
+      source: '---\ntitle: written\n---\n\nUser body.',
+      dirty: true,
+    })
+  })
+
+  it('aligns duplicate source units by ordered ticket context during a concurrent save rebase', () => {
+    const session = createMarkdownDocumentSession('A\n\nB\n\nA', createCodec())
+    const ticket = session.beginSave()
+    expect(session.applySource('A\n\nA').ok).toBe(true)
+
+    expect(session.markSaved('A\n\nB\n\nX', ticket)).toMatchObject({ source: 'A\n\nX', dirty: true })
+    expect(session.serialize()).toBe('A\n\nX')
+  })
+
+  it('keeps the user source when deleting one of indistinguishable duplicate units cannot be aligned safely', () => {
+    const session = createMarkdownDocumentSession('A\n\nA', createCodec())
+    const ticket = session.beginSave()
+    expect(session.applySource('A').ok).toBe(true)
+
+    expect(session.markSaved('X\n\nA', ticket)).toMatchObject({
+      source: 'A',
+      dirty: true,
+      fallbackReason: expect.stringContaining('rebase conflict'),
+    })
   })
 })

@@ -57,6 +57,7 @@ interface SaveState {
   revision: number
   source: string
   units: SourceUnitState[]
+  envelope: RawDocEnvelope
 }
 
 function clone<T>(value: T): T {
@@ -74,6 +75,25 @@ function fingerprint(nodes: JSONContent[]): string {
     )
   }
   return JSON.stringify(withoutSourceIds(nodes))
+}
+
+function projectionFingerprint(nodes: JSONContent[]): string {
+  const comparable = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(comparable)
+    if (!value || typeof value !== 'object') return value
+    const record = value as Record<string, unknown>
+    const result = Object.fromEntries(
+      Object.entries(record)
+        .filter(([key]) => key !== 'sourceId')
+        .map(([key, child]) => [key, comparable(child)]),
+    ) as Record<string, unknown>
+    if (typeof record.type === 'string' && record.type.startsWith('protectedSource') && result.attrs && typeof result.attrs === 'object') {
+      delete (result.attrs as Record<string, unknown>).id
+    }
+    if (result.attrs && typeof result.attrs === 'object' && Object.keys(result.attrs as Record<string, unknown>).length === 0) delete result.attrs
+    return result
+  }
+  return JSON.stringify(comparable(nodes))
 }
 
 function normaliseEol(value: string, envelope: RawDocEnvelope): string {
@@ -198,6 +218,56 @@ function snapshotUnits(units: SourceUnitState[]): SourceUnitState[] {
   return units.map((unit) => ({ ...unit, range: { ...unit.range }, protectedFragments: clone(unit.protectedFragments) }))
 }
 
+function alignUnits(snapshot: SourceUnitState[], target: SourceUnitState[]): Array<SourceUnitState | undefined> {
+  const score = Array.from({ length: snapshot.length + 1 }, () => Array<number>(target.length + 1).fill(0))
+  for (let sourceIndex = snapshot.length - 1; sourceIndex >= 0; sourceIndex -= 1) {
+    for (let targetIndex = target.length - 1; targetIndex >= 0; targetIndex -= 1) {
+      score[sourceIndex]![targetIndex] = unitText(snapshot[sourceIndex]!) === unitText(target[targetIndex]!)
+        ? 1 + score[sourceIndex + 1]![targetIndex + 1]!
+        : Math.max(score[sourceIndex + 1]![targetIndex]!, score[sourceIndex]![targetIndex + 1]!)
+    }
+  }
+
+  const aligned: Array<SourceUnitState | undefined> = Array(snapshot.length)
+  const anchors: Array<{ sourceIndex: number, targetIndex: number }> = []
+  let sourceIndex = 0
+  let targetIndex = 0
+  while (sourceIndex < snapshot.length && targetIndex < target.length) {
+    if (unitText(snapshot[sourceIndex]!) === unitText(target[targetIndex]!)
+      && score[sourceIndex]![targetIndex] === 1 + score[sourceIndex + 1]![targetIndex + 1]!) {
+      aligned[sourceIndex] = target[targetIndex]
+      anchors.push({ sourceIndex, targetIndex })
+      sourceIndex += 1
+      targetIndex += 1
+    } else if (score[sourceIndex + 1]![targetIndex]! >= score[sourceIndex]![targetIndex + 1]!) {
+      sourceIndex += 1
+    } else {
+      targetIndex += 1
+    }
+  }
+
+  const boundaries = [{ sourceIndex: -1, targetIndex: -1 }, ...anchors, { sourceIndex: snapshot.length, targetIndex: target.length }]
+  for (let boundaryIndex = 0; boundaryIndex < boundaries.length - 1; boundaryIndex += 1) {
+    const left = boundaries[boundaryIndex]!
+    const right = boundaries[boundaryIndex + 1]!
+    const sourceCount = right.sourceIndex - left.sourceIndex - 1
+    const targetCount = right.targetIndex - left.targetIndex - 1
+    if (sourceCount !== targetCount) continue
+    for (let offset = 0; offset < sourceCount; offset += 1) {
+      aligned[left.sourceIndex + offset + 1] = target[left.targetIndex + offset + 1]
+    }
+  }
+  return aligned
+}
+
+function hasAmbiguousDuplicateDeletion(snapshot: SourceUnitState[], target: SourceUnitState[]): boolean {
+  const snapshotCounts = new Map<string, number>()
+  const targetCounts = new Map<string, number>()
+  snapshot.forEach((unit) => snapshotCounts.set(unit.raw, (snapshotCounts.get(unit.raw) ?? 0) + 1))
+  target.forEach((unit) => targetCounts.set(unit.raw, (targetCounts.get(unit.raw) ?? 0) + 1))
+  return [...snapshotCounts].some(([raw, count]) => count > 1 && (targetCounts.get(raw) ?? 0) < count)
+}
+
 export function createMarkdownDocumentSession(source: string, codec: MarkdownCodec): MarkdownDocumentSession {
   let state = createState(source, codec)
   let baseline = source
@@ -236,6 +306,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     }
 
     const previousById = new Map(state.units.map((unit) => [unit.sourceId, unit]))
+    const originalIndex = new Map(state.units.map((unit, index) => [unit.sourceId, index]))
     const groups = completeProjectedGroups(next)
     const used = new Set<string>()
     const pieces: string[] = []
@@ -243,6 +314,15 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       for (let index = 0; index < groups.length; index += 1) {
         const group = groups[index]!
         const previous = group.sourceId ? previousById.get(group.sourceId) : undefined
+        if (index > 0) {
+          const priorId = groups[index - 1]!.sourceId
+          const priorIndex = priorId ? originalIndex.get(priorId) : undefined
+          const currentIndex = group.sourceId ? originalIndex.get(group.sourceId) : undefined
+          if (priorIndex === undefined || currentIndex !== priorIndex + 1) {
+            const last = pieces.length - 1
+            pieces[last] = ensureCanonicalBoundary(pieces[last]!, state.envelope)
+          }
+        }
         const canReuse = !!previous && !used.has(previous.sourceId) && previous.fingerprint === fingerprint(group.nodes)
         if (canReuse) {
           used.add(previous!.sourceId)
@@ -251,10 +331,6 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
         }
 
         let serialized = normaliseEol(serializeProjectedGroup(group.nodes, codec), state.envelope)
-        if (!previous && index > 0) {
-          const last = pieces.length - 1
-          pieces[last] = ensureCanonicalBoundary(pieces[last]!, state.envelope)
-        }
         if (previous) {
           if (previous.raw.endsWith('\n') && !serialized.endsWith('\n')) serialized += state.envelope.eol
           if (!previous.raw.endsWith('\n')) serialized = serialized.replace(/(?:\r?\n)+$/, '')
@@ -275,7 +351,11 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     }
     const nextSource = sourcePrefix(state.envelope) + body
     if (nextSource === state.source) return success()
-    state = createState(nextSource, codec)
+    const projected = createState(nextSource, codec)
+    if (projected.fallbackReason || projectionFingerprint(candidateNodes) !== projectionFingerprint(projected.visual.doc.content ?? [])) {
+      return { ok: false, view: currentView(), error: 'Visual projection cannot be represented by a safe source rewrite' }
+    }
+    state = projected
     revision += 1
     mode = state.fallbackReason ? 'source' : 'visual'
     selection = undefined
@@ -317,7 +397,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
 
   const beginSave = (): SaveTicket => {
     const ticket = { revision, source: serialize() }
-    tickets.set(ticket, { revision, source: ticket.source, units: snapshotUnits(state.units) })
+    tickets.set(ticket, { revision, source: ticket.source, units: snapshotUnits(state.units), envelope: { ...state.envelope } })
     return ticket
   }
 
@@ -339,20 +419,35 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       baseline = sourceActuallyWritten
       return currentView()
     }
-    const savedById = new Map(saved.units.map((unit) => [unit.sourceId, unit]))
-    const writtenById = new Map(written.units.map((unit) => [unit.sourceId, unit]))
+    if (hasAmbiguousDuplicateDeletion(saved.units, state.units)) {
+      baseline = sourceActuallyWritten
+      conflictReason = 'rebase conflict: duplicate source units cannot be aligned safely'
+      return currentView()
+    }
+    const currentAligned = alignUnits(saved.units, state.units)
+    const writtenAligned = alignUnits(saved.units, written.units)
+    const ticketIndexByCurrent = new Map<SourceUnitState, number>()
+    currentAligned.forEach((unit, index) => {
+      if (unit) ticketIndexByCurrent.set(unit, index)
+    })
     let hasConflict = false
-    const rebased = state.units.map((unit) => {
-      const original = savedById.get(unit.sourceId)
-      const actual = writtenById.get(unit.sourceId)
-      if (!original || !actual) return unit
+    const rebased = state.units.flatMap((unit) => {
+      const ticketIndex = ticketIndexByCurrent.get(unit)
+      if (ticketIndex === undefined) return [unit]
+      const original = saved.units[ticketIndex]!
+      const actual = writtenAligned[ticketIndex]
       const userChanged = unitText(unit) !== unitText(original)
+      if (!actual) return userChanged ? [unit] : []
       const mainChanged = unitText(actual) !== unitText(original)
       if (userChanged && mainChanged) hasConflict = true
-      return userChanged ? unit : actual
+      return [userChanged ? unit : actual]
     })
     const body = rebased.map(unitText).join('')
-    const rebasedSource = sourcePrefix(written.envelope) + body
+    const userChangedEnvelope = sourcePrefix(state.envelope) !== sourcePrefix(saved.envelope)
+    const mainChangedEnvelope = sourcePrefix(written.envelope) !== sourcePrefix(saved.envelope)
+    if (userChangedEnvelope && mainChangedEnvelope && sourcePrefix(state.envelope) !== sourcePrefix(written.envelope)) hasConflict = true
+    const envelope = userChangedEnvelope ? state.envelope : written.envelope
+    const rebasedSource = sourcePrefix(envelope) + body
     state = createState(rebasedSource, codec)
     baseline = sourceActuallyWritten
     conflictReason = hasConflict ? 'rebase conflict: user and save result changed the same source unit' : undefined

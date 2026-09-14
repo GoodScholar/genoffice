@@ -116,6 +116,25 @@ describe('scanMarkdownSource', () => {
     expect(scan.units[0]).toMatchObject({ trailingRaw: '\r\n\r\n' })
   })
 
+  it('consumes emoji raw source by UTF-16 offsets instead of splitting a surrogate pair', () => {
+    const source = 'Hello 😀'
+    const scan = scanMarkdownSource(source, markedLex)
+
+    expect(scan).toMatchObject({ fallbackToSource: false })
+    expect(scan.units[0]).toMatchObject({ raw: source, range: { from: 0, to: source.length } })
+  })
+
+  it('keeps emoji, CRLF, and inline HTML ranges attached to original source offsets', () => {
+    const source = '😀 <u>x</u>\r\n\r\nAfter.'
+    const scan = scanMarkdownSource(source, markedLex)
+    const range = scan.units[0]?.protection?.ranges[0]
+
+    expect(scan).toMatchObject({ fallbackToSource: false })
+    expect(range).toEqual({ from: 3, to: 11 })
+    expect(source.slice(range?.from, range?.to)).toBe('<u>x</u>')
+    expect(scan.units[0]).toMatchObject({ raw: '😀 <u>x</u>', trailingRaw: '\r\n\r\n' })
+  })
+
   it('protects a precisely bounded HTML pair split by the real marked inline lexer', () => {
     const source = 'Before <u>text</u> after'
     const scan = scanMarkdownSource(source, markedLex)

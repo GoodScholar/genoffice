@@ -221,7 +221,8 @@ function failed(error: string): SourceScan {
 /** Consume a lexer raw value against the original source without normalizing it. */
 function consumeTokenRaw(source: string, raw: string, from: number): string | null {
   let cursor = from
-  for (const character of raw) {
+  for (let rawCursor = 0; rawCursor < raw.length; rawCursor += 1) {
+    const character = raw[rawCursor]!
     if (character === '\n') {
       if (source[cursor] === '\n') cursor += 1
       else if (source.startsWith('\r\n', cursor)) cursor += 2
