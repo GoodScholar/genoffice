@@ -41,7 +41,7 @@ export const GeneratedTrailingNode = Extension.create({
   },
 })
 
-/** Tags a user-created terminal empty paragraph before the session observes it. */
+/** Tags a history-bearing terminal empty paragraph before the session observes it. */
 export const UserTrailingEmptyParagraph = Extension.create({
   name: 'userTrailingEmptyParagraph',
 
@@ -55,6 +55,7 @@ export const UserTrailingEmptyParagraph = Extension.create({
             (transaction) =>
               transaction.docChanged &&
               transaction.getMeta('addToHistory') !== false &&
+              transaction.getMeta('preventUpdate') === undefined &&
               !transaction.getMeta('uiOnly') &&
               !transaction.getMeta('aiDraft') &&
               !transaction.steps.some(

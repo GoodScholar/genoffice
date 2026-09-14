@@ -350,6 +350,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
   let selection: SourceRange | undefined
   let tickets = new WeakMap<SaveTicket, SaveState>()
   let conflictReason: string | undefined
+  let userTrailingEmptyBase: DocumentState | undefined
 
   const currentView = (): SessionView => ({
     source: state.source,
@@ -391,6 +392,32 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       if (!expected.has(id)) return { ok: false, view: currentView(), error: `Unknown protected source fragment ${id}` }
     }
 
+    if (userTrailingEmptyBase && !userTrailingEmpty) {
+      const base = userTrailingEmptyBase
+      if (!frontmatterChanged && projectionFingerprint(candidateNodes) === projectionFingerprint(base.visual.doc.content ?? [])) {
+        state = base
+        userTrailingEmptyBase = undefined
+        revision += 1
+        selection = undefined
+        conflictReason = undefined
+        return success(changedRange(state.source))
+      }
+      const transient = state
+      state = base
+      userTrailingEmptyBase = undefined
+      const update = applyVisual(next, approvedIds)
+      if (!update.ok) {
+        state = transient
+        userTrailingEmptyBase = base
+      }
+      return update
+    }
+
+    if (userTrailingEmptyBase && userTrailingEmpty && !frontmatterChanged
+      && projectionFingerprint(candidateNodes) === projectionFingerprint(state.visual.doc.content ?? [])) {
+      return success()
+    }
+
     const blockReplacements = state.units
       .flatMap((unit) => unit.protectedFragments.map((fragment) => ({ unit, fragment })))
       .flatMap(({ unit, fragment }) => {
@@ -412,6 +439,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
         || projectionFingerprint(withoutEmptyParagraphs(candidateNodes)) === projectionFingerprint(withoutEmptyParagraphs(projectedNodes))
       if (!projected.fallbackReason && sameProjection) {
         state = projected
+        userTrailingEmptyBase = undefined
         revision += 1
         mode = state.fallbackReason ? 'source' : 'visual'
         selection = undefined
@@ -464,7 +492,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     let body = pieces.join('')
     if (state.envelope.trailingNewline) {
       if (body !== '' && !body.endsWith('\n')) body += state.envelope.eol
-    } else {
+    } else if (!userTrailingEmpty) {
       body = body.replace(/(?:\r?\n)+$/, '')
     }
     const envelope = frontmatterChanged
@@ -486,6 +514,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     if (projected.fallbackReason || (!sameProjection && !userEmptyProjection)) {
       return { ok: false, view: currentView(), error: 'Visual projection cannot be represented by a safe source rewrite' }
     }
+    const previousState = state
     state = userTrailingEmpty
       ? {
           ...projected,
@@ -495,6 +524,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
           },
         }
       : projected
+    userTrailingEmptyBase = userTrailingEmpty ? previousState : undefined
     revision += 1
     mode = state.fallbackReason ? 'source' : 'visual'
     selection = undefined
@@ -568,6 +598,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       return { ok: false, view: currentView(), error: error instanceof Error ? error.message : String(error) }
     }
     state = next
+    userTrailingEmptyBase = undefined
     revision += 1
     mode = state.fallbackReason ? 'source' : mode
     selection = undefined
@@ -578,6 +609,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
   const applySource = (next: string): SessionUpdate => {
     if (next !== state.source) {
       state = createState(next, codec)
+      userTrailingEmptyBase = undefined
       revision += 1
       conflictReason = undefined
     }
@@ -589,6 +621,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
 
   const restoreHistorySource = (next: string): SessionUpdate => {
     state = createState(next, codec)
+    userTrailingEmptyBase = undefined
     revision += 1
     mode = state.fallbackReason ? 'source' : 'visual'
     selection = undefined
@@ -632,7 +665,10 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     if (!saved || saved.revision !== ticket.revision || saved.source !== ticket.source) throw new Error('Invalid save ticket')
     tickets.delete(ticket)
     if (revision === ticket.revision) {
-      state = createState(sourceActuallyWritten, codec)
+      if (sourceActuallyWritten !== state.source || !userTrailingEmptyBase) {
+        state = createState(sourceActuallyWritten, codec)
+        userTrailingEmptyBase = undefined
+      }
       baseline = sourceActuallyWritten
       mode = state.fallbackReason ? 'source' : mode
       selection = undefined
@@ -699,6 +735,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     const envelope = userChangedEnvelope ? state.envelope : written.envelope
     const rebasedSource = sourcePrefix(envelope) + body
     state = createState(rebasedSource, codec)
+    userTrailingEmptyBase = undefined
     baseline = sourceActuallyWritten
     conflictReason = hasConflict ? 'rebase conflict: user and save result changed the same source unit' : undefined
     return currentView()

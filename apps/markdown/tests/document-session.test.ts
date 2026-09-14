@@ -295,6 +295,44 @@ describe('MarkdownDocumentSession', () => {
     expect(session.serialize()).toContain('User text')
   })
 
+  it.each([
+    ['LF', 'Old\n\n', 'Old\n\n\n\n'],
+    ['CRLF', 'Old\r\n\r\n', 'Old\r\n\r\n\r\n\r\n'],
+    ['no final newline', 'Old', 'Old\n\n\n\n'],
+  ])('keeps a real user empty-tail source transition idempotent through undo and redo with %s', (_name, source, expected) => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+    editor.chain().setMeta('addToHistory', false).setContent(session.view().visual.doc).run()
+    editor.commands.insertContentAt(editor.state.doc.content.size, { type: 'paragraph' })
+    const visual = { doc: editor.getJSON(), frontmatterInner: '' }
+
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ source: expected, revision: 1 })
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ source: expected, revision: 1 })
+    session.enterSource()
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ source: expected, revision: 1 })
+    const ticket = session.beginSave()
+    session.markSaved(expected, ticket)
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ source: expected, revision: 1, dirty: false })
+
+    editor.commands.undo()
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ source, revision: 2, dirty: true })
+    editor.commands.redo()
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.view()).toMatchObject({ source: expected, revision: 3, dirty: false })
+  })
+
   it('preserves a saved user-empty separator on reload without claiming its transient visual node', () => {
     const editor = new Editor({
       extensions: buildExtensions({
@@ -329,6 +367,31 @@ describe('MarkdownDocumentSession', () => {
     editor.view.dispatch(editor.state.tr.setMeta('uiOnly', true))
     expect(editor.getJSON().content?.at(-1)?.attrs?.sourceId).toBeNull()
     expect(session.view()).toMatchObject({ dirty: false, revision: 0, source: '' })
+  })
+
+  it('does not tag a programmatic empty setContent replacement as a user edit', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+
+    editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph' }] })
+
+    expect(editor.getJSON().content?.at(-1)?.attrs?.sourceId).toBeNull()
+  })
+
+  it('checks protected raw before accepting an otherwise unchanged visual projection', () => {
+    const session = createMarkdownDocumentSession('<details>P</details>\n', createCodec())
+    const next = cloneVisual(session.view().visual)
+    const protectedNode = next.doc.content?.[0]!
+    protectedNode.attrs = { ...protectedNode.attrs, raw: '<details>changed</details>\n' }
+
+    expect(session.applyVisual(next)).toMatchObject({ ok: false })
+    expect(session.serialize()).toBe('<details>P</details>\n')
   })
 
   it('ignores only the unchanged paragraph explicitly appended by the trailing-node plugin', () => {
