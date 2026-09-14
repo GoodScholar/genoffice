@@ -405,12 +405,12 @@ describe('model output is sanitized to pure GFM', () => {
     expect(md).not.toContain('<')
   })
 
-  it('legacy ::: fenced divs in tool input are stripped, keeping the body', () => {
+  it('legacy ::: fenced divs in tool input are not silently stripped', () => {
     const editor = createEditor()
-    executeTool(editor, insert(-1, ':::callout {type="warning"}\nBe careful.\n:::'))
+    const input = ':::callout {type="warning"}\nBe careful.\n:::'
+    executeTool(editor, insert(-1, input))
     const md = editor.getMarkdown()
-    expect(md).toContain('Be careful.')
-    expect(md).not.toContain(':::')
+    expect(md).toContain(input)
   })
 })
 

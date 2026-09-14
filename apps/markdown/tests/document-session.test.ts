@@ -2,7 +2,6 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Editor, type JSONContent } from '@tiptap/core'
-import { marked } from 'marked'
 import { buildExtensions } from '../src/renderer/editor/extensions'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
 import { createTiptapMarkdownCodec, type MarkdownCodec, type VisualProjection } from '../src/renderer/markdown/sourceProjection'
@@ -173,6 +172,25 @@ describe('MarkdownDocumentSession', () => {
     expect(session.applyVisual(next).ok).toBe(true)
     expect(session.serialize()).toBe('Last.\n\nFirst.')
     expect(session.view().visual.doc.content?.map((node) => node.content?.[0]?.text)).toEqual(['Last.', 'First.'])
+  })
+
+  it('rewrites a TipTap visual edit beside protected details without changing the protected source', () => {
+    const source = 'Old\n\n<details>P</details>\n\nTail\n'
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+    editor.commands.setContent(session.view().visual.doc)
+    editor.commands.setContent(visualWithText(session.view().visual, 'Old', 'NEW').doc)
+
+    const update = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: session.view().visual.frontmatterInner })
+    expect(update).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe('NEW\n\n<details>P</details>\n\nTail\n')
   })
 
   it('rejects visual edits that remove a protected fragment without changing session state', () => {

@@ -227,4 +227,9 @@ describe('legacy HTML content stays protected source', () => {
     expect(raw).toContain('<u>underlined</u>')
     expect(raw).toContain('<mark>marked</mark>')
   })
+
+  it('a legacy fenced div stays a protected source block', () => {
+    const source = ':::toggle {summary="More info"}\nHidden body.\n:::\n'
+    expect(protectedRaw(source)).toEqual([source])
+  })
 })

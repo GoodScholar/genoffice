@@ -56,10 +56,8 @@ function replaceText(visual: VisualProjection, from: string, to: string): Visual
 }
 
 describe('source-backed save sessions', () => {
-  it('enables the lossless path only for the development query flag', () => {
-    expect(losslessMarkdownEnabled('?losslessMarkdown=1', true)).toBe(true)
-    expect(losslessMarkdownEnabled('?losslessMarkdown=1', false)).toBe(false)
-    expect(losslessMarkdownEnabled('?losslessMarkdown=0', true)).toBe(false)
+  it('enables the lossless path by default', () => {
+    expect(losslessMarkdownEnabled()).toBe(true)
   })
 
   it('clears dirty after an unchanged save uses the text actually written', () => {

@@ -11,15 +11,11 @@ import { EditorState, TextSelection, type Transaction } from '@tiptap/pm/state'
 import { closeHistory } from '@tiptap/pm/history'
 import { useI18n } from './i18n/locale'
 import {
-  buildFrontmatterRaw,
   frontmatterInner,
   parseDocText,
-  serializeDocText,
-  stripLegacyFencedDivs,
   type DocEnvelope,
 } from './markdown/docText'
 import { createMarkdownDocumentSession, type MarkdownDocumentSession, type SaveTicket } from './markdown/documentSession'
-import { losslessMarkdownEnabled } from './markdown/featureFlag'
 import { createTiptapMarkdownCodec } from './markdown/sourceProjection'
 import { SourceSnapshotStep, sourceSnapshotFromTransaction } from './markdown/sourceHistory'
 import { buildExtensions } from './editor/extensions'
@@ -359,7 +355,6 @@ export default function App() {
   const filePathRef = useRef<string | null>(null)
   const slashMenuRef = useRef<SlashMenuHandle>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const losslessMarkdown = losslessMarkdownEnabled(window.location.search, import.meta.env.DEV)
   editorModeRef.current = editorMode
 
   const zoomOut = useCallback(
@@ -398,7 +393,7 @@ export default function App() {
   const enterSourceMode = useCallback((fragmentId?: string) => {
     const current = editorRef.current
     const session = sessionRef.current
-    if (!losslessMarkdown || !current || !session) return
+    if (!current || !session) return
 
     const projected = session.applyVisual({
       doc: current.getJSON(),
@@ -415,7 +410,7 @@ export default function App() {
     setSourceText(entered.view.source)
     setSourceModeError(projected.ok ? (entered.ok ? null : entered.error) : projected.error)
     mirrorSessionDirty(session)
-  }, [losslessMarkdown, mirrorSessionDirty])
+  }, [mirrorSessionDirty])
 
   const publishSourcePatch = useCallback((patch: SourcePatch) => {
     setSourcePatchError(null)
@@ -434,9 +429,9 @@ export default function App() {
       }
     },
     onConfirmChange: (request: ProtectedChangeRequest) => setProtectedChangeRequest(request),
-    conversionAvailable: losslessMarkdown,
+    conversionAvailable: true,
     getCurrentSource: () => sessionRef.current?.serialize(),
-  }), [enterSourceMode, losslessMarkdown, publishSourcePatch, t])
+  }), [enterSourceMode, publishSourcePatch, t])
 
   const insertImage = useCallback(() => {
     void (async () => {
@@ -468,7 +463,7 @@ export default function App() {
     editorProps: { attributes: { class: 'doc-editor' } },
     onTransaction: ({ editor: transactionEditor, transaction }) => {
       const session = sessionRef.current
-      if (!losslessMarkdown || !session || syncingProjectionRef.current) return
+      if (!session || syncingProjectionRef.current) return
       const restored = restoreSourceHistoryTransaction(session, transactionEditor, transaction)
       if (!restored) return
       const envelope = parseDocText(restored.source)
@@ -483,7 +478,7 @@ export default function App() {
     onUpdate: ({ editor: updated, transaction }) => {
       if (!transaction.getMeta('uiOnly')) {
         const session = sessionRef.current
-        if (losslessMarkdown && session && !syncingProjectionRef.current && editorModeRef.current === 'visual') {
+        if (session && !syncingProjectionRef.current && editorModeRef.current === 'visual') {
           const update = session.applyVisual({
             doc: updated.getJSON(),
             frontmatterInner: session.view().visual.frontmatterInner,
@@ -498,8 +493,6 @@ export default function App() {
             applyProjectionProvenance(updated, update.view.visual.doc)
             mirrorSessionDirty(session)
           }
-        } else if (!losslessMarkdown) {
-          markDirty()
         }
       }
       setOutlineItems(collectOutline(updated))
@@ -523,45 +516,29 @@ export default function App() {
         if (path) {
           const raw = await window.markdownApi.readFile(path)
           if (cancelled) return
-          const envelope = parseDocText(raw)
-          envelopeRef.current = envelope
           setImageBaseDir(dirOf(path))
-          if (losslessMarkdown) {
-            const session = createMarkdownDocumentSession(raw, createTiptapMarkdownCodec(editor))
-            sessionRef.current = session
-            syncingProjectionRef.current = true
-            replaceEditorBaseline(editor, session.view().visual.doc, (next) => setOutlineItems(collectOutline(next)))
-            syncingProjectionRef.current = false
-            mirrorSessionDirty(session)
-            setEditorMode(session.view().mode)
-            setSourceText(session.view().source)
-            setSourceModeError(session.view().fallbackReason ?? null)
-          } else {
-            // the initial load must not be undoable — Cmd+Z right after opening
-            // would otherwise blank the document (and Cmd+S overwrite the file)
-            editor
-              .chain()
-              .setMeta('addToHistory', false)
-              .setContent(stripLegacyFencedDivs(envelope.body), { contentType: 'markdown' })
-              .run()
-          }
+          const session = createMarkdownDocumentSession(raw, createTiptapMarkdownCodec(editor))
+          sessionRef.current = session
+          syncingProjectionRef.current = true
+          replaceEditorBaseline(editor, session.view().visual.doc, (next) => setOutlineItems(collectOutline(next)))
+          syncingProjectionRef.current = false
+          mirrorSessionDirty(session)
+          setEditorMode(session.view().mode)
+          setSourceText(session.view().source)
+          setSourceModeError(session.view().fallbackReason ?? null)
+          synchronizeSessionChrome(session.view())
           setFilePath(path)
-          const inner = frontmatterInner(envelope.frontmatter)
-          setFmText(inner)
-          if (inner) setFmOpen(true)
         } else {
-          envelopeRef.current = { ...EMPTY_ENVELOPE }
-          if (losslessMarkdown) {
-            const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
-            sessionRef.current = session
-            syncingProjectionRef.current = true
-            replaceEditorBaseline(editor, session.view().visual.doc, (next) => setOutlineItems(collectOutline(next)))
-            syncingProjectionRef.current = false
-            mirrorSessionDirty(session)
-            setEditorMode(session.view().mode)
-            setSourceText(session.view().source)
-            setSourceModeError(session.view().fallbackReason ?? null)
-          }
+          const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
+          sessionRef.current = session
+          syncingProjectionRef.current = true
+          replaceEditorBaseline(editor, session.view().visual.doc, (next) => setOutlineItems(collectOutline(next)))
+          syncingProjectionRef.current = false
+          mirrorSessionDirty(session)
+          setEditorMode(session.view().mode)
+          setSourceText(session.view().source)
+          setSourceModeError(session.view().fallbackReason ?? null)
+          synchronizeSessionChrome(session.view())
         }
         statusRef.current = 'ready'
         setStatus('ready')
@@ -576,14 +553,13 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [editor, losslessMarkdown, mirrorSessionDirty, synchronizeSessionChrome])
+  }, [editor, mirrorSessionDirty, synchronizeSessionChrome])
 
   const onFrontmatterChange = useCallback(
     (inner: string) => {
       setFmText(inner)
-      envelopeRef.current.frontmatter = buildFrontmatterRaw(inner)
       const session = sessionRef.current
-      if (losslessMarkdown && session) {
+      if (session) {
         const update = session.applyVisual({
           doc: editorRef.current?.getJSON() ?? session.view().visual.doc,
           frontmatterInner: inner,
@@ -600,15 +576,15 @@ export default function App() {
         mirrorSessionDirty(session)
         return
       }
-      markDirty()
+      setSourceModeError('Document session is not ready')
     },
-    [losslessMarkdown, markDirty, mirrorSessionDirty],
+    [mirrorSessionDirty],
   )
 
   const enterVisualMode = useCallback(() => {
     const current = editorRef.current
     const session = sessionRef.current
-    if (!losslessMarkdown || !current || !session) return
+    if (!current || !session) return
 
     const before = sourceModeStartRef.current
     if (!before) {
@@ -654,17 +630,17 @@ export default function App() {
     } finally {
       syncingProjectionRef.current = false
     }
-  }, [losslessMarkdown, mirrorSessionDirty, synchronizeSessionChrome])
+  }, [mirrorSessionDirty, synchronizeSessionChrome])
 
   const onSourceChange = useCallback((next: string) => {
     const session = sessionRef.current
-    if (!losslessMarkdown || !session) return
+    if (!session) return
     const update = session.applySource(next)
     setEditorMode('source')
     setSourceText(update.view.source)
     setSourceModeError(update.ok ? null : update.error)
     mirrorSessionDirty(session)
-  }, [losslessMarkdown, mirrorSessionDirty])
+  }, [mirrorSessionDirty])
 
   /** Serialize and write to disk; false when canceled/failed (caller keeps the tab open) */
   const doSave = useCallback(async (mode: SaveMode, suggestedName?: string): Promise<boolean> => {
@@ -674,63 +650,30 @@ export default function App() {
     setSaveState('saving')
     try {
       const session = sessionRef.current
-      if (losslessMarkdown && session) {
-        let saveAttempt
-        try {
-          // `beginSave` validates the projected source before any IPC can write it.
-          saveAttempt = await requestSourceBackedSave(
-            session,
-            current,
-            mode,
-            window.markdownApi.save,
-            () => setSaveState('failed'),
-            suggestedName,
-          )
-        } catch (err) {
-          console.error('[markdown] source-backed save consistency check failed:', err)
-          return false
-        }
-        const { ticket, result } = saveAttempt
-        if (result.ok && 'path' in result) {
-          const saved = synchronizeSourceBackedSave(session, current, ticket, result)
-          setImageBaseDir(dirOf(result.path))
-          setFilePath(result.path)
-          setSourceText(saved.source)
-          mirrorSessionDirty(session)
-          setSaveState(saved.dirty ? 'idle' : 'saved')
-          return true
-        }
-        setSaveState(result.ok ? 'idle' : 'failed')
+      if (!session) return false
+      let saveAttempt
+      try {
+        // `beginSave` validates the projected source before any IPC can write it.
+        saveAttempt = await requestSourceBackedSave(
+          session,
+          current,
+          mode,
+          window.markdownApi.save,
+          () => setSaveState('failed'),
+          suggestedName,
+        )
+      } catch (err) {
+        console.error('[markdown] source-backed save consistency check failed:', err)
         return false
       }
-      // edits landing while the write is in flight (AI streaming, fast typing)
-      // must keep the document dirty — compare doc identity after the await
-      const docAtSave = current.state.doc
-      const fmAtSave = envelopeRef.current.frontmatter
-      const body = current.getMarkdown()
-      const text = serializeDocText(envelopeRef.current, body)
-      const imageSources = imageSourcesFromEditor(current)
-      const result = await window.markdownApi.save({ text, imageSources, mode, suggestedName })
+      const { ticket, result } = saveAttempt
       if (result.ok && 'path' in result) {
-        const unchanged =
-          editorRef.current?.state.doc === docAtSave && envelopeRef.current.frontmatter === fmAtSave
-        if (result.imageRewrites?.length && editorRef.current) {
-          applyImageRewrites(editorRef.current, result.imageRewrites)
-        }
+        const saved = synchronizeSourceBackedSave(session, current, ticket, result)
         setImageBaseDir(dirOf(result.path))
         setFilePath(result.path)
-        if (unchanged) {
-          dirtyRef.current = false
-          setDirty(false)
-          window.markdownApi.setDirty(false)
-          setSaveState('saved')
-        } else {
-          // the main process cleared its dirty flag on write — re-assert it
-          dirtyRef.current = true
-          setDirty(true)
-          window.markdownApi.setDirty(true)
-          setSaveState('idle')
-        }
+        setSourceText(saved.source)
+        mirrorSessionDirty(session)
+        setSaveState(saved.dirty ? 'idle' : 'saved')
         return true
       }
       setSaveState(result.ok ? 'idle' : 'failed')
@@ -742,7 +685,7 @@ export default function App() {
     } finally {
       savingRef.current = false
     }
-  }, [losslessMarkdown, mirrorSessionDirty])
+  }, [mirrorSessionDirty])
 
   /** `outPath` (headless export only) skips the save dialog; resolves true when a file was written. */
   const runExport = useCallback(async (format: ExportFormat, outPath?: string) => {
@@ -1066,7 +1009,7 @@ export default function App() {
     },
     sourceProtection: (): SourceProtectionAccess | undefined => {
       const session = sessionRef.current
-      if (!losslessMarkdown || !session) return undefined
+      if (!session) return undefined
       return {
         mode: () => session.view().mode,
         source: () => session.serialize(),
@@ -1127,7 +1070,7 @@ export default function App() {
     replace: t('replace'),
     replaceAll: t('replaceAll'),
   }
-  const sourceMode = losslessMarkdown && editorMode === 'source'
+  const sourceMode = editorMode === 'source'
 
   if (status === 'error') {
     return (

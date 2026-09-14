@@ -117,6 +117,15 @@ function withoutEmptyParagraphs(nodes: JSONContent[]): JSONContent[] {
     .map((node) => node.content ? { ...node, content: withoutEmptyParagraphs(node.content) } : node)
 }
 
+function withoutGeneratedTrailingParagraph(nodes: JSONContent[]): JSONContent[] {
+  const last = nodes[nodes.length - 1]
+  return last?.type === 'paragraph'
+    && !last.attrs?.sourceId
+    && (last.content?.length ?? 0) === 0
+    ? nodes.slice(0, -1)
+    : nodes
+}
+
 function normaliseEol(value: string, envelope: RawDocEnvelope): string {
   if (envelope.eol === '\n') return value.replace(/\r\n/g, '\n')
   return value.replace(/\r?\n/g, '\r\n')
@@ -366,7 +375,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
   const applyVisual = (next: VisualProjection, approvedIds = new Set<string>()): SessionUpdate => {
     if (state.fallbackReason) return { ok: false, view: currentView(), error: state.fallbackReason }
     const frontmatterChanged = next.frontmatterInner !== state.visual.frontmatterInner
-    const candidateNodes = next.doc.content ?? []
+    const candidateNodes = withoutGeneratedTrailingParagraph(next.doc.content ?? [])
     const expected = new Map(state.units.flatMap((unit) => unit.protectedFragments.map((fragment) => [fragment.id, fragment.raw] as const)))
     const found = collectProtected(candidateNodes)
     for (const [id, raw] of expected) {
@@ -411,7 +420,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
 
     const previousById = new Map(state.units.map((unit) => [unit.sourceId, unit]))
     const originalIndex = new Map(state.units.map((unit, index) => [unit.sourceId, index]))
-    const groups = completeProjectedGroups(next)
+    const groups = completeProjectedGroups({ ...next, doc: { ...next.doc, content: candidateNodes } })
     const used = new Set<string>()
     const pieces: string[] = []
     try {
