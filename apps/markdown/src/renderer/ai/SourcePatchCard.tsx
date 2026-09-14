@@ -21,13 +21,13 @@ export function SourcePatchCard({ patch, onConfirm, onCancel }: SourcePatchCardP
   const confirm = () => {
     const result = onConfirm(patch)
     if (!result.ok) setError(result.error === 'fragment-missing' || result.error === 'raw-changed' || result.error === 'revision-changed'
-      ? t('protectedChangeStale')
+      ? t('sourcePatchRegenerate')
       : result.error)
   }
 
   return (
-    <section className="source-patch-card" aria-label={t('protectedChangeTitle')}>
-      <div className="source-patch-title">{t('protectedChangeTitle')}</div>
+    <section className="source-patch-card" aria-label={t('sourcePatchTitle')}>
+      <div className="source-patch-title">{t('sourcePatchTitle')}</div>
       <div className="source-patch-fragment">{patch.fragmentId}</div>
       <div className="source-patch-diff" role="table">
         {Array.from({ length: count }, (_, index) => (

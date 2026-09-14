@@ -427,14 +427,14 @@ export default function App() {
       if (!session) return
       try {
         publishSourcePatch(session.proposeFragmentConversion(id))
-      } catch (error) {
-        setSourcePatchError(error instanceof Error ? error.message : String(error))
+      } catch {
+        setSourcePatchError(t('sourcePatchConversionFailed'))
       }
     },
     onConfirmChange: (request: ProtectedChangeRequest) => setProtectedChangeRequest(request),
     conversionAvailable: losslessMarkdown,
     getCurrentSource: () => sessionRef.current?.serialize(),
-  }), [enterSourceMode, losslessMarkdown, publishSourcePatch])
+  }), [enterSourceMode, losslessMarkdown, publishSourcePatch, t])
 
   const insertImage = useCallback(() => {
     void (async () => {
@@ -1067,6 +1067,8 @@ export default function App() {
       if (!losslessMarkdown || !session) return undefined
       return {
         mode: () => session.view().mode,
+        source: () => session.serialize(),
+        sourceBlocks: () => session.sourceBlocks(),
         context: () => session.view().protectedFragments
           .map((fragment) => `protected:${fragment.id}:${fragment.reason}\n${fragment.raw}`)
           .join('\n\n'),

@@ -1,3 +1,9 @@
+const sourcePatchFallback = {
+  sourcePatchTitle: 'Confirm source patch',
+  sourcePatchConversionFailed: 'Could not convert protected source. Edit source or generate a new proposal.',
+  sourcePatchRegenerate: 'This patch is stale. Generate a new proposal.',
+}
+
 export const strings = {
   zh: {
     visualMode: '可视化',
@@ -15,6 +21,9 @@ export const strings = {
     protectedChangeCancel: '取消',
     protectedChangeConfirm: '确认修改',
     protectedChangeStale: '文档已变化，请重新操作',
+    sourcePatchTitle: '确认源码补丁',
+    sourcePatchConversionFailed: '无法转换受保护源码，请编辑源码或重新生成建议',
+    sourcePatchRegenerate: '补丁已过期，请重新生成建议。',
     aiToolReadFm: '读取文档属性',
     aiToolWriteDoc: '撰写文档',
     aiToolWriteDocFailed: '文档撰写失败',
@@ -204,7 +213,7 @@ export const strings = {
     zoomIn: '放大',
     zoomOut: '缩小',
   },
-  en: {
+  en: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -415,7 +424,7 @@ export const strings = {
     zoomIn: 'Zoom in',
     zoomOut: 'Zoom out',
   },
-  ja: {
+  ja: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -624,7 +633,7 @@ export const strings = {
     zoomIn: '拡大',
     zoomOut: '縮小',
   },
-  ko: {
+  ko: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -834,7 +843,7 @@ export const strings = {
     zoomIn: '확대',
     zoomOut: '축소',
   },
-  fr: {
+  fr: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -1049,7 +1058,7 @@ export const strings = {
     zoomIn: 'Zoom avant',
     zoomOut: 'Zoom arrière',
   },
-  de: {
+  de: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -1263,7 +1272,7 @@ export const strings = {
     zoomIn: 'Vergrößern',
     zoomOut: 'Verkleinern',
   },
-  es: {
+  es: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -1478,7 +1487,7 @@ export const strings = {
     zoomIn: 'Acercar',
     zoomOut: 'Alejar',
   },
-  th: {
+  th: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -1685,7 +1694,7 @@ export const strings = {
     zoomIn: 'ขยาย',
     zoomOut: 'ย่อ',
   },
-  id: {
+  id: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -1895,7 +1904,7 @@ export const strings = {
     zoomIn: 'Perbesar',
     zoomOut: 'Perkecil',
   },
-  ru: {
+  ru: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -2106,7 +2115,7 @@ export const strings = {
     zoomIn: 'Увеличить',
     zoomOut: 'Уменьшить',
   },
-  ar: {
+  ar: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -2313,7 +2322,7 @@ export const strings = {
     zoomIn: 'تكبير',
     zoomOut: 'تصغير',
   },
-  pt: {
+  pt: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -2526,7 +2535,7 @@ export const strings = {
     zoomIn: 'Ampliar',
     zoomOut: 'Reduzir',
   },
-  it: {
+  it: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -2739,7 +2748,7 @@ export const strings = {
     zoomIn: 'Ingrandisci',
     zoomOut: 'Riduci',
   },
-  pl: {
+  pl: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -2950,7 +2959,7 @@ export const strings = {
     zoomIn: 'Powiększ',
     zoomOut: 'Pomniejsz',
   },
-  cs: {
+  cs: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -3160,7 +3169,7 @@ export const strings = {
     insertDiagram: 'Diagram',
     mermaidError: 'Chyba syntaxe diagramu',
   },
-  nl: {
+  nl: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -3372,7 +3381,7 @@ export const strings = {
     zoomIn: 'Inzoomen',
     zoomOut: 'Uitzoomen',
   },
-  ms: {
+  ms: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -3582,7 +3591,7 @@ export const strings = {
     zoomIn: 'Zum masuk',
     zoomOut: 'Zum keluar',
   },
-  he: {
+  he: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -3788,7 +3797,7 @@ export const strings = {
     zoomIn: 'הגדלה',
     zoomOut: 'הקטנה',
   },
-  hi: {
+  hi: { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',
@@ -3998,7 +4007,7 @@ export const strings = {
     zoomIn: 'ज़ूम इन',
     zoomOut: 'ज़ूम आउट',
   },
-  'zh-TW': {
+  'zh-TW': { ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Cannot return to visual mode',

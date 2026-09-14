@@ -1,15 +1,24 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, createElement } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { Editor } from '@tiptap/core'
 import { undo, redo } from '@tiptap/pm/history'
 import { buildExtensions } from '../src/renderer/editor/extensions'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
 import { createTiptapMarkdownCodec } from '../src/renderer/markdown/sourceProjection'
 import { applyConfirmedSourcePatch, replaceEditorBaseline, restoreSourceHistoryTransaction } from '../src/renderer/App'
+import { SourcePatchCard } from '../src/renderer/ai/SourcePatchCard'
 
 const editors: Editor[] = []
+const roots: Array<{ root: Root, host: HTMLDivElement }> = []
 
 afterEach(() => {
   for (const editor of editors.splice(0)) editor.destroy()
+  while (roots.length) {
+    const mounted = roots.pop()!
+    act(() => mounted.root.unmount())
+    mounted.host.remove()
+  }
 })
 
 function createSession(source = '<details>old</details>\n\nSafe\n') {
@@ -54,18 +63,38 @@ describe('source patch confirmation', () => {
     expect(session.view().revision).toBe(1)
   })
 
-  it.each(['fragment', 'raw', 'revision'] as const)('rejects an expired %s patch without changing source', (kind) => {
+  it('rejects a missing fragment without changing source', () => {
     const session = createSession()
     const fragment = session.view().protectedFragments[0]!
     const patch = session.proposeFragmentReplacement(fragment.id, '<details>new</details>\n\n')
-    if (kind === 'fragment') patch.fragmentId = 'missing'
-    if (kind === 'raw') patch.expectedRaw = '<details>different</details>'
-    if (kind === 'revision') patch.baseRevision += 1
+    patch.fragmentId = 'missing'
     const before = session.serialize()
 
     const applied = session.applyConfirmedPatch(patch)
 
-    expect(applied).toMatchObject({ ok: false })
+    expect(applied).toMatchObject({ ok: false, error: 'fragment-missing' })
+    expect(session.serialize()).toBe(before)
+  })
+
+  it('rejects changed raw without changing source', () => {
+    const session = createSession()
+    const fragment = session.view().protectedFragments[0]!
+    const patch = session.proposeFragmentReplacement(fragment.id, '<details>new</details>\n\n')
+    patch.expectedRaw = '<details>different</details>'
+    const before = session.serialize()
+
+    expect(session.applyConfirmedPatch(patch)).toMatchObject({ ok: false, error: 'raw-changed' })
+    expect(session.serialize()).toBe(before)
+  })
+
+  it('rejects changed revision without changing source', () => {
+    const session = createSession()
+    const fragment = session.view().protectedFragments[0]!
+    const patch = session.proposeFragmentReplacement(fragment.id, '<details>new</details>\n\n')
+    patch.baseRevision += 1
+    const before = session.serialize()
+
+    expect(session.applyConfirmedPatch(patch)).toMatchObject({ ok: false, error: 'revision-changed' })
     expect(session.serialize()).toBe(before)
   })
 
@@ -93,5 +122,39 @@ describe('source patch confirmation', () => {
     expect(session.serialize()).toBe('<details>old</details>\n\nSafe\n')
     expect(redo(editor.state, editor.view.dispatch)).toBe(true)
     expect(session.serialize()).toBe('<details>new</details>\n\nSafe\n')
+  })
+
+  it('exposes current source-backed blocks after source-mode input without normalizing BOM or CRLF', () => {
+    const session = createSession('\uFEFF---\r\ntitle: Original\r\n---\r\n\r\nOriginal\r\n')
+    const latest = '\uFEFF---\r\ntitle: LATEST\r\n---\r\n\r\nLATEST\r\n'
+
+    session.applySource(latest)
+
+    expect(session.serialize()).toBe(latest)
+    expect(session.sourceBlocks()).toEqual(['LATEST\r\n'])
+  })
+
+  it('renders a line diff, keeps stale proposals visible, and separates confirm from cancel', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    roots.push({ root, host })
+    const confirm = vi.fn(() => ({ ok: false as const, error: 'raw-changed' }))
+    const cancel = vi.fn()
+    const patch = {
+      id: 'p1', origin: 'ai' as const, fragmentId: 'html-1', expectedRaw: 'old one\nold two', nextRaw: 'new one\nnew two', baseRevision: 0,
+    }
+
+    act(() => root.render(createElement(SourcePatchCard, { patch, onConfirm: confirm, onCancel: cancel })))
+    expect(host.querySelectorAll('.source-patch-line')).toHaveLength(2)
+    expect(host.textContent).toContain('old one')
+    expect(host.textContent).toContain('new two')
+    const buttons = host.querySelectorAll('button')
+    act(() => buttons[1]!.click())
+    expect(confirm).toHaveBeenCalledWith(patch)
+    expect(host.querySelector('.source-patch-card')).not.toBeNull()
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('重新生成')
+    act(() => buttons[0]!.click())
+    expect(cancel).toHaveBeenCalledOnce()
   })
 })

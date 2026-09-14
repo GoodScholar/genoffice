@@ -79,6 +79,16 @@ function selectionMarkdown(editor: Editor): string {
 
 /** Per-turn context: numbered block skeleton + selection, same shape as the docs agent */
 export function buildDocContext(editor: Editor, protection?: SourceProtectionAccess): string {
+  if (protection?.mode() === 'source') {
+    const blocks = protection.sourceBlocks()
+    return [
+      '## Document source (read-only)',
+      protection.source(),
+      '',
+      '## Source blocks',
+      ...blocks.map((raw, index) => `${index} | source | ${raw}`),
+    ].join('\n')
+  }
   const doc = editor.state.doc
   const blockCount = doc.childCount
   if (isBlankDoc(doc)) {
@@ -469,7 +479,7 @@ export function executeTool(
 ): ToolExecution | Promise<ToolExecution> {
   const doc = editor.state.doc
   const maxIndex = doc.childCount - 1
-  if (protection?.mode() === 'source' && ['apply_ops', 'write_document', 'insert_image', 'generate_image'].includes(call.name)) {
+  if (protection?.mode() === 'source' && ['apply_ops', 'write_document', 'insert_image', 'generate_image', 'propose_source_patch'].includes(call.name)) {
     return fail('Structured document writes are unavailable in source mode; you may still read the source.', call.name)
   }
 
@@ -497,15 +507,17 @@ export function executeTool(
     }
 
     case 'read_blocks': {
-      const start = clampIndex(call.input.startIndex, maxIndex)
-      const end = clampIndex(call.input.endIndex, maxIndex)
+      const sourceBlocks = protection?.mode() === 'source' ? protection.sourceBlocks() : undefined
+      const readableMaxIndex = sourceBlocks ? sourceBlocks.length - 1 : maxIndex
+      const start = clampIndex(call.input.startIndex, readableMaxIndex)
+      const end = clampIndex(call.input.endIndex, readableMaxIndex)
       if (start === null || end === null || start > end) {
         return fail(
-          `Invalid block range; the document has ${doc.childCount} blocks.`,
+          `Invalid block range; the document has ${readableMaxIndex + 1} blocks.`,
           t('aiToolReadBlocks'),
         )
       }
-      const full = serializeBlocks(editor, start, end)
+      const full = sourceBlocks ? sourceBlocks.slice(start, end + 1).join('') : serializeBlocks(editor, start, end)
       const offset = Math.max(0, Number(call.input.offset) || 0)
       const page = full.slice(offset, offset + READ_PAGE_CHARS)
       const truncated = offset + READ_PAGE_CHARS < full.length

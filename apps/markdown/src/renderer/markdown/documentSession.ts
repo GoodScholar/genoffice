@@ -29,6 +29,7 @@ export interface SaveTicket {
 
 export interface MarkdownDocumentSession {
   view(): SessionView
+  sourceBlocks(): readonly string[]
   applyVisual(next: VisualProjection): SessionUpdate
   previewApprovedVisual(next: VisualProjection, protectedIds: readonly string[]): SessionUpdate
   applyVisualWithApprovedFragments(next: VisualProjection, protectedIds: readonly string[]): SessionUpdate
@@ -329,6 +330,10 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     ...(selection ? { sourceSelection: { ...selection } } : {}),
     ...((conflictReason ?? state.fallbackReason) ? { fallbackReason: conflictReason ?? state.fallbackReason } : {}),
   })
+
+  const sourceBlocks = (): readonly string[] => state.units.length > 0
+    ? state.units.map(unitText)
+    : state.envelope.bodyRaw === '' ? [] : [state.envelope.bodyRaw]
 
   const success = (range?: SourceRange): SessionUpdate => ({ ok: true, view: currentView(), ...(range ? { changedRange: range } : {}) })
 
@@ -646,6 +651,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
 
   return {
     view: currentView,
+    sourceBlocks,
     applyVisual,
     previewApprovedVisual,
     applyVisualWithApprovedFragments,

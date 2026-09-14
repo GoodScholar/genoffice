@@ -128,13 +128,20 @@ export function protectedIdsForOps(editor: Editor, ops: MdOp[]): string[] {
     if (start !== end) return all
     return byBlock[start] ?? []
   }
+  let earlierOpMayChangeDocOrSelection = false
   for (const op of ops) {
+    const hasDynamicTarget = ('target' in op && op.target === 'selection') || ('after' in op && op.after === 'selection')
+    // Targets based on the live selection cannot be proven stable after any
+    // earlier structural/editor op in the same batch.  Reject before runOps
+    // rather than resolving them against a partially-mutated document.
+    if (hasDynamicTarget && earlierOpMayChangeDocOrSelection) return all
     if (op.op === 'moveBlocks') return all
     if ('target' in op) {
       const ids = idsForTarget(op.target)
       if (ids.length) return ids
     }
     if ('after' in op && op.after === 'selection' && selected.startIndex !== selected.endIndex) return all
+    if (op.op !== 'setFrontmatter') earlierOpMayChangeDocOrSelection = true
   }
   return []
 }

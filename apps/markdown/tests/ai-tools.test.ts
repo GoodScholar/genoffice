@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Editor } from '@tiptap/core'
+import { TextSelection } from '@tiptap/pm/state'
+import { undoDepth } from '@tiptap/pm/history'
 import { buildExtensions } from '../src/renderer/editor/extensions'
 import { buildDocContext, executeTool, markDocSeen } from '../src/renderer/ai/tools'
 import { deriveAutoFileName } from '../src/renderer/App'
@@ -44,6 +46,8 @@ function sourceAccess(overrides: Partial<SourceProtectionAccess> = {}): SourcePr
   return {
     mode: () => 'visual',
     context: () => 'protected:html-1:raw-html\n<details>raw</details>',
+    source: () => '<details>raw</details>\n\nSafe\n',
+    sourceBlocks: () => ['<details>raw</details>\n\n', 'Safe\n'],
     protectedIdsForOps: () => [],
     propose: (_id, expectedRaw, nextRaw) => ({
       id: 'proposal-1', origin: 'ai', fragmentId: 'html-1', expectedRaw, nextRaw, baseRevision: 0,
@@ -103,6 +107,36 @@ describe('lossless source access', () => {
     expect(editor.getJSON()).toEqual(before)
   })
 
+  it('fails closed when an earlier op can invalidate a later selection target', () => {
+    const request = vi.fn()
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange: request },
+      }),
+      content: {
+        type: 'doc', content: [
+          { type: 'paragraph', content: [{ type: 'text', text: 'safe' }] },
+          { type: 'protectedSourceBlock', attrs: { id: 'html-1', raw: '<details>raw</details>', reason: 'raw-html' } },
+        ],
+      },
+    })
+    editors.push(editor)
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 1)))
+    const before = editor.getJSON()
+    const undoBefore = undoDepth(editor.state)
+    const result = executeTool(editor, ops(
+      { op: 'deleteBlocks', target: { start: 0 } },
+      { op: 'replaceBlocks', target: 'selection', markdown: 'replacement' },
+    ))
+
+    expect(result.isError).toBe(true)
+    expect(editor.getJSON()).toEqual(before)
+    expect(undoDepth(editor.state)).toBe(undoBefore)
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it.each(['apply_ops', 'write_document', 'insert_image', 'generate_image'])('rejects %s in source mode while keeping reads available', (name) => {
     const editor = createEditor('safe')
     const access = sourceAccess({ mode: () => 'source' })
@@ -122,6 +156,21 @@ describe('lossless source access', () => {
     expect(executeTool(editor, call('get_document_context'), undefined, undefined, undefined, access).isError).toBeUndefined()
   })
 
+  it('reads the latest session source rather than the stale visual projection in source mode', () => {
+    const editor = createEditor('Original')
+    const access = sourceAccess({
+      mode: () => 'source',
+      source: () => '\uFEFF---\r\ntitle: LATEST\r\n---\r\n\r\nLATEST body\r\n',
+      sourceBlocks: () => ['LATEST body\r\n'],
+    })
+
+    expect(buildDocContext(editor, access)).toContain('LATEST body')
+    expect(buildDocContext(editor, access)).not.toContain('Original')
+    const read = executeTool(editor, call('read_blocks', { startIndex: 0, endIndex: 0 }), undefined, undefined, undefined, access)
+    expect(read.output).toContain('LATEST body\r\n')
+    expect(read.output).not.toContain('Original')
+  })
+
   it('publishes a complete protected-fragment proposal without mutating the editor', () => {
     const editor = createProtectedEditor()
     const before = editor.getJSON()
@@ -136,6 +185,21 @@ describe('lossless source access', () => {
     expect(result.isError).toBeUndefined()
     expect(publish).toHaveBeenCalledOnce()
     expect(editor.getJSON()).toEqual(before)
+  })
+
+  it('rejects a source-mode patch proposal before creating or publishing it', () => {
+    const editor = createProtectedEditor()
+    const propose = vi.fn()
+    const publish = vi.fn()
+    const access = sourceAccess({ mode: () => 'source', propose, publish })
+
+    const result = executeTool(editor, call('propose_source_patch', {
+      fragmentId: 'html-1', expectedRaw: '<details>raw</details>', nextRaw: '<details>new</details>',
+    }), undefined, undefined, undefined, access)
+
+    expect(result).toMatchObject({ isError: true })
+    expect(propose).not.toHaveBeenCalled()
+    expect(publish).not.toHaveBeenCalled()
   })
 })
 
