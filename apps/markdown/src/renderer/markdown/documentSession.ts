@@ -140,6 +140,14 @@ function visualFrontmatter(raw: string): string {
   return frontmatterInner(raw.replace(/\r\n/g, '\n'))
 }
 
+function envelopeFrontmatterInner(raw: string): string {
+  const opening = /^(---)(\r?\n)/.exec(raw)
+  if (!opening) return ''
+  const eol = opening[2]
+  const closing = raw.indexOf(`${eol}---${eol}`, opening[0].length)
+  return closing < 0 ? '' : raw.slice(opening[0].length, closing)
+}
+
 function editedFrontmatterRaw(inner: string, envelope: RawDocEnvelope): string {
   const trimmed = inner.replace(/^(?:\r?\n)+|(?:\r?\n)+$/g, '')
   if (trimmed === '') return ''
@@ -339,7 +347,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     }))
     : state.envelope.bodyRaw === '' ? [] : [{ raw: state.envelope.bodyRaw, protected: [] }]
 
-  const currentFrontmatter = (): string => frontmatterInner(state.envelope.frontmatterRaw)
+  const currentFrontmatter = (): string => envelopeFrontmatterInner(state.envelope.frontmatterRaw)
 
   const success = (range?: SourceRange): SessionUpdate => ({ ok: true, view: currentView(), ...(range ? { changedRange: range } : {}) })
 

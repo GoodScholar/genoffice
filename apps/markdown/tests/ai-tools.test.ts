@@ -6,6 +6,8 @@ import { buildExtensions } from '../src/renderer/editor/extensions'
 import { buildDocContext, executeTool, markDocSeen } from '../src/renderer/ai/tools'
 import { deriveAutoFileName } from '../src/renderer/App'
 import type { SourceProtectionAccess } from '../src/renderer/markdown/sourcePatch'
+import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
+import { createTiptapMarkdownCodec } from '../src/renderer/markdown/sourceProjection'
 
 // Undestroyed views leave DOMObserver flush timers that fire after jsdom teardown
 // ("document is not defined" unhandled error) — destroy every editor we create.
@@ -213,6 +215,30 @@ describe('lossless source access', () => {
     const read = executeTool(editor, call('read_frontmatter'), undefined, fm, undefined, access)
 
     expect(read.output).toBe('title: LATEST')
+  })
+
+  it('reads BOM and CRLF frontmatter from the real current session source', () => {
+    const editor = createEditor()
+    const session = createMarkdownDocumentSession(
+      '\uFEFF---\r\ntitle: Original\r\n---\r\n\r\nBody\r\n',
+      createTiptapMarkdownCodec(editor),
+    )
+    expect(session.enterSource().ok).toBe(true)
+    expect(session.applySource('\uFEFF---\r\ntitle: LATEST\r\ntags:\r\n  - alpha\r\n---\r\n\r\nBody\r\n').ok).toBe(true)
+    const access: SourceProtectionAccess = {
+      mode: () => 'source',
+      source: () => session.serialize(),
+      sourceBlocks: () => session.sourceBlocks(),
+      frontmatter: () => session.frontmatter(),
+      context: () => '',
+      protectedIdsForOps: () => [],
+      propose: () => { throw new Error('not used') },
+      publish: () => {},
+    }
+
+    const read = executeTool(editor, call('read_frontmatter'), undefined, { read: () => 'title: Original', write: () => {} }, undefined, access)
+
+    expect(read.output).toBe('title: LATEST\r\ntags:\r\n  - alpha')
   })
 
   it('publishes a complete protected-fragment proposal without mutating the editor', () => {
