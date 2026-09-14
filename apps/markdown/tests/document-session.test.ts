@@ -252,6 +252,41 @@ describe('MarkdownDocumentSession', () => {
     expect(session.serialize()).toBe('---\ntitle: keep\n---\n\n![edited alt](assets/image.png)\n\nTail.')
   })
 
+  it('rebases only a rendered image destination when the concurrent unit includes inline code', () => {
+    const source = '- ![image](old.png)\n- `![literal](old.png)`'
+    const session = createMarkdownDocumentSession(source, createCodec())
+    const ticket = session.beginSave()
+    expect(session.applySource('- ![edited alt](old.png)\n- `![literal](old.png)`').ok).toBe(true)
+
+    expect(session.markSaved(
+      '- ![image](assets/image.png)\n- `![literal](old.png)`',
+      ticket,
+      [{ from: 'old.png', to: 'assets/image.png' }],
+    )).toMatchObject({
+      dirty: true,
+      source: '- ![edited alt](assets/image.png)\n- `![literal](old.png)`',
+    })
+  })
+
+  it('applies chained Save As mappings once per original image destination', () => {
+    const source = '- ![one](old.png)\n- ![two](assets/old.png)'
+    const session = createMarkdownDocumentSession(source, createCodec())
+    const ticket = session.beginSave()
+    expect(session.applySource('- ![one edited](old.png)\n- ![two edited](assets/old.png)').ok).toBe(true)
+
+    expect(session.markSaved(
+      '- ![one](assets/old.png)\n- ![two](assets/old-2.png)',
+      ticket,
+      [
+        { from: 'old.png', to: 'assets/old.png' },
+        { from: 'assets/old.png', to: 'assets/old-2.png' },
+      ],
+    )).toMatchObject({
+      dirty: true,
+      source: '- ![one edited](assets/old.png)\n- ![two edited](assets/old-2.png)',
+    })
+  })
+
   it('keeps the user version and exposes a rebase conflict when the same unit changed during save', () => {
     const source = '![old](old.png)\n\nSecond.'
     const session = createMarkdownDocumentSession(source, createCodec())

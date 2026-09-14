@@ -2,6 +2,7 @@ import type { JSONContent } from '@tiptap/core'
 import { frontmatterInner, parseRawDocEnvelope, type RawDocEnvelope } from './docText'
 import { projectScan, serializeProjectedGroup, type MarkdownCodec, type ProjectedFragment, type VisualProjection } from './sourceProjection'
 import { scanMarkdownSource, type SourceRange } from './sourceScanner'
+import { rewriteMarkdownImageSources } from '../../shared/markdown-image-sources'
 
 export type EditorMode = 'visual' | 'source'
 
@@ -158,19 +159,8 @@ function completeProjectedGroups(visual: VisualProjection): Array<{ sourceId?: s
   return groups
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-/** Conservatively rewrite only a Markdown image destination, never arbitrary matching prose. */
 function rewriteKnownImageSources(raw: string, rewrites: ReadonlyArray<{ from: string, to: string }>): string {
-  return rewrites.reduce(
-    (current, { from, to }) => current.replace(
-      new RegExp(`(!\\[(?:\\\\.|[^\\]])*\\]\\(\\s*(?:<)?)${escapeRegExp(from)}(?=>|\\s|\\))`, 'g'),
-      `$1${to}`,
-    ),
-    raw,
-  )
+  return rewriteMarkdownImageSources(raw, new Map(rewrites.map(({ from, to }) => [from, to])))
 }
 
 function rebaseKnownImageSources(

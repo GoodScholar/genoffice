@@ -13,6 +13,11 @@ import {
 } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { atomicWriteFile } from './atomic-write'
+import {
+  extractMarkdownImageSources as sharedExtractMarkdownImageSources,
+  rewriteMarkdownImageSources as sharedRewriteMarkdownImageSources,
+  scanMarkdownImageSources,
+} from '../shared/markdown-image-sources'
 
 export const ASSET_MANIFEST_FILENAME = '.genoffice-assets.json'
 
@@ -438,7 +443,7 @@ async function siblingMarkdownReferences(
         // Refuse to load an unexpectedly huge sibling just for GC. Preserving
         // all candidates is the safe fallback when its references are unknown.
         if (info.size > 16 * 1024 * 1024) return new Set(ownedNames)
-        const scan = scanImageSources(await readFile(path, 'utf8'))
+        const scan = scanMarkdownImageSources(await readFile(path, 'utf8'))
         // A browser may still recover an image source from malformed HTML in a
         // way this deliberately small parser cannot prove. Keep every owned
         // candidate rather than collecting a possibly referenced file.
@@ -839,7 +844,7 @@ function scanImageSources(markdown: string): ImageSourceScan {
 }
 
 export function extractMarkdownImageSources(markdown: string): string[] {
-  return scanImageSources(markdown).ranges.map((range) => range.source)
+  return sharedExtractMarkdownImageSources(markdown)
 }
 
 function encodeHtmlAttributeReplacement(value: string, quote: '"' | "'" | null): string {
@@ -860,21 +865,7 @@ export function rewriteMarkdownImageSources(
   markdown: string,
   rewrites: ReadonlyMap<string, string>,
 ): string {
-  if (rewrites.size === 0) return markdown
-  const ranges = scanImageSources(markdown).ranges
-  let cursor = 0
-  let output = ''
-  for (const range of ranges) {
-    const replacement = rewrites.get(range.source)
-    if (replacement === undefined) continue
-    output += markdown.slice(cursor, range.start)
-    output +=
-      range.htmlQuote === undefined
-        ? replacement
-        : encodeHtmlAttributeReplacement(replacement, range.htmlQuote)
-    cursor = range.end
-  }
-  return cursor === 0 ? markdown : output + markdown.slice(cursor)
+  return sharedRewriteMarkdownImageSources(markdown, rewrites)
 }
 
 async function removeCreatedRecords(
