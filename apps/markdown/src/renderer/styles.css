@@ -227,6 +227,120 @@ button {
   outline-offset: 2px;
 }
 
+.protected-source {
+  position: relative;
+  border: 1px solid var(--md-node-outline);
+  border-radius: 6px;
+  background: var(--md-code-bg);
+  color: var(--text-primary);
+}
+
+.protected-source-block {
+  display: block;
+  margin: 12px 0;
+  padding: 10px;
+}
+
+.protected-source-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 4px;
+  vertical-align: baseline;
+}
+
+.protected-source pre,
+.protected-source code {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.protected-source-reason {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.protected-source-inline .protected-source-reason {
+  display: none;
+}
+
+.protected-source-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.protected-source-inline .protected-source-actions {
+  margin-top: 0;
+}
+
+.protected-source-actions button {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.protected-source-actions button:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.protected-change-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in srgb, var(--canvas) 60%, transparent);
+}
+
+.protected-change-confirm {
+  width: min(420px, 100%);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--md-pop-shadow);
+  color: var(--text-primary);
+}
+
+.protected-change-confirm h2,
+.protected-change-confirm p {
+  margin: 0 0 10px;
+}
+
+.protected-change-kind,
+.protected-change-error {
+  color: var(--md-error);
+}
+
+.protected-change-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.protected-change-buttons button {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.protected-change-buttons .protected-change-approve {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--md-on-accent);
+}
+
 .status-bar {
   flex: 0 0 auto;
   display: flex;

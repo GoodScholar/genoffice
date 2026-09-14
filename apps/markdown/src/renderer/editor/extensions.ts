@@ -1,3 +1,4 @@
+import { createElement } from 'react'
 import type { AnyExtension } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
@@ -14,7 +15,14 @@ import { AiHighlight } from './aiHighlight'
 import { AiQueueAnchors } from './aiQueueAnchors'
 import { InactiveSelection } from './inactiveSelection'
 import { SearchHighlight } from './searchHighlight'
-import { ProtectedSourceBlock, ProtectedSourceInline, SourceProvenance } from './protectedSource'
+import {
+  ProtectedSourceBlock,
+  ProtectedSourceGuard,
+  ProtectedSourceInline,
+  SourceProvenance,
+  type ProtectedSourceOptions,
+} from './protectedSource'
+import { ProtectedSourceView } from './ProtectedSourceView'
 import { buildMathExtensions } from './math'
 import { SlashCommand } from './slashCommand'
 import type { SlashController, SlashItem } from './slashCommand'
@@ -23,6 +31,7 @@ import { t } from '../i18n/locale'
 export interface BuildExtensionsOptions {
   slashController: SlashController
   slashItems: () => SlashItem[]
+  protectedSource?: ProtectedSourceOptions
 }
 
 export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[] {
@@ -45,8 +54,25 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
     // flatten sub-lists in the saved file. 4 is safe for every marker width.
     Markdown.configure({ indentation: { style: 'space', size: 4 } }),
     SourceProvenance,
-    ProtectedSourceBlock,
-    ProtectedSourceInline,
+    ProtectedSourceBlock.extend({
+      addNodeView() {
+        return ReactNodeViewRenderer((props) => createElement(ProtectedSourceView, {
+          ...props,
+          onEditSource: options.protectedSource?.onEditSource ?? (() => {}),
+          onConvert: options.protectedSource?.onConvert ?? (() => {}),
+        }))
+      },
+    }),
+    ProtectedSourceInline.extend({
+      addNodeView() {
+        return ReactNodeViewRenderer((props) => createElement(ProtectedSourceView, {
+          ...props,
+          onEditSource: options.protectedSource?.onEditSource ?? (() => {}),
+          onConvert: options.protectedSource?.onConvert ?? (() => {}),
+        }))
+      },
+    }),
+    ProtectedSourceGuard.configure(options.protectedSource),
     // column widths are not expressible in GFM tables — no resizable columns;
     // the wrapper div gives wide tables a horizontal scrollbar
     TableKit.configure({ table: { resizable: false, renderWrapper: true } }),

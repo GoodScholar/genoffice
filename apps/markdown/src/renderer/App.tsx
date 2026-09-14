@@ -36,6 +36,7 @@ import { TableMenu } from './components/TableMenu'
 import { FrontmatterPanel } from './components/FrontmatterPanel'
 import { AiAskPopover } from './components/AiAskPopover'
 import { SourceEditor } from './components/SourceEditor'
+import { ProtectedChangeConfirm } from './components/ProtectedChangeConfirm'
 import { AiPanel, GensparkMark, type AiPreset, type MarkdownAiDeps } from './ai/AiPanel'
 import { EDIT_QUEUE_MAX, selectionForAnchor, type EditQueueItem } from './ai/edit-queue'
 import { addQueueAnchor, clearQueueAnchors, removeQueueAnchors } from './editor/aiQueueAnchors'
@@ -45,6 +46,7 @@ import { mermaidSvgToPng, renderMermaid } from './editor/mermaid'
 import { resolveImageSrc } from './editor/localImage'
 import type { ExportFormat, SaveMarkdownRequest, SaveMarkdownResult, SaveMode } from '../shared/ipc'
 import { uiOp } from './editor/ops'
+import type { ProtectedChangeRequest } from './editor/protectedSource'
 
 type LoadStatus = 'loading' | 'ready' | 'error'
 type SaveState = 'idle' | 'saving' | 'saved' | 'failed'
@@ -293,6 +295,7 @@ export default function App() {
   const [editorMode, setEditorMode] = useState<'visual' | 'source'>('visual')
   const [sourceText, setSourceText] = useState('')
   const [sourceModeError, setSourceModeError] = useState<string | null>(null)
+  const [protectedChangeRequest, setProtectedChangeRequest] = useState<ProtectedChangeRequest | null>(null)
 
   const statusRef = useRef<LoadStatus>('loading')
   const dirtyRef = useRef(false)
@@ -342,6 +345,35 @@ export default function App() {
     setFmOpen(inner.trim() !== '')
   }, [])
 
+  const enterSourceMode = useCallback((fragmentId?: string) => {
+    const current = editorRef.current
+    const session = sessionRef.current
+    if (!losslessMarkdown || !current || !session) return
+
+    const projected = session.applyVisual({
+      doc: current.getJSON(),
+      frontmatterInner: session.view().visual.frontmatterInner,
+    })
+    if (projected.ok) {
+      sourceModeStartRef.current = { source: projected.view.source, visual: projected.view.visual }
+    } else {
+      sourceModeStartRef.current = null
+    }
+    // 同步可视投影后再从当前会话解析片段；NodeView 不缓存源码范围。
+    const entered = session.enterSource(fragmentId)
+    setEditorMode('source')
+    setSourceText(entered.view.source)
+    setSourceModeError(projected.ok ? (entered.ok ? null : entered.error) : projected.error)
+    mirrorSessionDirty(session)
+  }, [losslessMarkdown, mirrorSessionDirty])
+
+  const protectedSourceOptions = useMemo(() => ({
+    onEditSource: (id: string) => enterSourceMode(id),
+    // Task 7 负责 proposal 服务；服务缺失时 NodeView 保持该操作禁用。
+    onConvert: () => {},
+    onConfirmChange: (request: ProtectedChangeRequest) => setProtectedChangeRequest(request),
+  }), [enterSourceMode])
+
   const insertImage = useCallback(() => {
     void (async () => {
       const relPath = await window.markdownApi.pickImage()
@@ -361,8 +393,9 @@ export default function App() {
       slashController: controller,
       slashItems: () =>
         buildSlashItems({ insertImage: filePathRef.current ? insertImage : undefined }),
+      protectedSource: protectedSourceOptions,
     })
-  }, [insertImage])
+  }, [insertImage, protectedSourceOptions])
 
   const editor = useEditor({
     extensions,
@@ -507,27 +540,6 @@ export default function App() {
     },
     [losslessMarkdown, markDirty, mirrorSessionDirty],
   )
-
-  const enterSourceMode = useCallback((fragmentId?: string) => {
-    const current = editorRef.current
-    const session = sessionRef.current
-    if (!losslessMarkdown || !current || !session) return
-
-    const projected = session.applyVisual({
-      doc: current.getJSON(),
-      frontmatterInner: session.view().visual.frontmatterInner,
-    })
-    if (projected.ok) {
-      sourceModeStartRef.current = { source: projected.view.source, visual: projected.view.visual }
-    } else {
-      sourceModeStartRef.current = null
-    }
-    const entered = session.enterSource(fragmentId)
-    setEditorMode('source')
-    setSourceText(entered.view.source)
-    setSourceModeError(projected.ok ? (entered.ok ? null : entered.error) : projected.error)
-    mirrorSessionDirty(session)
-  }, [losslessMarkdown, mirrorSessionDirty])
 
   const enterVisualMode = useCallback(() => {
     const current = editorRef.current
@@ -1165,6 +1177,13 @@ export default function App() {
           onQueueAdd={queueAdd}
           onQueueUpdate={queueUpdate}
           onQueueRemove={queueRemove}
+        />
+      )}
+      {editor && protectedChangeRequest && (
+        <ProtectedChangeConfirm
+          editor={editor}
+          request={protectedChangeRequest}
+          onDismiss={() => setProtectedChangeRequest(null)}
         />
       )}
     </div>
