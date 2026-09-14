@@ -6,7 +6,7 @@ import {
 } from '@genoffice/electron-utils/headless-export'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { FindPanel, type FindFocusRequest, type FindPanelStrings } from '@genoffice/ui'
-import type { Editor } from '@tiptap/core'
+import type { Editor, JSONContent } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
 import { useI18n } from './i18n/locale'
 import {
@@ -17,7 +17,7 @@ import {
   stripLegacyFencedDivs,
   type DocEnvelope,
 } from './markdown/docText'
-import { createMarkdownDocumentSession, type MarkdownDocumentSession } from './markdown/documentSession'
+import { createMarkdownDocumentSession, type MarkdownDocumentSession, type SaveTicket } from './markdown/documentSession'
 import { losslessMarkdownEnabled } from './markdown/featureFlag'
 import { createTiptapMarkdownCodec } from './markdown/sourceProjection'
 import { buildExtensions } from './editor/extensions'
@@ -40,7 +40,7 @@ import { DOCX_MAX_IMAGE_PX, exportDocxBytes } from './export/docxExport'
 import { buildPrintHtml } from './export/printHtml'
 import { mermaidSvgToPng, renderMermaid } from './editor/mermaid'
 import { resolveImageSrc } from './editor/localImage'
-import type { ExportFormat, SaveMode } from '../shared/ipc'
+import type { ExportFormat, SaveMarkdownRequest, SaveMarkdownResult, SaveMode } from '../shared/ipc'
 import { uiOp } from './editor/ops'
 
 type LoadStatus = 'loading' | 'ready' | 'error'
@@ -100,6 +100,61 @@ function applyImageRewrites(
   if (!changed) return
   transaction.setMeta('addToHistory', false).setMeta('uiOnly', true)
   editor.view.dispatch(transaction)
+}
+
+function projectionNodes(node: JSONContent): JSONContent[] {
+  return (node.content ?? []).flatMap((child) => [child, ...projectionNodes(child)])
+}
+
+/** Keep lossless-only source identifiers current without replacing the editor document or its undo stack. */
+export function applyProjectionProvenance(editor: Editor, visualDoc: JSONContent): void {
+  const projected = projectionNodes(visualDoc)
+  let index = 0
+  let transaction = editor.state.tr
+  let changed = false
+  editor.state.doc.descendants((node, pos) => {
+    const expected = projected[index++]
+    if (!expected || expected.type !== node.type.name || node.isText) return
+    const attrs = expected.attrs ?? {}
+    const provenance: Record<string, unknown> = {}
+    if (Object.hasOwn(attrs, 'sourceId')) provenance.sourceId = attrs.sourceId
+    if (node.type.name === 'protectedSourceInline' || node.type.name === 'protectedSourceBlock') {
+      for (const key of ['id', 'raw', 'reason']) {
+        if (Object.hasOwn(attrs, key)) provenance[key] = attrs[key]
+      }
+    }
+    if (Object.keys(provenance).length === 0) return
+    if (Object.entries(provenance).every(([key, value]) => node.attrs[key] === value)) return
+    transaction = transaction.setNodeMarkup(pos, undefined, { ...node.attrs, ...provenance })
+    changed = true
+  })
+  if (!changed) return
+  transaction.setMeta('addToHistory', false).setMeta('uiOnly', true)
+  editor.view.dispatch(transaction)
+}
+
+type SaveInvoker = (request: SaveMarkdownRequest) => Promise<SaveMarkdownResult>
+
+export async function requestSourceBackedSave(
+  session: MarkdownDocumentSession,
+  editor: Editor,
+  mode: SaveMode,
+  save: SaveInvoker,
+  onFailure: () => void,
+  suggestedName?: string,
+): Promise<{ ticket: SaveTicket, result: SaveMarkdownResult }> {
+  let ticket: SaveTicket
+  try {
+    ticket = session.beginSave()
+  } catch (error) {
+    session.enterSource()
+    onFailure()
+    throw error
+  }
+  return {
+    ticket,
+    result: await save({ text: ticket.source, imageSources: imageSourcesFromEditor(editor), mode, suggestedName }),
+  }
 }
 
 /** Measure a document image via the DOM (the editor already displays it) */
@@ -225,6 +280,7 @@ export default function App() {
             session.enterSource()
             setSaveState('failed')
           } else {
+            applyProjectionProvenance(updated, update.view.visual.doc)
             mirrorSessionDirty(session)
           }
         } else if (!losslessMarkdown) {
@@ -320,6 +376,7 @@ export default function App() {
           setSaveState('failed')
           return
         }
+        if (editorRef.current) applyProjectionProvenance(editorRef.current, update.view.visual.doc)
         mirrorSessionDirty(session)
         return
       }
@@ -337,38 +394,31 @@ export default function App() {
     try {
       const session = sessionRef.current
       if (losslessMarkdown && session) {
-        let ticket
+        let saveAttempt
         try {
           // `beginSave` validates the projected source before any IPC can write it.
-          ticket = session.beginSave()
+          saveAttempt = await requestSourceBackedSave(
+            session,
+            current,
+            mode,
+            window.markdownApi.save,
+            () => setSaveState('failed'),
+            suggestedName,
+          )
         } catch (err) {
           console.error('[markdown] source-backed save consistency check failed:', err)
-          setSaveState('failed')
           return false
         }
-        const imageSources = imageSourcesFromEditor(current)
-        const result = await window.markdownApi.save({
-          text: ticket.source,
-          imageSources,
-          mode,
-          suggestedName,
-        })
+        const { ticket, result } = saveAttempt
         if (result.ok && 'path' in result) {
           if (result.imageRewrites?.length && editorRef.current) {
             applyImageRewrites(editorRef.current, result.imageRewrites)
           }
           const saved = session.markSaved(result.text, ticket)
           if (editorRef.current) {
-            // For a concurrent edit, `markSaved` returns the rebased current view,
-            // never the older write response, so protected/raw image rewrites stay
-            // in sync without discarding the newer visual edit.
-            syncingProjectionRef.current = true
-            editorRef.current
-              .chain()
-              .setMeta('addToHistory', false)
-              .setContent(saved.visual.doc)
-              .run()
-            syncingProjectionRef.current = false
+            // `markSaved` rebases concurrent user edits before returning this view;
+            // update only provenance so neither path replaces the undoable document.
+            applyProjectionProvenance(editorRef.current, saved.visual.doc)
           }
           setImageBaseDir(dirOf(result.path))
           setFilePath(result.path)

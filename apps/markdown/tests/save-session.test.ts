@@ -1,9 +1,10 @@
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { Editor, type JSONContent } from '@tiptap/core'
 import { buildExtensions } from '../src/renderer/editor/extensions'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
 import { createTiptapMarkdownCodec, type VisualProjection } from '../src/renderer/markdown/sourceProjection'
 import { losslessMarkdownEnabled } from '../src/renderer/markdown/featureFlag'
+import { applyProjectionProvenance, requestSourceBackedSave } from '../src/renderer/App'
 
 const editors: Editor[] = []
 afterAll(() => editors.forEach((editor) => editor.destroy()))
@@ -18,6 +19,30 @@ function createSession(source: string) {
   })
   editors.push(editor)
   return createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+}
+
+function createHarness(source: string) {
+  const editor = new Editor({
+    extensions: buildExtensions({
+      slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+      slashItems: () => [],
+    }),
+    content: '',
+  })
+  editors.push(editor)
+  const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+  editor.chain().setMeta('addToHistory', false).setContent(session.view().visual.doc).run()
+  return { editor, session }
+}
+
+function replaceEditorText(editor: Editor, from: string, to: string): void {
+  let range: { from: number, to: number } | undefined
+  editor.state.doc.descendants((node, pos) => {
+    if (range || !node.isText || node.text !== from) return
+    range = { from: pos, to: pos + from.length }
+  })
+  if (!range) throw new Error(`Missing ${from}`)
+  editor.view.dispatch(editor.state.tr.insertText(to, range.from, range.to))
 }
 
 function replaceText(visual: VisualProjection, from: string, to: string): VisualProjection {
@@ -70,5 +95,41 @@ describe('source-backed save sessions', () => {
       dirty: true,
       source: '![image](assets/image.png)\n\nNewer.',
     })
+  })
+
+  it('keeps an existing undo step after synchronizing save projection provenance', () => {
+    const { editor, session } = createHarness('First.\n\nSecond.')
+    replaceEditorText(editor, 'Second.', 'Changed.')
+    const update = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+    expect(update.ok).toBe(true)
+
+    applyProjectionProvenance(editor, session.view().visual.doc)
+    expect(editor.commands.undo()).toBe(true)
+    expect(editor.state.doc.textContent).toContain('Second.')
+  })
+
+  it('keeps consecutive visual edits source-backed after provenance changes around protected HTML', () => {
+    const { editor, session } = createHarness('Before <u>protected</u> after.\n\nSecond.')
+    editor.commands.insertContentAt(0, { type: 'paragraph', content: [{ type: 'text', text: 'Inserted.' }] })
+    const first = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+    expect(first.ok).toBe(true)
+    applyProjectionProvenance(editor, session.view().visual.doc)
+
+    replaceEditorText(editor, 'Second.', 'Changed.')
+    const second = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+    expect(second).toMatchObject({ ok: true, view: { mode: 'visual' } })
+    expect(session.serialize()).toContain('Changed.')
+  })
+
+  it('enters source fallback and does not invoke IPC when save consistency validation fails', async () => {
+    const session = createSession('First.')
+    const save = vi.fn(async () => ({ ok: true as const, path: '/tmp/note.md', text: 'First.' }))
+    const onFailure = vi.fn()
+    session.beginSave = () => { throw new Error('inconsistent source') }
+
+    await expect(requestSourceBackedSave(session, createHarness('First.').editor, 'save', save, onFailure)).rejects.toThrow('inconsistent source')
+    expect(save).not.toHaveBeenCalled()
+    expect(onFailure).toHaveBeenCalledOnce()
+    expect(session.view().mode).toBe('source')
   })
 })
