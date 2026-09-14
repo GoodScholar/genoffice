@@ -164,6 +164,7 @@ export function replaceEditorBaseline(editor: Editor, visualDoc: JSONContent, on
     ? editor.schema.nodeFromJSON(visualDoc)
     : editor.schema.topNodeType.createAndFill()
   if (!doc) throw new Error('Unable to create an editable document baseline')
+  doc.check()
   editor.view.updateState(EditorState.create({
     schema: editor.schema,
     doc,

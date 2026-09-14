@@ -217,6 +217,20 @@ describe('source-mode history checkpoint', () => {
     expect(redo(editor.state, editor.view.dispatch)).toBe(false)
     editor.destroy()
   })
+
+  it('rejects an invalid non-empty baseline without mutating editor state or history', () => {
+    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }), content: 'Keep', contentType: 'markdown' })
+    editor.commands.setContent('Keep changed', { contentType: 'markdown' })
+    const beforeDoc = editor.state.doc
+    const beforeSelection = editor.state.selection
+    const beforeUndo = undoDepth(editor.state)
+
+    expect(() => replaceEditorBaseline(editor, { type: 'doc', content: [{ type: 'text', text: 'invalid top-level text' }] })).toThrow()
+    expect(editor.state.doc).toBe(beforeDoc)
+    expect(editor.state.selection).toBe(beforeSelection)
+    expect(undoDepth(editor.state)).toBe(beforeUndo)
+    editor.destroy()
+  })
   it('serializes an invertible no-document source snapshot step in the history transaction', () => {
     const editor = new Editor({
       element: document.createElement('div'),
