@@ -20,7 +20,6 @@ import {
   ProtectedSourceGuard,
   ProtectedSourceInline,
   SourceProvenance,
-  createProtectedSourceAuthority,
   type ProtectedSourceOptions,
 } from './protectedSource'
 import { ProtectedSourceView } from './ProtectedSourceView'
@@ -41,7 +40,6 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
     onConvert() {},
     onConfirmChange() {},
     ...options.protectedSource,
-    authority: options.protectedSource?.authority ?? createProtectedSourceAuthority(),
   }
   return [
     StarterKit.configure({

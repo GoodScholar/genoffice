@@ -228,22 +228,25 @@ export function serializeProjectedGroup(nodes: JSONContent[], codec: MarkdownCod
   const character = markerCharacter(serializedJson)
   const sentinels: Sentinel[] = []
   const rewrite = (node: JSONContent): JSONContent => {
-    if (node.type === 'protectedSourceInline') {
+    if (node.type === 'protectedSourceInline' || node.type === 'protectedSourceBlock') {
       const id = String(node.attrs?.id ?? '')
       const raw = String(node.attrs?.raw ?? '')
       if (!id || sentinels.some((sentinel) => sentinel.id === id)) {
-        throw new Error('Protected source serialization requires unique inline fragment ids')
+        throw new Error('Protected source serialization requires unique fragment ids')
       }
       const fragment: ProjectedFragment = {
         id,
         raw,
         range: { from: 0, to: raw.length },
-        display: 'inline',
+        display: node.type === 'protectedSourceInline' ? 'inline' : 'block',
         reason: (node.attrs?.reason as ProtectedReason) ?? 'raw-html',
       }
       const sentinel = { id, value: `${character}${id}${character}`, fragment }
       sentinels.push(sentinel)
-      return { type: 'text', text: sentinel.value, ...(node.marks ? { marks: node.marks } : {}) }
+      if (node.type === 'protectedSourceInline') {
+        return { type: 'text', text: sentinel.value, ...(node.marks ? { marks: node.marks } : {}) }
+      }
+      return { type: 'paragraph', content: [{ type: 'text', text: sentinel.value }] }
     }
     return node.content ? { ...node, content: node.content.map(rewrite) } : node
   }

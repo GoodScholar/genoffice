@@ -344,6 +344,35 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       if (!expected.has(id)) return { ok: false, view: currentView(), error: `Unknown protected source fragment ${id}` }
     }
 
+    const blockReplacements = state.units
+      .flatMap((unit) => unit.protectedFragments.map((fragment) => ({ unit, fragment })))
+      .flatMap(({ unit, fragment }) => {
+        const candidate = found.get(fragment.id)
+        return fragment.display === 'block' && approvedIds.has(fragment.id) && candidate?.count === 1 && candidate.raw !== fragment.raw
+          ? [{ unit, fragment, raw: candidate.raw }]
+          : []
+      })
+    if (blockReplacements.length > 0) {
+      let nextSource = state.source
+      for (const replacement of [...blockReplacements].sort((left, right) => right.unit.range.from - left.unit.range.from)) {
+        const from = state.envelope.bodyOffset + replacement.unit.range.from
+        const to = from + replacement.fragment.raw.length
+        nextSource = `${nextSource.slice(0, from)}${replacement.raw}${nextSource.slice(to)}`
+      }
+      const projected = createState(nextSource, codec)
+      const projectedNodes = projected.visual.doc.content ?? []
+      const sameProjection = projectionFingerprint(candidateNodes) === projectionFingerprint(projectedNodes)
+        || projectionFingerprint(withoutEmptyParagraphs(candidateNodes)) === projectionFingerprint(withoutEmptyParagraphs(projectedNodes))
+      if (!projected.fallbackReason && sameProjection) {
+        state = projected
+        revision += 1
+        mode = state.fallbackReason ? 'source' : 'visual'
+        selection = undefined
+        conflictReason = undefined
+        return success(changedRange(nextSource))
+      }
+    }
+
     const previousById = new Map(state.units.map((unit) => [unit.sourceId, unit]))
     const originalIndex = new Map(state.units.map((unit, index) => [unit.sourceId, index]))
     const groups = completeProjectedGroups(next)

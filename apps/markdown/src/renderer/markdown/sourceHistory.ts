@@ -50,6 +50,12 @@ export function sourceSnapshotFromTransaction(transaction: Transaction): string 
 
 /** 返回 transaction 中源码快照的双端值，供受保护事务校验精确的历史转换。 */
 export function sourceSnapshotPairFromTransaction(transaction: Transaction): { beforeSource: string, source: string } | undefined {
-  const step = transaction.steps.find((candidate): candidate is InstanceType<typeof SourceSnapshotStep> => candidate instanceof SourceSnapshotStep)
-  return step ? { beforeSource: step.beforeSource, source: step.source } : undefined
+  let beforeSource: string | undefined
+  let source: string | undefined
+  for (const step of transaction.steps) {
+    if (!(step instanceof SourceSnapshotStep)) continue
+    beforeSource ??= step.beforeSource
+    source = step.source
+  }
+  return beforeSource === undefined || source === undefined ? undefined : { beforeSource, source }
 }

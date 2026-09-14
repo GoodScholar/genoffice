@@ -204,10 +204,11 @@ export function completeSourceModeTransition(
 /** Restore session source only when a history transaction carries the source snapshot step. */
 export function restoreSourceHistoryTransaction(
   session: MarkdownDocumentSession,
+  editor: Editor,
   transaction: Transaction,
 ): ReturnType<MarkdownDocumentSession['view']> | undefined {
   const source = sourceSnapshotFromTransaction(transaction)
-  if (source === undefined) return undefined
+  if (source === undefined || !protectedSourceAuthority(editor).accepts(transaction)) return undefined
   const restored = session.restoreHistorySource(source)
   return restored.ok ? restored.view : undefined
 }
@@ -410,10 +411,10 @@ export default function App() {
     content: '',
     autofocus: true,
     editorProps: { attributes: { class: 'doc-editor' } },
-    onTransaction: ({ transaction }) => {
+    onTransaction: ({ editor: transactionEditor, transaction }) => {
       const session = sessionRef.current
       if (!losslessMarkdown || !session || syncingProjectionRef.current) return
-      const restored = restoreSourceHistoryTransaction(session, transaction)
+      const restored = restoreSourceHistoryTransaction(session, transactionEditor, transaction)
       if (!restored) return
       const envelope = parseDocText(restored.source)
       envelopeRef.current = envelope

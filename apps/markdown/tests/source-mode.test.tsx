@@ -17,7 +17,7 @@ import { buildExtensions } from '../src/renderer/editor/extensions'
 import { LocaleProvider } from '../src/renderer/i18n/locale'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
 import { createTiptapMarkdownCodec, type MarkdownCodec } from '../src/renderer/markdown/sourceProjection'
-import { SourceSnapshotStep, sourceSnapshotFromTransaction } from '../src/renderer/markdown/sourceHistory'
+import { SourceSnapshotStep, sourceSnapshotFromTransaction, sourceSnapshotPairFromTransaction } from '../src/renderer/markdown/sourceHistory'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -173,6 +173,33 @@ describe('source-mode visual handoff', () => {
 })
 
 describe('source-mode history checkpoint', () => {
+  it('uses the final source target when a transaction contains multiple snapshots', () => {
+    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }), content: '' })
+    const transaction = editor.state.tr
+      .step(new SourceSnapshotStep('before', 'middle'))
+      .step(new SourceSnapshotStep('middle', 'after'))
+
+    expect(sourceSnapshotFromTransaction(transaction)).toBe('after')
+    expect(sourceSnapshotPairFromTransaction(transaction)).toEqual({ beforeSource: 'before', source: 'after' })
+    editor.destroy()
+  })
+
+  it('rejects a forged source snapshot before it can mutate a session', () => {
+    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }), content: '' })
+    const codec: MarkdownCodec = {
+      lex: (source) => source ? [{ type: 'paragraph', raw: source }] : [],
+      parse: (source) => ({ type: 'doc', content: source ? [{ type: 'paragraph', content: [{ type: 'text', text: source.trim() }] }] : [] }),
+      serialize: (doc) => String(doc.content?.[0]?.content?.[0]?.text ?? ''),
+    }
+    const session = createMarkdownDocumentSession('Before\n', codec)
+    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
+
+    editor.view.dispatch(editor.state.tr.step(new SourceSnapshotStep('Before\n', 'hacked')))
+
+    expect(session.serialize()).toBe('Before\n')
+    editor.destroy()
+  })
+
   it('restores an empty source snapshot through a real history transaction', () => {
     const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }), content: '' })
     const codec: MarkdownCodec = { lex: (source) => source ? [{ type: 'paragraph', raw: source }] : [], parse: (source) => ({ type: 'doc', content: source ? [{ type: 'paragraph', content: [{ type: 'text', text: source.trim() }] }] : [] }), serialize: () => '' }
@@ -181,7 +208,7 @@ describe('source-mode history checkpoint', () => {
     session.enterSource()
     session.applySource('---\ntitle: after\n---\n\nBody\n')
     completeSourceModeTransition(session, editor, before)
-    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, transaction))
+    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
 
     expect(undo(editor.state, editor.view.dispatch)).toBe(true)
     expect(session.view()).toMatchObject({ source: '', dirty: false, mode: 'visual' })
@@ -336,7 +363,7 @@ describe('source-mode history checkpoint', () => {
     expect(undoDepth(editor.state)).toBe(2)
     let restored: ReturnType<typeof restoreSourceHistoryTransaction>
     editor.on('transaction', ({ transaction }) => {
-      restored = restoreSourceHistoryTransaction(session, transaction)
+      restored = restoreSourceHistoryTransaction(session, editor, transaction)
     })
     expect(undo(editor.state, editor.view.dispatch)).toBe(true)
     expect(editor.getText()).toBe('Before visual edit.')
