@@ -16,7 +16,55 @@ export interface DocEnvelope {
   bom: boolean
 }
 
+/**
+ * The unmodified document envelope used by lossless editing. Unlike
+ * `parseDocText`, this preserves every original character and reports offsets
+ * against the original source string.
+ */
+export interface RawDocEnvelope {
+  bomRaw: '' | '\uFEFF'
+  frontmatterRaw: string
+  bodyRaw: string
+  bodyOffset: number
+  eol: '\n' | '\r\n'
+  trailingNewline: boolean
+}
+
 const FENCE = '---'
+
+export function parseRawDocEnvelope(source: string): RawDocEnvelope {
+  const bomRaw: RawDocEnvelope['bomRaw'] = source.startsWith('\uFEFF') ? '\uFEFF' : ''
+  const text = bomRaw ? source.slice(1) : source
+  const eol: RawDocEnvelope['eol'] = text.includes('\r\n') ? '\r\n' : '\n'
+  let frontmatterRaw = ''
+
+  if (/^---\r?\n/.test(text)) {
+    const line = /(?:^|\n)---(?=\r?$|\r?\n)/gm
+    line.lastIndex = FENCE.length
+    const close = line.exec(text)
+    if (close && close.index > 0) {
+      let end = close.index + close[0].length
+      if (text[end] === '\r') end++
+      if (text[end] === '\n') end++
+      while (true) {
+        const blank = /^(?:[ \t]*\r?\n)/.exec(text.slice(end))?.[0]
+        if (!blank) break
+        end += blank.length
+      }
+      frontmatterRaw = text.slice(0, end)
+    }
+  }
+
+  const bodyOffset = bomRaw.length + frontmatterRaw.length
+  return {
+    bomRaw,
+    frontmatterRaw,
+    bodyRaw: source.slice(bodyOffset),
+    bodyOffset,
+    eol,
+    trailingNewline: source === '' || source.endsWith('\n'),
+  }
+}
 
 export function parseDocText(raw: string): DocEnvelope {
   const bom = raw.startsWith('\uFEFF')

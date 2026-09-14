@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  parseRawDocEnvelope,
   parseDocText,
   serializeDocText,
   stripLegacyFencedDivs,
@@ -100,6 +101,32 @@ describe('parseDocText', () => {
     expect(doc.bom).toBe(true)
     expect(doc.frontmatter).toBe('---\ntitle: x\n---\n\n')
     expect(doc.body).toBe('Body\n')
+  })
+})
+
+describe('parseRawDocEnvelope', () => {
+  it('keeps BOM and CRLF while reporting bodyOffset in the original source', () => {
+    const raw = '\uFEFF---\r\ntitle: x\r\n---\r\n\r\nBody\r\n'
+    const envelope = parseRawDocEnvelope(raw)
+
+    expect(envelope).toEqual({
+      bomRaw: '\uFEFF',
+      frontmatterRaw: '---\r\ntitle: x\r\n---\r\n\r\n',
+      bodyRaw: 'Body\r\n',
+      bodyOffset: 23,
+      eol: '\r\n',
+      trailingNewline: true,
+    })
+  })
+
+  it('keeps blank lines after frontmatter in frontmatterRaw without normalizing the body', () => {
+    const raw = '---\na: 1\n---\n\n\n# Heading'
+    const envelope = parseRawDocEnvelope(raw)
+
+    expect(envelope.frontmatterRaw).toBe('---\na: 1\n---\n\n\n')
+    expect(envelope.bodyRaw).toBe('# Heading')
+    expect(envelope.bodyOffset).toBe(envelope.frontmatterRaw.length)
+    expect(envelope.trailingNewline).toBe(false)
   })
 })
 
