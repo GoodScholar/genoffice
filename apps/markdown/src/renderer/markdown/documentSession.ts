@@ -426,17 +426,33 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     }
     const currentAligned = alignUnits(saved.units, state.units)
     const writtenAligned = alignUnits(saved.units, written.units)
+    let hasConflict = false
+    const rawCounts = new Map<string, number>()
+    saved.units.forEach((unit) => rawCounts.set(unit.raw, (rawCounts.get(unit.raw) ?? 0) + 1))
+    const occupied = new Set(currentAligned.filter((unit): unit is SourceUnitState => unit !== undefined))
+    for (let ticketIndex = 0; ticketIndex < saved.units.length; ticketIndex += 1) {
+      const original = saved.units[ticketIndex]!
+      const actual = writtenAligned[ticketIndex]
+      if (currentAligned[ticketIndex] || !actual || unitText(actual) === unitText(original)) continue
+      const candidates = state.units.filter((unit) => !occupied.has(unit) && unit.raw === original.raw && unit.fingerprint === original.fingerprint)
+      if ((rawCounts.get(original.raw) ?? 0) > 1 || candidates.length !== 1) {
+        hasConflict = true
+        continue
+      }
+      const candidate = candidates[0]!
+      currentAligned[ticketIndex] = candidate
+      occupied.add(candidate)
+    }
     const ticketIndexByCurrent = new Map<SourceUnitState, number>()
     currentAligned.forEach((unit, index) => {
       if (unit) ticketIndexByCurrent.set(unit, index)
     })
-    let hasConflict = false
     const rebased = state.units.flatMap((unit) => {
       const ticketIndex = ticketIndexByCurrent.get(unit)
       if (ticketIndex === undefined) return [unit]
       const original = saved.units[ticketIndex]!
       const actual = writtenAligned[ticketIndex]
-      const userChanged = unitText(unit) !== unitText(original)
+      const userChanged = unit.raw !== original.raw || unit.fingerprint !== original.fingerprint
       if (!actual) return userChanged ? [unit] : []
       const mainChanged = unitText(actual) !== unitText(original)
       if (userChanged && mainChanged) hasConflict = true

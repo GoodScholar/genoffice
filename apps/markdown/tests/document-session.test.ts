@@ -250,4 +250,25 @@ describe('MarkdownDocumentSession', () => {
       fallbackReason: expect.stringContaining('rebase conflict'),
     })
   })
+
+  it('follows a uniquely moved ticket unit when the save result rewrites that unit', () => {
+    const session = createMarkdownDocumentSession('A\n\nB\n\nC', createCodec())
+    const ticket = session.beginSave()
+    expect(session.applySource('B\n\nA\n\nC').ok).toBe(true)
+
+    expect(session.markSaved('X\n\nB\n\nC', ticket)).toMatchObject({ source: 'B\n\nX\n\nC', dirty: true })
+    expect(session.serialize()).toBe('B\n\nX\n\nC')
+  })
+
+  it('keeps current source with a conflict when a moved duplicate has no unique descendant', () => {
+    const session = createMarkdownDocumentSession('A\n\nB\n\nA', createCodec())
+    const ticket = session.beginSave()
+    expect(session.applySource('B\n\nA').ok).toBe(true)
+
+    expect(session.markSaved('X\n\nB\n\nA', ticket)).toMatchObject({
+      source: 'B\n\nA',
+      dirty: true,
+      fallbackReason: expect.stringContaining('rebase conflict'),
+    })
+  })
 })
