@@ -14,6 +14,7 @@ import { AiHighlight } from './aiHighlight'
 import { AiQueueAnchors } from './aiQueueAnchors'
 import { InactiveSelection } from './inactiveSelection'
 import { SearchHighlight } from './searchHighlight'
+import { ProtectedSourceBlock, ProtectedSourceInline, SourceProvenance } from './protectedSource'
 import { buildMathExtensions } from './math'
 import { SlashCommand } from './slashCommand'
 import type { SlashController, SlashItem } from './slashCommand'
@@ -43,6 +44,9 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
     // ordered items ("1. " = 3), so strict CommonMark parsers (GitHub) would
     // flatten sub-lists in the saved file. 4 is safe for every marker width.
     Markdown.configure({ indentation: { style: 'space', size: 4 } }),
+    SourceProvenance,
+    ProtectedSourceBlock,
+    ProtectedSourceInline,
     // column widths are not expressible in GFM tables — no resizable columns;
     // the wrapper div gives wide tables a horizontal scrollbar
     TableKit.configure({ table: { resizable: false, renderWrapper: true } }),
