@@ -271,6 +271,40 @@ describe('source-mode history checkpoint', () => {
     editor.destroy()
   })
 
+  it('applies a source-mode protected-atom deletion through the trusted visual handoff', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    const codec: MarkdownCodec = {
+      lex: (source) => source.includes('<!-- raw -->')
+        ? [{ type: 'paragraph', raw: '# Before\n\n' }, { type: 'html', raw: '<!-- raw -->\n' }]
+        : [{ type: 'paragraph', raw: source }],
+      parse: (source) => ({
+        type: 'doc',
+        content: source.trim() ? [{ type: 'paragraph', content: [{ type: 'text', text: '# Before' }] }] : [],
+      }),
+      serialize: (doc) => String(doc.content?.[0]?.content?.[0]?.text ?? ''),
+    }
+    const session = createMarkdownDocumentSession('# Before\n\n<!-- raw -->\n', codec)
+    editor.commands.setContent(session.view().visual.doc)
+    const before: SourceModeSnapshot = { source: session.view().source, visual: session.view().visual }
+    session.enterSource()
+    expect(session.applySource('# Before\n')).toMatchObject({ ok: true })
+
+    const transition = completeSourceModeTransition(session, editor, before)
+
+    expect(transition).toMatchObject({ ok: true, changed: true })
+    expect(editor.getJSON()).not.toEqual(expect.objectContaining({ type: 'protectedSourceBlock' }))
+    expect(JSON.stringify(editor.getJSON())).not.toContain('protectedSource')
+    expect(session.serialize()).toBe('# Before\n')
+    editor.destroy()
+  })
+
   it('keeps the source replacement separate and restores body plus frontmatter through real undo and redo', () => {
     const editor = new Editor({
       element: document.createElement('div'),

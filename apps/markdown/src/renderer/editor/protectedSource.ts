@@ -1,8 +1,9 @@
 import type { Editor, JSONContent } from '@tiptap/core'
 import { Extension, Node } from '@tiptap/core'
-import { isHistoryTransaction } from '@tiptap/pm/history'
-import { Plugin } from '@tiptap/pm/state'
+import { Plugin, type EditorState, type Transaction } from '@tiptap/pm/state'
 import { Step } from '@tiptap/pm/transform'
+import type { MarkdownDocumentSession } from '../markdown/documentSession'
+import { SourceSnapshotStep, sourceSnapshotPairFromTransaction } from '../markdown/sourceHistory'
 
 export interface ProtectedChangeRequest {
   ids: string[]
@@ -15,6 +16,7 @@ export interface ProtectedSourceOptions {
   onEditSource(id: string): void
   onConvert(id: string): void
   onConfirmChange(request: ProtectedChangeRequest): void
+  authority?: ProtectedSourceAuthority
 }
 
 export const APPROVED_PROTECTED_CHANGE = 'approvedProtectedChange'
@@ -23,6 +25,34 @@ const noopProtectedSourceOptions: ProtectedSourceOptions = {
   onEditSource() {},
   onConvert() {},
   onConfirmChange() {},
+}
+
+export interface ProtectedSourceAuthority {
+  authorize(transaction: Transaction): void
+  allows(transaction: Transaction, state: EditorState): boolean
+}
+
+function documentKey(before: unknown, after: unknown, source: string): string {
+  return `${JSON.stringify(before)}\u0000${JSON.stringify(after)}\u0000${source}`
+}
+
+/** 只向同一编辑器实例签发内部事务与精确历史往返的短期授权。 */
+export function createProtectedSourceAuthority(): ProtectedSourceAuthority {
+  const direct = new WeakSet<Transaction>()
+  const transitions = new Set<string>()
+  return {
+    authorize(transaction) {
+      direct.add(transaction)
+      const snapshot = sourceSnapshotPairFromTransaction(transaction)
+      transitions.add(documentKey(transaction.before.toJSON(), transaction.doc.toJSON(), snapshot?.source ?? ''))
+      transitions.add(documentKey(transaction.doc.toJSON(), transaction.before.toJSON(), snapshot?.beforeSource ?? ''))
+    },
+    allows(transaction, state) {
+      if (direct.has(transaction)) return true
+      const snapshot = sourceSnapshotPairFromTransaction(transaction)
+      return transitions.has(documentKey(state.doc.toJSON(), transaction.doc.toJSON(), snapshot?.source ?? ''))
+    },
+  }
 }
 
 const sourceAttr = {
@@ -93,33 +123,78 @@ function changedProtectedIds(before: ProtectedRawMultiset, after: ProtectedRawMu
 }
 
 function protectedChangeKind(
-  transaction: { getMeta(name: string): unknown },
+  transaction: { getMeta(name: string): unknown, steps: ReadonlyArray<{ toJSON(): unknown }> },
   before: ProtectedRawMultiset,
   after: ProtectedRawMultiset,
 ): ProtectedChangeRequest['kind'] {
   if (transaction.getMeta('uiEvent') === 'cut') return 'cut'
+  const insertsReplacement = transaction.steps.some((step) => {
+    const json = step.toJSON() as { slice?: { content?: unknown[] } }
+    return Boolean(json.slice?.content?.length)
+  })
+  if (insertsReplacement) return 'replace'
+  let removed = false
   for (const [id, raws] of before) {
     const next = after.get(id)
-    if (!next) return 'delete'
+    if (!next) {
+      removed = true
+      continue
+    }
     if (next.size !== raws.size) return 'replace'
-    for (const [raw, count] of raws) if (next.get(raw) !== count) return 'replace'
+    for (const [raw, count] of raws) {
+      const nextCount = next.get(raw)
+      if (nextCount === count) continue
+      if (nextCount !== undefined && nextCount < count) {
+        removed = true
+        continue
+      }
+      return 'replace'
+    }
   }
-  return 'delete'
+  return removed ? 'delete' : 'replace'
 }
 
 /** 基于实时编辑器状态重建已确认操作，绝不派发生成请求时的过期 transaction。 */
-export function applyProtectedChange(editor: Editor, request: ProtectedChangeRequest): { ok: true } | { ok: false, error: string } {
+export function applyProtectedChange(
+  editor: Editor,
+  request: ProtectedChangeRequest,
+  session?: MarkdownDocumentSession,
+): { ok: true } | { ok: false, error: string } {
   if (JSON.stringify(editor.state.doc.toJSON()) !== JSON.stringify(request.baseDoc)) {
     return { ok: false, error: 'Protected change is stale' }
   }
   try {
     let transaction = editor.state.tr
     for (const step of request.steps) transaction = transaction.step(Step.fromJSON(editor.schema, step as Record<string, unknown>))
-    editor.view.dispatch(transaction.setMeta(APPROVED_PROTECTED_CHANGE, true).setMeta('addToHistory', true))
+    if (session) {
+      const beforeSource = session.view().source
+      const preview = session.previewApprovedVisual({
+        doc: transaction.doc.toJSON(),
+        frontmatterInner: session.view().visual.frontmatterInner,
+      }, request.ids)
+      if (!preview.ok) return { ok: false, error: preview.error }
+      const canonical = editor.schema.nodeFromJSON(preview.view.visual.doc)
+      if (!transaction.doc.eq(canonical)) {
+        transaction = transaction.replaceWith(0, transaction.doc.content.size, canonical.content)
+      }
+      transaction = transaction.step(new SourceSnapshotStep(beforeSource, preview.view.source))
+    }
+    transaction = transaction.setMeta(APPROVED_PROTECTED_CHANGE, true).setMeta('addToHistory', true)
+    protectedSourceAuthority(editor).authorize(transaction)
+    editor.view.dispatch(transaction)
     return { ok: true }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
+}
+
+interface ProtectedSourceStorage {
+  authority: ProtectedSourceAuthority
+}
+
+/** 从当前编辑器的受保护扩展获取不透明授权器。 */
+export function protectedSourceAuthority(editor: Editor): ProtectedSourceAuthority {
+  return ((editor.storage as unknown as { protectedSourceGuard: ProtectedSourceStorage }).protectedSourceGuard).authority
 }
 
 /** 阻止破坏性受保护源码 transaction，直到调用方显式确认并重建请求。 */
@@ -131,34 +206,31 @@ export const ProtectedSourceGuard = Extension.create<ProtectedSourceOptions>({
     return noopProtectedSourceOptions
   },
 
+  addStorage() {
+    return { authority: this.options.authority ?? createProtectedSourceAuthority() }
+  },
+
   addProseMirrorPlugins() {
     const options = this.options
+    const authority = this.storage.authority as ProtectedSourceAuthority
     return [new Plugin({
       props: {
         clipboardTextSerializer(slice) {
-          const text: string[] = []
-          const append = (node: typeof slice.content.firstChild) => {
-            if (!node) return
+          return slice.content.textBetween(0, slice.content.size, '\n\n', (node) => {
             if (node.type.name === 'protectedSourceBlock' || node.type.name === 'protectedSourceInline') {
-              text.push(String(node.attrs.raw ?? ''))
-              return
+              return String(node.attrs.raw ?? '')
             }
-            if (node.isText) {
-              text.push(node.text ?? '')
-              return
-            }
-            node.forEach(append)
-          }
-          slice.content.forEach(append)
-          return text.join('')
+            return node.type.spec.leafText?.(node) ?? ''
+          })
         },
       },
       filterTransaction(transaction, state) {
-        if (!transaction.docChanged || transaction.getMeta('uiOnly') || transaction.getMeta(APPROVED_PROTECTED_CHANGE) || isHistoryTransaction(transaction)) return true
+        if (!transaction.docChanged) return true
         const before = protectedRawMultiset(state.doc)
         if (before.size === 0) return true
         const after = protectedRawMultiset(transaction.doc)
         if (sameProtectedRawMultiset(before, after)) return true
+        if (authority.allows(transaction, state)) return true
         options.onConfirmChange({
           ids: changedProtectedIds(before, after),
           kind: protectedChangeKind(transaction, before, after),
@@ -177,6 +249,9 @@ export const ProtectedSourceBlock = Node.create({
   group: 'block',
   atom: true,
   selectable: true,
+  renderText({ node }) {
+    return String(node.attrs.raw ?? '')
+  },
 
   addAttributes() {
     return { id: {}, raw: {}, reason: {}, sourceId: sourceAttr }
@@ -194,6 +269,9 @@ export const ProtectedSourceInline = Node.create({
   inline: true,
   atom: true,
   selectable: true,
+  renderText({ node }) {
+    return String(node.attrs.raw ?? '')
+  },
 
   addAttributes() {
     return { id: {}, raw: {}, reason: {}, sourceId: sourceAttr }

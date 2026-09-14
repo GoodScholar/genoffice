@@ -46,7 +46,7 @@ import { mermaidSvgToPng, renderMermaid } from './editor/mermaid'
 import { resolveImageSrc } from './editor/localImage'
 import type { ExportFormat, SaveMarkdownRequest, SaveMarkdownResult, SaveMode } from '../shared/ipc'
 import { uiOp } from './editor/ops'
-import type { ProtectedChangeRequest } from './editor/protectedSource'
+import { protectedSourceAuthority, type ProtectedChangeRequest } from './editor/protectedSource'
 
 type LoadStatus = 'loading' | 'ready' | 'error'
 type SaveState = 'idle' | 'saving' | 'saved' | 'failed'
@@ -135,6 +135,7 @@ export function applyProjectionProvenance(editor: Editor, visualDoc: JSONContent
   })
   if (!changed) return
   transaction.setMeta('addToHistory', false).setMeta('uiOnly', true)
+  protectedSourceAuthority(editor).authorize(transaction)
   editor.view.dispatch(transaction)
 }
 
@@ -154,7 +155,9 @@ export function replaceSourceModeVisualDocument(editor: Editor, visualDoc: JSONC
   let transaction = editor.state.tr.setMeta('addToHistory', true)
   if (!editor.state.doc.eq(next)) transaction = transaction.replaceWith(0, editor.state.doc.content.size, next.content)
   transaction = transaction.step(new SourceSnapshotStep(beforeSource, afterSource))
+  protectedSourceAuthority(editor).authorize(transaction)
   editor.view.dispatch(closeHistory(transaction))
+  if (!editor.state.doc.eq(next)) throw new Error('Source-mode visual document was rejected')
   // This zero-step barrier belongs to no history event, but prevents the next
   // visual edit from merging into the source-mode replacement.
   editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true))
@@ -182,10 +185,15 @@ export function completeSourceModeTransition(
   editor: Editor,
   before: SourceModeSnapshot,
 ): SourceModeTransition {
+  const current = session.view()
+  if (current.fallbackReason) return { ok: false, error: current.fallbackReason }
+  if (current.source === before.source) {
+    const entered = session.enterVisual()
+    return entered.ok ? { ok: true, changed: false, view: entered.view } : { ok: false, error: entered.error }
+  }
+  replaceSourceModeVisualDocument(editor, current.visual.doc, before.source, current.source)
   const entered = session.enterVisual()
   if (!entered.ok) return { ok: false, error: entered.error }
-  if (entered.view.source === before.source) return { ok: true, changed: false, view: entered.view }
-  replaceSourceModeVisualDocument(editor, entered.view.visual.doc, before.source, entered.view.source)
   return {
     ok: true,
     changed: true,
@@ -1183,6 +1191,7 @@ export default function App() {
         <ProtectedChangeConfirm
           editor={editor}
           request={protectedChangeRequest}
+          session={sessionRef.current ?? undefined}
           onDismiss={() => setProtectedChangeRequest(null)}
         />
       )}

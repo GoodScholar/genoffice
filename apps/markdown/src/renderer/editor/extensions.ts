@@ -20,6 +20,7 @@ import {
   ProtectedSourceGuard,
   ProtectedSourceInline,
   SourceProvenance,
+  createProtectedSourceAuthority,
   type ProtectedSourceOptions,
 } from './protectedSource'
 import { ProtectedSourceView } from './ProtectedSourceView'
@@ -35,6 +36,13 @@ export interface BuildExtensionsOptions {
 }
 
 export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[] {
+  const protectedSource: ProtectedSourceOptions = {
+    onEditSource() {},
+    onConvert() {},
+    onConfirmChange() {},
+    ...options.protectedSource,
+    authority: options.protectedSource?.authority ?? createProtectedSourceAuthority(),
+  }
   return [
     StarterKit.configure({
       // LocalImage replaces the plain image; links open externally via main-process guard
@@ -58,8 +66,8 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
       addNodeView() {
         return ReactNodeViewRenderer((props) => createElement(ProtectedSourceView, {
           ...props,
-          onEditSource: options.protectedSource?.onEditSource ?? (() => {}),
-          onConvert: options.protectedSource?.onConvert ?? (() => {}),
+          onEditSource: protectedSource.onEditSource,
+          onConvert: protectedSource.onConvert,
         }))
       },
     }),
@@ -67,12 +75,12 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
       addNodeView() {
         return ReactNodeViewRenderer((props) => createElement(ProtectedSourceView, {
           ...props,
-          onEditSource: options.protectedSource?.onEditSource ?? (() => {}),
-          onConvert: options.protectedSource?.onConvert ?? (() => {}),
+          onEditSource: protectedSource.onEditSource,
+          onConvert: protectedSource.onConvert,
         }))
       },
     }),
-    ProtectedSourceGuard.configure(options.protectedSource),
+    ProtectedSourceGuard.configure(protectedSource),
     // column widths are not expressible in GFM tables — no resizable columns;
     // the wrapper div gives wide tables a horizontal scrollbar
     TableKit.configure({ table: { resizable: false, renderWrapper: true } }),

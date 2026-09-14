@@ -29,6 +29,8 @@ export interface SaveTicket {
 export interface MarkdownDocumentSession {
   view(): SessionView
   applyVisual(next: VisualProjection): SessionUpdate
+  previewApprovedVisual(next: VisualProjection, protectedIds: readonly string[]): SessionUpdate
+  applyVisualWithApprovedFragments(next: VisualProjection, protectedIds: readonly string[]): SessionUpdate
   applySource(next: string): SessionUpdate
   restoreHistorySource(next: string): SessionUpdate
   enterSource(fragmentId?: string): SessionUpdate
@@ -100,6 +102,12 @@ function projectionFingerprint(nodes: JSONContent[]): string {
     return result
   }
   return JSON.stringify(comparable(nodes))
+}
+
+function withoutEmptyParagraphs(nodes: JSONContent[]): JSONContent[] {
+  return nodes
+    .filter((node) => node.type !== 'paragraph' || (node.content?.length ?? 0) > 0)
+    .map((node) => node.content ? { ...node, content: withoutEmptyParagraphs(node.content) } : node)
 }
 
 function normaliseEol(value: string, envelope: RawDocEnvelope): string {
@@ -319,7 +327,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
 
   const success = (range?: SourceRange): SessionUpdate => ({ ok: true, view: currentView(), ...(range ? { changedRange: range } : {}) })
 
-  const applyVisual = (next: VisualProjection): SessionUpdate => {
+  const applyVisual = (next: VisualProjection, approvedIds = new Set<string>()): SessionUpdate => {
     if (state.fallbackReason) return { ok: false, view: currentView(), error: state.fallbackReason }
     const frontmatterChanged = next.frontmatterInner !== state.visual.frontmatterInner
     const candidateNodes = next.doc.content ?? []
@@ -328,6 +336,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     for (const [id, raw] of expected) {
       const candidate = found.get(id)
       if (!candidate || candidate.count !== 1 || candidate.raw !== raw) {
+        if (approvedIds.has(id)) continue
         return { ok: false, view: currentView(), error: `Protected source fragment ${id} requires confirmation` }
       }
     }
@@ -385,7 +394,10 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     const nextSource = sourcePrefix(envelope) + body
     if (nextSource === state.source) return success()
     const projected = createState(nextSource, codec)
-    if (projected.fallbackReason || projectionFingerprint(candidateNodes) !== projectionFingerprint(projected.visual.doc.content ?? [])) {
+    const projectedNodes = projected.visual.doc.content ?? []
+    const sameProjection = projectionFingerprint(candidateNodes) === projectionFingerprint(projectedNodes)
+      || (approvedIds.size > 0 && projectionFingerprint(withoutEmptyParagraphs(candidateNodes)) === projectionFingerprint(withoutEmptyParagraphs(projectedNodes)))
+    if (projected.fallbackReason || !sameProjection) {
       return { ok: false, view: currentView(), error: 'Visual projection cannot be represented by a safe source rewrite' }
     }
     state = projected
@@ -394,6 +406,15 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     selection = undefined
     conflictReason = undefined
     return success(changedRange(nextSource))
+  }
+
+  const previewApprovedVisual = (next: VisualProjection, protectedIds: readonly string[]): SessionUpdate => {
+    const preview = createMarkdownDocumentSession(state.source, codec)
+    return preview.applyVisualWithApprovedFragments(next, protectedIds)
+  }
+
+  const applyVisualWithApprovedFragments = (next: VisualProjection, protectedIds: readonly string[]): SessionUpdate => {
+    return applyVisual(next, new Set(protectedIds))
   }
 
   const applySource = (next: string): SessionUpdate => {
@@ -525,5 +546,17 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     return currentView()
   }
 
-  return { view: currentView, applyVisual, applySource, restoreHistorySource, enterSource, enterVisual, serialize, beginSave, markSaved }
+  return {
+    view: currentView,
+    applyVisual,
+    previewApprovedVisual,
+    applyVisualWithApprovedFragments,
+    applySource,
+    restoreHistorySource,
+    enterSource,
+    enterVisual,
+    serialize,
+    beginSave,
+    markSaved,
+  }
 }

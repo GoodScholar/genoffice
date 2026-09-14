@@ -45,5 +45,11 @@ export const SourceSnapshotStep: SourceSnapshotStepConstructor = sourceHistoryGl
   })()
 
 export function sourceSnapshotFromTransaction(transaction: Transaction): string | undefined {
-  return transaction.steps.find((step): step is InstanceType<typeof SourceSnapshotStep> => step instanceof SourceSnapshotStep)?.source
+  return sourceSnapshotPairFromTransaction(transaction)?.source
+}
+
+/** 返回 transaction 中源码快照的双端值，供受保护事务校验精确的历史转换。 */
+export function sourceSnapshotPairFromTransaction(transaction: Transaction): { beforeSource: string, source: string } | undefined {
+  const step = transaction.steps.find((candidate): candidate is InstanceType<typeof SourceSnapshotStep> => candidate instanceof SourceSnapshotStep)
+  return step ? { beforeSource: step.beforeSource, source: step.source } : undefined
 }
