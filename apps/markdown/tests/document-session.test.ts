@@ -544,6 +544,36 @@ describe('MarkdownDocumentSession', () => {
     expect(session.serialize()).toBe('Old\n\nTail')
   })
 
+  it.each([false, true])('rejects a second empty paragraph without a tail relation (stale save: %s)', (staleSave) => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('Old\n\n', createTiptapMarkdownCodec(editor))
+    if (staleSave) {
+      const ticket = session.beginSave()
+      expect(session.applyVisual(visualWithText(session.view().visual, 'Old', 'Changed'))).toMatchObject({ ok: true })
+      session.markSaved(ticket.source, ticket)
+    }
+    replaceEditorBaseline(editor, session.view().visual.doc)
+    editor.chain().setMeta('addToHistory', false).setContent({
+      type: 'doc',
+      content: [
+        { type: 'paragraph' },
+        { type: 'paragraph', attrs: { sourceId: USER_TRAILING_EMPTY_PARAGRAPH_SOURCE_ID } },
+      ],
+    }).run()
+    const before = session.view()
+    const update = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+
+    expect(update).toMatchObject({ ok: false })
+    expect(session.view()).toMatchObject({ source: before.source, revision: before.revision })
+  })
+
   it('preserves a saved user-empty separator on reload without claiming its transient visual node', () => {
     const editor = new Editor({
       extensions: buildExtensions({

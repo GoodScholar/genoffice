@@ -411,7 +411,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     const incomingNodes = withoutGeneratedTrailingParagraph(next.doc.content ?? [])
     const markedUserTrailingEmpty = isUserTrailingEmptyParagraph(incomingNodes[incomingNodes.length - 1])
     const schemaBaseline = (state.visual.doc.content?.length ?? 0) === 0
-      || (userTrailingEmpty?.base.visual.doc.content?.length ?? 0) === 0
+      || (userTrailingEmpty !== undefined && (userTrailingEmpty.base.visual.doc.content?.length ?? 0) === 0)
     const candidateNodes = schemaBaseline
       && isSchemaBaselineParagraph(incomingNodes[0])
       && ((markedUserTrailingEmpty && incomingNodes.length === 2)
