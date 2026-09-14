@@ -9,6 +9,8 @@ import { createTiptapMarkdownCodec } from '../src/renderer/markdown/sourceProjec
 import { applyConfirmedSourcePatch, replaceEditorBaseline, restoreSourceHistoryTransaction } from '../src/renderer/App'
 import { SourcePatchCard } from '../src/renderer/ai/SourcePatchCard'
 
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
 const editors: Editor[] = []
 const roots: Array<{ root: Root, host: HTMLDivElement }> = []
 
@@ -124,6 +126,37 @@ describe('source patch confirmation', () => {
     expect(session.serialize()).toBe('<details>new</details>\n\nSafe\n')
   })
 
+  it('rejects a visual proposal while either the App or session remains in source mode, then accepts it after visual return', () => {
+    let session: ReturnType<typeof createMarkdownDocumentSession> | undefined
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange() {}, getCurrentSource: () => session?.serialize() },
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    session = createMarkdownDocumentSession('<details>old</details>\n\nSafe\n', createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
+    const fragment = session.view().protectedFragments[0]!
+    const patch = session.proposeFragmentReplacement(fragment.id, '<details>new</details>\n\n')
+    const beforeDoc = editor.getJSON()
+    const beforeSource = session.serialize()
+    const beforeRevision = session.view().revision
+    session.enterSource()
+
+    expect(applyConfirmedSourcePatch(editor, session, patch, 'source')).toEqual({ ok: false, error: 'source-mode' })
+    expect(editor.getJSON()).toEqual(beforeDoc)
+    expect(session.serialize()).toBe(beforeSource)
+    expect(session.view()).toMatchObject({ mode: 'source', revision: beforeRevision })
+    expect(undo(editor.state, editor.view.dispatch)).toBe(false)
+    expect(session.enterVisual().ok).toBe(true)
+    expect(applyConfirmedSourcePatch(editor, session, patch, 'visual')).toEqual({ ok: true })
+  })
+
   it('exposes current source-backed blocks after source-mode input without normalizing BOM or CRLF', () => {
     const session = createSession('\uFEFF---\r\ntitle: Original\r\n---\r\n\r\nOriginal\r\n')
     const latest = '\uFEFF---\r\ntitle: LATEST\r\n---\r\n\r\nLATEST\r\n'
@@ -131,7 +164,7 @@ describe('source patch confirmation', () => {
     session.applySource(latest)
 
     expect(session.serialize()).toBe(latest)
-    expect(session.sourceBlocks()).toEqual(['LATEST\r\n'])
+    expect(session.sourceBlocks()).toEqual([expect.objectContaining({ raw: 'LATEST\r\n' })])
   })
 
   it('renders a line diff, keeps stale proposals visible, and separates confirm from cancel', () => {
@@ -155,6 +188,29 @@ describe('source patch confirmation', () => {
     expect(host.querySelector('.source-patch-card')).not.toBeNull()
     expect(host.querySelector('[role="alert"]')?.textContent).toContain('重新生成')
     act(() => buttons[0]!.click())
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('resets a stale error when a new patch id replaces the card', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    roots.push({ root, host })
+    const confirm = vi.fn()
+      .mockReturnValueOnce({ ok: false as const, error: 'raw-changed' })
+      .mockReturnValueOnce({ ok: true as const })
+    const cancel = vi.fn()
+    const p1 = { id: 'p1', origin: 'ai' as const, fragmentId: 'one', expectedRaw: 'old', nextRaw: 'new', baseRevision: 0 }
+    const p2 = { ...p1, id: 'p2', fragmentId: 'two' }
+
+    act(() => root.render(createElement(SourcePatchCard, { patch: p1, onConfirm: confirm, onCancel: cancel })))
+    act(() => host.querySelectorAll('button')[1]!.click())
+    expect(host.querySelector('[role="alert"]')).not.toBeNull()
+    act(() => root.render(createElement(SourcePatchCard, { patch: p2, onConfirm: confirm, onCancel: cancel })))
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    act(() => host.querySelectorAll('button')[1]!.click())
+    act(() => host.querySelectorAll('button')[0]!.click())
+    expect(confirm).toHaveBeenLastCalledWith(p2)
     expect(cancel).toHaveBeenCalledOnce()
   })
 })

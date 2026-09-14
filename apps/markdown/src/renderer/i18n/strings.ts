@@ -2,6 +2,7 @@ const sourcePatchFallback = {
   sourcePatchTitle: 'Confirm source patch',
   sourcePatchConversionFailed: 'Could not convert protected source. Edit source or generate a new proposal.',
   sourcePatchRegenerate: 'This patch is stale. Generate a new proposal.',
+  sourcePatchVisualOnly: 'Return to visual mode before confirming this source patch.',
 }
 
 export const strings = {
@@ -24,6 +25,7 @@ export const strings = {
     sourcePatchTitle: '确认源码补丁',
     sourcePatchConversionFailed: '无法转换受保护源码，请编辑源码或重新生成建议',
     sourcePatchRegenerate: '补丁已过期，请重新生成建议。',
+    sourcePatchVisualOnly: '请先返回可视化模式，再确认源码补丁。',
     aiToolReadFm: '读取文档属性',
     aiToolWriteDoc: '撰写文档',
     aiToolWriteDocFailed: '文档撰写失败',

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { t } from '../i18n/locale'
 import type { SourcePatch } from '../markdown/sourcePatch'
 
@@ -15,6 +15,7 @@ function lines(raw: string): string[] {
 /** Confirmation owns the only transition from an inert proposal to an edit. */
 export function SourcePatchCard({ patch, onConfirm, onCancel }: SourcePatchCardProps) {
   const [error, setError] = useState<string | null>(null)
+  useEffect(() => setError(null), [patch.id])
   const before = lines(patch.expectedRaw)
   const after = lines(patch.nextRaw)
   const count = Math.max(before.length, after.length)
@@ -22,6 +23,8 @@ export function SourcePatchCard({ patch, onConfirm, onCancel }: SourcePatchCardP
     const result = onConfirm(patch)
     if (!result.ok) setError(result.error === 'fragment-missing' || result.error === 'raw-changed' || result.error === 'revision-changed'
       ? t('sourcePatchRegenerate')
+      : result.error === 'source-mode'
+        ? t('sourcePatchVisualOnly')
       : result.error)
   }
 

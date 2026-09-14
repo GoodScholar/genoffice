@@ -3,7 +3,7 @@ import { frontmatterInner, parseRawDocEnvelope, type RawDocEnvelope } from './do
 import { projectScan, serializeProjectedGroup, type MarkdownCodec, type ProjectedFragment, type VisualProjection } from './sourceProjection'
 import { scanMarkdownSource, type SourceRange } from './sourceScanner'
 import { rewriteMarkdownImageSources } from '../../shared/markdown-image-sources'
-import { createSourcePatch, validateSourcePatch, type SourcePatch } from './sourcePatch'
+import { createSourcePatch, validateSourcePatch, type SourcePatch, type SourceReadBlock } from './sourcePatch'
 
 export type EditorMode = 'visual' | 'source'
 
@@ -29,7 +29,8 @@ export interface SaveTicket {
 
 export interface MarkdownDocumentSession {
   view(): SessionView
-  sourceBlocks(): readonly string[]
+  sourceBlocks(): readonly SourceReadBlock[]
+  frontmatter(): string
   applyVisual(next: VisualProjection): SessionUpdate
   previewApprovedVisual(next: VisualProjection, protectedIds: readonly string[]): SessionUpdate
   applyVisualWithApprovedFragments(next: VisualProjection, protectedIds: readonly string[]): SessionUpdate
@@ -331,9 +332,14 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     ...((conflictReason ?? state.fallbackReason) ? { fallbackReason: conflictReason ?? state.fallbackReason } : {}),
   })
 
-  const sourceBlocks = (): readonly string[] => state.units.length > 0
-    ? state.units.map(unitText)
-    : state.envelope.bodyRaw === '' ? [] : [state.envelope.bodyRaw]
+  const sourceBlocks = (): readonly SourceReadBlock[] => state.units.length > 0
+    ? state.units.map((unit) => ({
+      raw: unitText(unit),
+      protected: unit.protectedFragments.map((fragment) => ({ id: fragment.id, reason: fragment.reason, raw: fragment.raw })),
+    }))
+    : state.envelope.bodyRaw === '' ? [] : [{ raw: state.envelope.bodyRaw, protected: [] }]
+
+  const currentFrontmatter = (): string => frontmatterInner(state.envelope.frontmatterRaw)
 
   const success = (range?: SourceRange): SessionUpdate => ({ ok: true, view: currentView(), ...(range ? { changedRange: range } : {}) })
 
@@ -652,6 +658,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
   return {
     view: currentView,
     sourceBlocks,
+    frontmatter: currentFrontmatter,
     applyVisual,
     previewApprovedVisual,
     applyVisualWithApprovedFragments,

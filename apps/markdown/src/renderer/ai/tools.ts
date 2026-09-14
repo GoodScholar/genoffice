@@ -86,7 +86,10 @@ export function buildDocContext(editor: Editor, protection?: SourceProtectionAcc
       protection.source(),
       '',
       '## Source blocks',
-      ...blocks.map((raw, index) => `${index} | source | ${raw}`),
+      ...blocks.map((block, index) => [
+        `${index} | source | ${block.raw}`,
+        ...block.protected.map((fragment) => `protected:${fragment.id}:${fragment.reason}\n${fragment.raw}`),
+      ].join('\n')),
     ].join('\n')
   }
   const doc = editor.state.doc
@@ -488,6 +491,14 @@ export function executeTool(
       return writeDocument(editor, call, signal, writer, protection)
 
     case 'read_frontmatter': {
+      if (protection?.mode() === 'source') {
+        const inner = protection.frontmatter()
+        return {
+          output: inner || '(the document has no frontmatter)',
+          mutated: false,
+          summary: t('aiToolReadFm'),
+        }
+      }
       if (!fm) return fail('frontmatter is not available', t('aiToolReadFm'))
       const inner = fm.read()
       return {
@@ -507,7 +518,7 @@ export function executeTool(
     }
 
     case 'read_blocks': {
-      const sourceBlocks = protection?.mode() === 'source' ? protection.sourceBlocks() : undefined
+      const sourceBlocks = protection ? protection.sourceBlocks() : undefined
       const readableMaxIndex = sourceBlocks ? sourceBlocks.length - 1 : maxIndex
       const start = clampIndex(call.input.startIndex, readableMaxIndex)
       const end = clampIndex(call.input.endIndex, readableMaxIndex)
@@ -517,7 +528,12 @@ export function executeTool(
           t('aiToolReadBlocks'),
         )
       }
-      const full = sourceBlocks ? sourceBlocks.slice(start, end + 1).join('') : serializeBlocks(editor, start, end)
+      const full = sourceBlocks
+        ? sourceBlocks.slice(start, end + 1).map((block) => [
+          block.raw,
+          ...block.protected.map((fragment) => `protected:${fragment.id}:${fragment.reason}\n${fragment.raw}`),
+        ].join('')).join('')
+        : serializeBlocks(editor, start, end)
       const offset = Math.max(0, Number(call.input.offset) || 0)
       const page = full.slice(offset, offset + READ_PAGE_CHARS)
       const truncated = offset + READ_PAGE_CHARS < full.length
@@ -525,7 +541,7 @@ export function executeTool(
         ? `\n\n[truncated — continue with offset=${offset + READ_PAGE_CHARS}]`
         : ''
       return {
-        output: page + notice + (protection ? `\n\n${protection.context()}` : ''),
+        output: page + notice,
         mutated: false,
         summary: t('aiToolReadBlocks'),
       }

@@ -46,8 +46,12 @@ function sourceAccess(overrides: Partial<SourceProtectionAccess> = {}): SourcePr
   return {
     mode: () => 'visual',
     context: () => 'protected:html-1:raw-html\n<details>raw</details>',
-    source: () => '<details>raw</details>\n\nSafe\n',
-    sourceBlocks: () => ['<details>raw</details>\n\n', 'Safe\n'],
+    source: () => 'Safe\n\n<details>raw</details>\n',
+    sourceBlocks: () => [
+      { raw: 'Safe\n\n', protected: [] },
+      { raw: '<details>raw</details>\n', protected: [{ id: 'html-1', reason: 'raw-html', raw: '<details>raw</details>' }] },
+    ],
+    frontmatter: () => '',
     protectedIdsForOps: () => [],
     propose: (_id, expectedRaw, nextRaw) => ({
       id: 'proposal-1', origin: 'ai', fragmentId: 'html-1', expectedRaw, nextRaw, baseRevision: 0,
@@ -161,7 +165,8 @@ describe('lossless source access', () => {
     const access = sourceAccess({
       mode: () => 'source',
       source: () => '\uFEFF---\r\ntitle: LATEST\r\n---\r\n\r\nLATEST body\r\n',
-      sourceBlocks: () => ['LATEST body\r\n'],
+      sourceBlocks: () => [{ raw: 'LATEST body\r\n', protected: [] }],
+      frontmatter: () => 'title: LATEST',
     })
 
     expect(buildDocContext(editor, access)).toContain('LATEST body')
@@ -169,6 +174,45 @@ describe('lossless source access', () => {
     const read = executeTool(editor, call('read_blocks', { startIndex: 0, endIndex: 0 }), undefined, undefined, undefined, access)
     expect(read.output).toContain('LATEST body\r\n')
     expect(read.output).not.toContain('Original')
+  })
+
+  it('uses source-backed requested blocks only in visual mode, without calling the markdown serializer', () => {
+    const editor = createEditor('stale visual')
+    const access = sourceAccess({
+      sourceBlocks: () => [
+        { raw: 'Safe block\n', protected: [] },
+        { raw: 'OUTSIDE block\n', protected: [{ id: 'outside', reason: 'raw-html', raw: '<outside>' }] },
+      ],
+      context: () => 'protected:outside:raw-html\n<outside>',
+    })
+    ;(editor.markdown as { serialize: () => string }).serialize = () => { throw new Error('must not serialize') }
+
+    const read = executeTool(editor, call('read_blocks', { startIndex: 0, endIndex: 0 }), undefined, undefined, undefined, access)
+
+    expect(read.output).toBe('Safe block\n')
+    expect(read.output).not.toContain('OUTSIDE')
+    expect(read.output).not.toContain('protected:')
+  })
+
+  it('includes protected id, reason, and raw only for the requested source-backed protected block', () => {
+    const editor = createEditor('stale visual')
+    const access = sourceAccess()
+
+    const read = executeTool(editor, call('read_blocks', { startIndex: 1, endIndex: 1 }), undefined, undefined, undefined, access)
+
+    expect(read.output).toContain('protected:html-1:raw-html')
+    expect(read.output).toContain('<details>raw</details>')
+    expect(read.output).not.toContain('Safe')
+  })
+
+  it('reads source-mode frontmatter from the current session instead of stale frontmatter access', () => {
+    const editor = createEditor('safe')
+    const access = sourceAccess({ mode: () => 'source', frontmatter: () => 'title: LATEST' })
+    const fm = { read: () => 'title: Original', write: () => {} }
+
+    const read = executeTool(editor, call('read_frontmatter'), undefined, fm, undefined, access)
+
+    expect(read.output).toBe('title: LATEST')
   })
 
   it('publishes a complete protected-fragment proposal without mutating the editor', () => {

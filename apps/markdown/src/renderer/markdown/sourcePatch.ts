@@ -21,13 +21,20 @@ export interface SourcePatchTarget {
   raw: string
 }
 
+export interface SourceReadBlock {
+  raw: string
+  protected: ReadonlyArray<{ id: string, reason: string, raw: string }>
+}
+
 /** The only bridge used by AI/UI adapters for protected-source mutations. */
 export interface SourceProtectionAccess {
   mode(): 'visual' | 'source'
   /** Complete session source, including BOM/frontmatter/original EOL bytes. */
   source(): string
   /** Current source-backed body blocks, indexed exactly as read_blocks exposes them. */
-  sourceBlocks(): readonly string[]
+  sourceBlocks(): readonly SourceReadBlock[]
+  /** Current raw frontmatter inner text from the same source authority. */
+  frontmatter(): string
   /** Stable protected labels and their exact raw text, for read-only AI context. */
   context(): string
   /** Statically resolve every protected target before an op batch is dispatched. */

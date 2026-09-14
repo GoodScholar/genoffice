@@ -210,7 +210,9 @@ export function applyConfirmedSourcePatch(
   editor: Editor,
   session: MarkdownDocumentSession,
   patch: SourcePatch,
+  appMode: 'visual' | 'source' = 'visual',
 ): { ok: true } | { ok: false; error: string } {
+  if (appMode !== 'visual' || session.view().mode !== 'visual') return { ok: false, error: 'source-mode' }
   const preview = session.previewConfirmedPatch(patch)
   if (!preview.ok) return { ok: false, error: preview.error }
   try {
@@ -1069,6 +1071,7 @@ export default function App() {
         mode: () => session.view().mode,
         source: () => session.serialize(),
         sourceBlocks: () => session.sourceBlocks(),
+        frontmatter: () => session.frontmatter(),
         context: () => session.view().protectedFragments
           .map((fragment) => `protected:${fragment.id}:${fragment.reason}\n${fragment.raw}`)
           .join('\n\n'),
@@ -1088,7 +1091,7 @@ export default function App() {
     const current = editorRef.current
     const session = sessionRef.current
     if (!current || !session) return { ok: false, error: 'Document is not ready' }
-    const result = applyConfirmedSourcePatch(current, session, patch)
+    const result = applyConfirmedSourcePatch(current, session, patch, editorModeRef.current)
     if (!result.ok) return result
     const view = session.view()
     applyProjectionProvenance(current, view.visual.doc)
@@ -1286,7 +1289,7 @@ export default function App() {
           onDismiss={() => setProtectedChangeRequest(null)}
         />
       )}
-      {sourcePatch && (
+      {sourcePatch && editorMode === 'visual' && sessionRef.current?.view().mode === 'visual' && (
         <SourcePatchCard
           patch={sourcePatch}
           onConfirm={confirmSourcePatch}
