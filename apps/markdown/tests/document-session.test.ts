@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Editor, type JSONContent } from '@tiptap/core'
 import { buildExtensions } from '../src/renderer/editor/extensions'
+import { replaceEditorBaseline } from '../src/renderer/App'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
 import { createTiptapMarkdownCodec, type MarkdownCodec, type VisualProjection } from '../src/renderer/markdown/sourceProjection'
 import {
@@ -447,6 +448,100 @@ describe('MarkdownDocumentSession', () => {
     })
     expect(session.applyVisual(session.view().visual)).toMatchObject({ ok: true })
     expect(session.view()).toMatchObject({ source: '![image](assets/image.png)\n\n\n\n', revision: 1 })
+  })
+
+  it.each([
+    ['LF without a final newline', 'Old'],
+    ['LF with one final newline', 'Old\n'],
+    ['LF with two final newlines', 'Old\n\n'],
+    ['LF with multiple final newlines', 'Old\n\n\n\n'],
+    ['CRLF without a final newline', 'Old'],
+    ['CRLF with one final newline', 'Old\r\n'],
+    ['CRLF with two final newlines', 'Old\r\n\r\n'],
+    ['CRLF with multiple final newlines', 'Old\r\n\r\n\r\n\r\n'],
+    ['frontmatter body without a final newline', '---\ntitle: keep\n---\n\nOld'],
+  ])('restores the exact original tail boundary after a stale save for %s', (_name, source) => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+    const ticket = session.beginSave()
+    const frontmatterInner = session.view().visual.frontmatterInner
+    editor.chain().setMeta('addToHistory', false).setContent(session.view().visual.doc).run()
+    editor.commands.insertContentAt(editor.state.doc.content.size, { type: 'paragraph' })
+    const visual = { doc: editor.getJSON(), frontmatterInner }
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true, view: { revision: 1 } })
+    const withMarker = session.serialize()
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true, view: { revision: 1, source: withMarker } })
+
+    session.markSaved(ticket.source, ticket)
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true, view: { revision: 1, source: withMarker } })
+    const tail = editor.state.doc.lastChild!
+    editor.commands.deleteRange({ from: editor.state.doc.content.size - tail.nodeSize, to: editor.state.doc.content.size })
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner })).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe(source)
+  })
+
+  it.each([
+    ['empty', ''],
+    ['LF blank-only', '\n\n'],
+    ['CRLF blank-only', '\r\n\r\n'],
+    ['LF frontmatter-only', '---\ntitle: only\n---\n'],
+    ['CRLF frontmatter-only', '---\r\ntitle: only\r\n---\r\n'],
+  ])('distinguishes an App baseline from a later empty-tail insertion for %s', (_name, source) => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+    const frontmatterInner = session.view().visual.frontmatterInner
+    replaceEditorBaseline(editor, session.view().visual.doc)
+    const ticket = session.beginSave()
+    editor.commands.insertContentAt(editor.state.doc.content.size, { type: 'paragraph' })
+    const visual = { doc: editor.getJSON(), frontmatterInner }
+
+    const inserted = session.applyVisual(visual)
+    expect(inserted).toMatchObject({ ok: true, view: { revision: 1 } })
+    const withMarker = session.serialize()
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true, view: { revision: 1, source: withMarker } })
+    session.markSaved(withMarker, ticket)
+    editor.commands.undo()
+    const undone = session.applyVisual({ doc: editor.getJSON(), frontmatterInner })
+    expect(undone).toMatchObject({ ok: true, view: { source } })
+    editor.commands.redo()
+    expect(session.applyVisual(visual)).toMatchObject({ ok: true, view: { source: withMarker } })
+  })
+
+  it('writes text into a stale user-tail marker from its logical base', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('Old', createTiptapMarkdownCodec(editor))
+    const ticket = session.beginSave()
+    editor.chain().setMeta('addToHistory', false).setContent(session.view().visual.doc).run()
+    editor.commands.insertContentAt(editor.state.doc.content.size, { type: 'paragraph' })
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    session.markSaved('Old', ticket)
+
+    const tail = editor.state.doc.lastChild!
+    const from = editor.state.doc.content.size - tail.nodeSize + 1
+    editor.view.dispatch(editor.state.tr.insertText('Tail', from))
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe('Old\n\nTail')
   })
 
   it('preserves a saved user-empty separator on reload without claiming its transient visual node', () => {

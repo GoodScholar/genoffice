@@ -73,6 +73,11 @@ interface DocumentState {
   fallbackReason?: string
 }
 
+interface UserTrailingEmptyRelation {
+  base: DocumentState
+  delta: string
+}
+
 interface SaveState {
   revision: number
   source: string
@@ -124,6 +129,12 @@ function withoutEmptyParagraphs(nodes: JSONContent[]): JSONContent[] {
 
 function withoutGeneratedTrailingParagraph(nodes: JSONContent[]): JSONContent[] {
   return nodes.filter((node) => !isGeneratedTrailingParagraph(node))
+}
+
+function isSchemaBaselineParagraph(node: JSONContent | undefined): boolean {
+  return node?.type === 'paragraph'
+    && node.attrs?.sourceId === null
+    && (node.content?.length ?? 0) === 0
 }
 
 function normaliseEol(value: string, envelope: RawDocEnvelope): string {
@@ -349,7 +360,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
   let selection: SourceRange | undefined
   let tickets = new WeakMap<SaveTicket, SaveState>()
   let conflictReason: string | undefined
-  let userTrailingEmptyBase: DocumentState | undefined
+  let userTrailingEmpty: UserTrailingEmptyRelation | undefined
 
   const currentView = (): SessionView => ({
     source: state.source,
@@ -374,8 +385,9 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
   const success = (range?: SourceRange): SessionUpdate => ({ ok: true, view: currentView(), ...(range ? { changedRange: range } : {}) })
 
   const retainUserTrailingEmpty = (next: DocumentState, marker: JSONContent, base: DocumentState): boolean => {
-    const suffix = next.envelope.eol + next.envelope.eol
-    if (!next.source.endsWith(suffix)) return false
+    if (!next.source.startsWith(base.source)) return false
+    const delta = next.source.slice(base.source.length)
+    if (!delta || delta.split(next.envelope.eol).join('') !== '') return false
     state = {
       ...next,
       visual: {
@@ -383,15 +395,12 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
         doc: { ...next.visual.doc, content: [...(next.visual.doc.content ?? []), clone(marker)] },
       },
     }
-    userTrailingEmptyBase = base
+    userTrailingEmpty = { base, delta }
     return true
   }
 
-  // This is only called while retaining an observed marker. Its two EOLs are
-  // the exact source delta emitted for that marker, not generic trailing space.
-  const baseBeforeUserTrailingEmpty = (next: DocumentState): DocumentState | undefined => {
-    const delta = next.envelope.eol + next.envelope.eol
-    if (!next.source.endsWith(delta)) return undefined
+  const baseFromUserTrailingEmptyDelta = (next: DocumentState, delta: string): DocumentState | undefined => {
+    if (!delta || !next.source.endsWith(delta)) return undefined
     const base = createState(next.source.slice(0, -delta.length), codec)
     return base.fallbackReason ? undefined : base
   }
@@ -399,8 +408,17 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
   const applyVisual = (next: VisualProjection, approvedIds = new Set<string>()): SessionUpdate => {
     if (state.fallbackReason) return { ok: false, view: currentView(), error: state.fallbackReason }
     const frontmatterChanged = next.frontmatterInner !== state.visual.frontmatterInner
-    const candidateNodes = withoutGeneratedTrailingParagraph(next.doc.content ?? [])
-    const userTrailingEmpty = isUserTrailingEmptyParagraph(candidateNodes[candidateNodes.length - 1])
+    const incomingNodes = withoutGeneratedTrailingParagraph(next.doc.content ?? [])
+    const markedUserTrailingEmpty = isUserTrailingEmptyParagraph(incomingNodes[incomingNodes.length - 1])
+    const schemaBaseline = (state.visual.doc.content?.length ?? 0) === 0
+      || (userTrailingEmpty?.base.visual.doc.content?.length ?? 0) === 0
+    const candidateNodes = schemaBaseline
+      && isSchemaBaselineParagraph(incomingNodes[0])
+      && ((markedUserTrailingEmpty && incomingNodes.length === 2)
+        || (userTrailingEmpty && incomingNodes.length === 1))
+      ? incomingNodes.slice(1)
+      : incomingNodes
+    const hasUserTrailingEmpty = isUserTrailingEmptyParagraph(candidateNodes[candidateNodes.length - 1])
     let restoreTransient: (() => void) | undefined
     const expected = new Map(state.units.flatMap((unit) => unit.protectedFragments.map((fragment) => [fragment.id, fragment.raw] as const)))
     const found = collectProtected(candidateNodes)
@@ -415,11 +433,12 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       if (!expected.has(id)) return { ok: false, view: currentView(), error: `Unknown protected source fragment ${id}` }
     }
 
-    if (userTrailingEmptyBase && !userTrailingEmpty) {
-      const base = userTrailingEmptyBase
+    if (userTrailingEmpty && !hasUserTrailingEmpty) {
+      const relation = userTrailingEmpty
+      const base = relation.base
       if (!frontmatterChanged && projectionFingerprint(candidateNodes) === projectionFingerprint(base.visual.doc.content ?? [])) {
         state = base
-        userTrailingEmptyBase = undefined
+        userTrailingEmpty = undefined
         revision += 1
         selection = undefined
         conflictReason = undefined
@@ -427,26 +446,26 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       }
       const transient = state
       state = base
-      userTrailingEmptyBase = undefined
+      userTrailingEmpty = undefined
       restoreTransient = () => {
         state = transient
-        userTrailingEmptyBase = base
+        userTrailingEmpty = relation
       }
     }
 
-    if (userTrailingEmptyBase && userTrailingEmpty && !frontmatterChanged
+    if (userTrailingEmpty && hasUserTrailingEmpty && !frontmatterChanged
       && projectionFingerprint(candidateNodes) === projectionFingerprint(state.visual.doc.content ?? [])) {
       return success()
     }
 
-    if (userTrailingEmptyBase && userTrailingEmpty) {
+    if (userTrailingEmpty && hasUserTrailingEmpty) {
       const transient = state
-      const base = userTrailingEmptyBase
-      state = base
-      userTrailingEmptyBase = undefined
+      const relation = userTrailingEmpty
+      state = relation.base
+      userTrailingEmpty = undefined
       restoreTransient = () => {
         state = transient
-        userTrailingEmptyBase = base
+        userTrailingEmpty = relation
       }
     }
 
@@ -471,7 +490,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
         || projectionFingerprint(withoutEmptyParagraphs(candidateNodes)) === projectionFingerprint(withoutEmptyParagraphs(projectedNodes))
       if (!projected.fallbackReason && sameProjection) {
         state = projected
-        userTrailingEmptyBase = undefined
+        userTrailingEmpty = undefined
         revision += 1
         mode = state.fallbackReason ? 'source' : 'visual'
         selection = undefined
@@ -485,9 +504,11 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     const groups = completeProjectedGroups({ ...next, doc: { ...next.doc, content: candidateNodes } })
     const used = new Set<string>()
     const pieces: string[] = []
+    let logicalPieces: string[] | undefined
     try {
       for (let index = 0; index < groups.length; index += 1) {
         const group = groups[index]!
+        if (hasUserTrailingEmpty && index === groups.length - 1) logicalPieces = [...pieces]
         const previous = group.sourceId ? previousById.get(group.sourceId) : undefined
         if (index > 0) {
           const priorId = groups[index - 1]!.sourceId
@@ -522,16 +543,26 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       return { ok: false, view: currentView(), error: error instanceof Error ? error.message : String(error) }
     }
 
-    let body = pieces.join('')
-    if (state.envelope.trailingNewline) {
-      if (body !== '' && !body.endsWith('\n')) body += state.envelope.eol
-    } else if (!userTrailingEmpty) {
-      body = body.replace(/(?:\r?\n)+$/, '')
+    const completeBody = (value: string, retainTrailingEmpty: boolean): string => {
+      if (state.envelope.trailingNewline) {
+        return value !== '' && !value.endsWith('\n') ? value + state.envelope.eol : value
+      }
+      return retainTrailingEmpty ? value : value.replace(/(?:\r?\n)+$/, '')
     }
+    const markerOnlyEmptyDocument = hasUserTrailingEmpty
+      && logicalPieces?.length === 0
+      && (state.visual.doc.content?.length ?? 0) === 0
+    const logicalEmptyBody = markerOnlyEmptyDocument ? state.envelope.bodyRaw : undefined
+    const body = logicalEmptyBody === undefined
+      ? completeBody(pieces.join(''), hasUserTrailingEmpty)
+      : logicalEmptyBody + state.envelope.eol + state.envelope.eol
     const envelope = frontmatterChanged
       ? { ...state.envelope, frontmatterRaw: editedFrontmatterRaw(next.frontmatterInner, state.envelope) }
       : state.envelope
     const nextSource = sourcePrefix(envelope) + body
+    const logicalSource = logicalEmptyBody === undefined && logicalPieces === undefined
+      ? undefined
+      : sourcePrefix(envelope) + (logicalEmptyBody ?? completeBody(logicalPieces!.join(''), false))
     if (nextSource === state.source) {
       if (projectionFingerprint(candidateNodes) === projectionFingerprint(state.visual.doc.content ?? [])) return success()
       restoreTransient?.()
@@ -541,25 +572,27 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     const projectedNodes = projected.visual.doc.content ?? []
     const sameProjection = projectionFingerprint(candidateNodes) === projectionFingerprint(projectedNodes)
       || (approvedIds.size > 0 && projectionFingerprint(withoutEmptyParagraphs(candidateNodes)) === projectionFingerprint(withoutEmptyParagraphs(projectedNodes)))
-    const projectedWithoutUserEmpty = userTrailingEmpty ? candidateNodes.slice(0, -1) : candidateNodes
-    const userEmptyProjection = userTrailingEmpty
+    const projectedWithoutUserEmpty = hasUserTrailingEmpty ? candidateNodes.slice(0, -1) : candidateNodes
+    const userEmptyProjection = hasUserTrailingEmpty
       && projectionFingerprint(projectedWithoutUserEmpty) === projectionFingerprint(projectedNodes)
     if (projected.fallbackReason || (!sameProjection && !userEmptyProjection)) {
       restoreTransient?.()
       return { ok: false, view: currentView(), error: 'Visual projection cannot be represented by a safe source rewrite' }
     }
-    if (userTrailingEmpty) {
+    if (hasUserTrailingEmpty) {
       const marker = candidateNodes[candidateNodes.length - 1]!
       const nodesWithoutMarker = candidateNodes.slice(0, -1)
-      const base = !frontmatterChanged && projectionFingerprint(nodesWithoutMarker) === projectionFingerprint(state.visual.doc.content ?? [])
+      const base = logicalSource === undefined ? undefined : createState(logicalSource, codec)
+      const logicalBase = !frontmatterChanged
+        && projectionFingerprint(nodesWithoutMarker) === projectionFingerprint(state.visual.doc.content ?? [])
         ? state
-        : baseBeforeUserTrailingEmpty(projected)
-      if (!base || !retainUserTrailingEmpty(projected, marker, base)) {
+        : base
+      if (!logicalBase || logicalBase.fallbackReason || !retainUserTrailingEmpty(projected, marker, logicalBase)) {
         return { ok: false, view: currentView(), error: 'Visual projection cannot retain a user trailing empty paragraph' }
       }
     } else {
       state = projected
-      userTrailingEmptyBase = undefined
+      userTrailingEmpty = undefined
     }
     revision += 1
     mode = state.fallbackReason ? 'source' : 'visual'
@@ -634,7 +667,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       return { ok: false, view: currentView(), error: error instanceof Error ? error.message : String(error) }
     }
     state = next
-    userTrailingEmptyBase = undefined
+    userTrailingEmpty = undefined
     revision += 1
     mode = state.fallbackReason ? 'source' : mode
     selection = undefined
@@ -645,7 +678,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
   const applySource = (next: string): SessionUpdate => {
     if (next !== state.source) {
       state = createState(next, codec)
-      userTrailingEmptyBase = undefined
+      userTrailingEmpty = undefined
       revision += 1
       conflictReason = undefined
     }
@@ -657,7 +690,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
 
   const restoreHistorySource = (next: string): SessionUpdate => {
     state = createState(next, codec)
-    userTrailingEmptyBase = undefined
+    userTrailingEmpty = undefined
     revision += 1
     mode = state.fallbackReason ? 'source' : 'visual'
     selection = undefined
@@ -700,15 +733,18 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     const saved = tickets.get(ticket)
     if (!saved || saved.revision !== ticket.revision || saved.source !== ticket.source) throw new Error('Invalid save ticket')
     tickets.delete(ticket)
-    const trailingMarker = userTrailingEmptyBase
+    const trailingRelation = userTrailingEmpty
+    const trailingMarker = trailingRelation
       ? state.visual.doc.content?.[state.visual.doc.content.length - 1]
       : undefined
     if (revision === ticket.revision) {
-      if (sourceActuallyWritten !== state.source || !userTrailingEmptyBase) {
+      if (sourceActuallyWritten !== state.source || !userTrailingEmpty) {
         state = createState(sourceActuallyWritten, codec)
-        userTrailingEmptyBase = undefined
-        const base = trailingMarker ? baseBeforeUserTrailingEmpty(state) : undefined
-        if (trailingMarker && base && !retainUserTrailingEmpty(state, trailingMarker, base)) userTrailingEmptyBase = undefined
+        userTrailingEmpty = undefined
+        const base = trailingMarker && trailingRelation
+          ? baseFromUserTrailingEmptyDelta(state, trailingRelation.delta)
+          : undefined
+        if (trailingMarker && base && !retainUserTrailingEmpty(state, trailingMarker, base)) userTrailingEmpty = undefined
       }
       baseline = sourceActuallyWritten
       mode = state.fallbackReason ? 'source' : mode
@@ -774,11 +810,20 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     const mainChangedEnvelope = sourcePrefix(written.envelope) !== sourcePrefix(saved.envelope)
     if (userChangedEnvelope && mainChangedEnvelope && sourcePrefix(state.envelope) !== sourcePrefix(written.envelope)) hasConflict = true
     const envelope = userChangedEnvelope ? state.envelope : written.envelope
-    const rebasedSource = sourcePrefix(envelope) + body
+    const savePreservesTrailingRelation = trailingRelation
+      && (sourceActuallyWritten === ticket.source
+        || sourceActuallyWritten === trailingRelation.base.source + trailingRelation.delta)
+    const rebasedSource = trailingRelation && state.units.length === 0 && written.units.length === 0
+      ? savePreservesTrailingRelation
+        ? state.source
+        : sourcePrefix(envelope) + trailingRelation.base.envelope.bodyRaw + trailingRelation.delta
+      : sourcePrefix(envelope) + body
     state = createState(rebasedSource, codec)
-    userTrailingEmptyBase = undefined
-    const base = trailingMarker ? baseBeforeUserTrailingEmpty(state) : undefined
-    if (trailingMarker && base && !retainUserTrailingEmpty(state, trailingMarker, base)) userTrailingEmptyBase = undefined
+    userTrailingEmpty = undefined
+    const base = trailingMarker && trailingRelation
+      ? baseFromUserTrailingEmptyDelta(state, trailingRelation.delta)
+      : undefined
+    if (trailingMarker && base && !retainUserTrailingEmpty(state, trailingMarker, base)) userTrailingEmpty = undefined
     baseline = sourceActuallyWritten
     conflictReason = hasConflict ? 'rebase conflict: user and save result changed the same source unit' : undefined
     return currentView()

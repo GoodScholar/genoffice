@@ -261,8 +261,15 @@ export function scanMarkdownSource(
     const raw = consumeTokenRaw(bodyRaw, token.raw, cursor)
     if (raw === null) return failed('Lexer token raw does not continuously cover the source')
     if (token.type === 'space') {
-      if (!/^[ \t\r\n]+$/.test(raw) || units.length === 0) {
+      if (!/^[ \t\r\n]+$/.test(raw)) {
         return failed('Lexer space token cannot be assigned to a preceding unit')
+      }
+      if (units.length === 0) {
+        if (!tokens.slice(index).every((remaining) => remaining.type === 'space' && /^[ \t\r\n]+$/.test(remaining.raw))) {
+          return failed('Lexer space token cannot be assigned to a preceding unit')
+        }
+        cursor += raw.length
+        continue
       }
       const previous = units[units.length - 1]
       previous.trailingRaw += raw

@@ -50,7 +50,7 @@ export const UserTrailingEmptyParagraph = Extension.create({
     return [
       new Plugin({
         key: plugin,
-        appendTransaction: (transactions, _, state) => {
+        appendTransaction: (transactions, oldState, state) => {
           const userEdit = transactions.some(
             (transaction) =>
               transaction.docChanged &&
@@ -63,7 +63,13 @@ export const UserTrailingEmptyParagraph = Extension.create({
               ),
           )
           if (!userEdit) return
+          const previousTail = oldState.doc.lastChild
           const last = state.doc.lastChild
+          if (
+            previousTail?.attrs.sourceId === USER_TRAILING_EMPTY_PARAGRAPH_SOURCE_ID
+            && last?.attrs.sourceId === null
+          )
+            return
           if (
             !last ||
             last.type.name !== 'paragraph' ||
@@ -72,10 +78,12 @@ export const UserTrailingEmptyParagraph = Extension.create({
           )
             return
           const position = state.doc.content.size - last.nodeSize
-          return state.tr.setNodeMarkup(position, undefined, {
-            ...last.attrs,
-            sourceId: USER_TRAILING_EMPTY_PARAGRAPH_SOURCE_ID,
-          })
+          return state.tr
+            .setNodeMarkup(position, undefined, {
+              ...last.attrs,
+              sourceId: USER_TRAILING_EMPTY_PARAGRAPH_SOURCE_ID,
+            })
+            .setMeta('addToHistory', false)
         },
       }),
     ]
