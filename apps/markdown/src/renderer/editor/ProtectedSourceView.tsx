@@ -5,10 +5,11 @@ import { t } from '../i18n/locale'
 export interface ProtectedSourceViewProps extends Pick<NodeViewProps, 'node' | 'editor'> {
   onEditSource(id: string): void
   onConvert(id: string): void
+  conversionAvailable?: boolean
 }
 
 /** 保留源码 atom 的只读呈现；React 文本子节点会刻意转义原始 HTML。 */
-export function ProtectedSourceView({ node, editor, onEditSource, onConvert }: ProtectedSourceViewProps) {
+export function ProtectedSourceView({ node, editor, onEditSource, onConvert, conversionAvailable = false }: ProtectedSourceViewProps) {
   const id = String(node.attrs.id ?? '')
   const raw = String(node.attrs.raw ?? '')
   const reason = String(node.attrs.reason ?? '')
@@ -30,8 +31,8 @@ export function ProtectedSourceView({ node, editor, onEditSource, onConvert }: P
         <button
           type="button"
           data-protected-convert
-          disabled
-          title={t('protectedConvertUnavailable')}
+          disabled={!conversionAvailable}
+          title={conversionAvailable ? undefined : t('protectedConvertUnavailable')}
           onClick={() => onConvert(id)}
         >
           {t('protectedConvert')}

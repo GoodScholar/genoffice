@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Editor } from '@tiptap/core'
 import { buildExtensions } from '../src/renderer/editor/extensions'
 import { buildDocContext, executeTool, markDocSeen } from '../src/renderer/ai/tools'
 import { deriveAutoFileName } from '../src/renderer/App'
+import type { SourceProtectionAccess } from '../src/renderer/markdown/sourcePatch'
 
 // Undestroyed views leave DOMObserver flush timers that fire after jsdom teardown
 // ("document is not defined" unhandled error) — destroy every editor we create.
@@ -39,6 +40,30 @@ const ops = (...list: Record<string, unknown>[]) => call('apply_ops', { ops: lis
 const insert = (afterIndex: number, markdown: string) =>
   ops({ op: 'insertContent', after: afterIndex, markdown })
 
+function sourceAccess(overrides: Partial<SourceProtectionAccess> = {}): SourceProtectionAccess {
+  return {
+    mode: () => 'visual',
+    context: () => 'protected:html-1:raw-html\n<details>raw</details>',
+    protectedIdsForOps: () => [],
+    propose: (_id, expectedRaw, nextRaw) => ({
+      id: 'proposal-1', origin: 'ai', fragmentId: 'html-1', expectedRaw, nextRaw, baseRevision: 0,
+    }),
+    publish: () => {},
+    ...overrides,
+  }
+}
+
+function createProtectedEditor(): Editor {
+  const editor = createEditor()
+  editor.commands.setContent({
+    type: 'doc', content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'safe' }] },
+      { type: 'protectedSourceBlock', attrs: { id: 'html-1', raw: '<details>raw</details>', reason: 'raw-html' } },
+    ],
+  })
+  return editor
+}
+
 describe('get_document_context', () => {
   it('reports a blank document', () => {
     const editor = createEditor()
@@ -51,6 +76,66 @@ describe('get_document_context', () => {
     expect(ctx).toContain('0 | h1 | Title')
     expect(ctx).toContain('1 | paragraph | Hello world.')
     expect(ctx).toContain('2 | bulletList |')
+  })
+})
+
+describe('lossless source access', () => {
+  it('includes protected ids, reasons, and raw source in context and block reads', () => {
+    const editor = createProtectedEditor()
+    const access = sourceAccess()
+
+    expect(buildDocContext(editor, access)).toContain('protected:html-1:raw-html')
+    const read = executeTool(editor, call('read_blocks', { startIndex: 1, endIndex: 1 }), undefined, undefined, undefined, access)
+    expect(read.output).toContain('<details>raw</details>')
+  })
+
+  it('rejects an entire op batch before its earlier safe op when a later op hits protected source', () => {
+    const editor = createProtectedEditor()
+    const before = editor.getJSON()
+
+    const result = executeTool(editor, ops(
+      { op: 'replaceText', target: { start: 0 }, find: 'safe', replace: 'changed' },
+      { op: 'replaceBlocks', target: { start: 1 }, markdown: 'nope' },
+    ))
+
+    expect(result.isError).toBe(true)
+    expect(result.mutated).not.toBe(true)
+    expect(editor.getJSON()).toEqual(before)
+  })
+
+  it.each(['apply_ops', 'write_document', 'insert_image', 'generate_image'])('rejects %s in source mode while keeping reads available', (name) => {
+    const editor = createEditor('safe')
+    const access = sourceAccess({ mode: () => 'source' })
+    const input = name === 'apply_ops'
+      ? { ops: [{ op: 'replaceText', target: { start: 0 }, find: 'safe', replace: 'changed' }] }
+      : name === 'write_document'
+        ? { plan: 'write' }
+        : name === 'insert_image'
+          ? { url: 'https://example.com/image.png' }
+          : { prompt: 'a tree' }
+
+    const result = executeTool(editor, call(name, input), undefined, undefined, undefined, access)
+
+    expect(result).not.toBeInstanceOf(Promise)
+    expect(result).toMatchObject({ isError: true })
+    expect(result.mutated).not.toBe(true)
+    expect(executeTool(editor, call('get_document_context'), undefined, undefined, undefined, access).isError).toBeUndefined()
+  })
+
+  it('publishes a complete protected-fragment proposal without mutating the editor', () => {
+    const editor = createProtectedEditor()
+    const before = editor.getJSON()
+    const publish = vi.fn()
+    const access = sourceAccess({ publish })
+
+    const result = executeTool(editor, call('propose_source_patch', {
+      fragmentId: 'html-1', expectedRaw: '<details>raw</details>', nextRaw: '<details>new</details>',
+    }), undefined, undefined, undefined, access)
+
+    expect(result).toMatchObject({ mutated: false })
+    expect(result.isError).toBeUndefined()
+    expect(publish).toHaveBeenCalledOnce()
+    expect(editor.getJSON()).toEqual(before)
   })
 })
 

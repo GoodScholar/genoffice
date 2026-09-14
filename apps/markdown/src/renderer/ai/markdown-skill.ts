@@ -8,13 +8,14 @@ import {
   markDocSeen,
   type FrontmatterAccess,
 } from './tools'
+import type { SourceProtectionAccess } from '../markdown/sourcePatch'
 
 export const MARKDOWN_RULES = [
   'All markdown passed to tools must be pure GFM plus math. Rules:',
   '- Allowed syntax, and nothing else: `#`–`######` headings, paragraphs, `**bold**`, `*italic*`, `~~strikethrough~~`, `` `inline code` ``, `[links](url)`, `![images](path)`, `-` / `1.` lists, `- [ ]` task lists, `>` blockquotes, ``` fenced code blocks, `|` pipe tables, `---` horizontal rules, hard line breaks (two trailing spaces), LaTeX math, and ```mermaid diagrams.',
   '- Math: `$...$` inline and `$$...$$` blocks are rendered with KaTeX. The content of `$...$` must not start or end with whitespace, and the closing `$` must not be followed by a digit (so currency amounts stay text).',
   '- Diagrams: a fenced code block with the `mermaid` language (flowchart, sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram, gantt, pie, mindmap, timeline) renders as a diagram. Use it when the user asks for a flow, process, architecture, or timeline chart. The syntax must be valid mermaid — an invalid block falls back to showing its source.',
-  '- Never emit raw HTML — no tag of any kind (`<span>`, `<div>`, `<p>`, `<img>`, `<br>`, `<u>`, `<mark>`, …) and no style attributes. The editor forces everything through its GFM-only schema: semantic tags degrade to plain GFM and all other tags and styling are silently dropped.',
+  '- Never emit raw HTML or non-GFM extensions in normal edits. Protected source fragments can be read with their exact raw text, but ordinary write tools are read-only for them; an explicitly named protected fragment must use propose_source_patch and wait for user confirmation.',
   '- Never emit other non-GFM extensions: `==highlight==`, `++underline++`, `:::` fenced divs, footnotes, or emoji shortcodes. They are not parsed and end up as literal text in the document.',
   '- This editor has no colored text, fonts, font sizes, underline, highlight, alignment, or line spacing. If the user asks for such styling, explain that pure markdown cannot express it — never fake it with HTML.',
   '- Express emphasis through structure instead: headings for hierarchy, bold for key phrases, blockquotes for callout-style notes, tables for comparisons.',
@@ -73,6 +74,7 @@ export function createMarkdownSkill(
   imageGenAvailable?: () => boolean,
   /** streaming long-form writer behind write_document (panel-owned: progress chip, partial keep/discard) */
   getWriter?: () => AiDocWriter | undefined,
+  getProtection?: () => SourceProtectionAccess | undefined,
 ): AgentSkill {
   return {
     id: 'markdown',
@@ -91,14 +93,14 @@ export function createMarkdownSkill(
       const editor = getEditor()
       if (!editor) return ''
       markDocSeen(editor)
-      return buildDocContext(editor)
+      return buildDocContext(editor, getProtection?.())
     },
     executeTool: (call, signal) => {
       const editor = getEditor()
       if (!editor) {
         return { output: 'editor not ready', isError: true, summary: call.name }
       }
-      return executeTool(editor, call, signal, fm, getWriter?.())
+      return executeTool(editor, call, signal, fm, getWriter?.(), getProtection?.())
     },
   }
 }

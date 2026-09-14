@@ -39,6 +39,7 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
     onEditSource() {},
     onConvert() {},
     onConfirmChange() {},
+    conversionAvailable: false,
     ...options.protectedSource,
   }
   return [
@@ -66,6 +67,7 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
           ...props,
           onEditSource: protectedSource.onEditSource,
           onConvert: protectedSource.onConvert,
+          conversionAvailable: protectedSource.conversionAvailable === true,
         }))
       },
     }),
@@ -75,6 +77,7 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
           ...props,
           onEditSource: protectedSource.onEditSource,
           onConvert: protectedSource.onConvert,
+          conversionAvailable: protectedSource.conversionAvailable === true,
         }))
       },
     }),

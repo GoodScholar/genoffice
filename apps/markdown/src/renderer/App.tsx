@@ -37,6 +37,7 @@ import { FrontmatterPanel } from './components/FrontmatterPanel'
 import { AiAskPopover } from './components/AiAskPopover'
 import { SourceEditor } from './components/SourceEditor'
 import { ProtectedChangeConfirm } from './components/ProtectedChangeConfirm'
+import { SourcePatchCard } from './ai/SourcePatchCard'
 import { AiPanel, GensparkMark, type AiPreset, type MarkdownAiDeps } from './ai/AiPanel'
 import { EDIT_QUEUE_MAX, selectionForAnchor, type EditQueueItem } from './ai/edit-queue'
 import { addQueueAnchor, clearQueueAnchors, removeQueueAnchors } from './editor/aiQueueAnchors'
@@ -46,7 +47,9 @@ import { mermaidSvgToPng, renderMermaid } from './editor/mermaid'
 import { resolveImageSrc } from './editor/localImage'
 import type { ExportFormat, SaveMarkdownRequest, SaveMarkdownResult, SaveMode } from '../shared/ipc'
 import { uiOp } from './editor/ops'
-import { protectedSourceAuthority, type ProtectedChangeRequest } from './editor/protectedSource'
+import { finalizeProtectedSourceTransition, protectedSourceAuthority, type ProtectedChangeRequest } from './editor/protectedSource'
+import { protectedIdsForOps } from './editor/ops'
+import type { SourcePatch, SourceProtectionAccess } from './markdown/sourcePatch'
 
 type LoadStatus = 'loading' | 'ready' | 'error'
 type SaveState = 'idle' | 'saving' | 'saved' | 'failed'
@@ -201,6 +204,39 @@ export function completeSourceModeTransition(
   }
 }
 
+/** Confirm a source patch through the same signed, single-history transaction
+ * used for other protected edits.  The session is only restored after dispatch. */
+export function applyConfirmedSourcePatch(
+  editor: Editor,
+  session: MarkdownDocumentSession,
+  patch: SourcePatch,
+): { ok: true } | { ok: false; error: string } {
+  const preview = session.previewConfirmedPatch(patch)
+  if (!preview.ok) return { ok: false, error: preview.error }
+  try {
+    const beforeSource = session.serialize()
+    const next = editor.schema.nodeFromJSON(preview.view.visual.doc)
+    let transaction = editor.state.tr.replaceWith(0, editor.state.doc.content.size, next.content)
+    transaction = transaction.step(new SourceSnapshotStep(beforeSource, preview.view.source))
+    transaction = closeHistory(transaction.setMeta('addToHistory', true))
+    const authority = protectedSourceAuthority(editor)
+    authority.authorize(transaction)
+    try {
+      editor.view.dispatch(transaction)
+      if (!authority.accepts(transaction, beforeSource)) return { ok: false, error: 'Protected source patch was rejected' }
+      if (!finalizeProtectedSourceTransition(editor, transaction, session.serialize())) {
+        return { ok: false, error: 'Protected source patch was rejected' }
+      }
+    } finally {
+      authority.revoke(transaction)
+    }
+    editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true))
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 /** Restore session source only when a history transaction carries the source snapshot step. */
 export function restoreSourceHistoryTransaction(
   session: MarkdownDocumentSession,
@@ -306,6 +342,8 @@ export default function App() {
   const [sourceText, setSourceText] = useState('')
   const [sourceModeError, setSourceModeError] = useState<string | null>(null)
   const [protectedChangeRequest, setProtectedChangeRequest] = useState<ProtectedChangeRequest | null>(null)
+  const [sourcePatch, setSourcePatch] = useState<SourcePatch | null>(null)
+  const [sourcePatchError, setSourcePatchError] = useState<string | null>(null)
 
   const statusRef = useRef<LoadStatus>('loading')
   const dirtyRef = useRef(false)
@@ -377,13 +415,26 @@ export default function App() {
     mirrorSessionDirty(session)
   }, [losslessMarkdown, mirrorSessionDirty])
 
+  const publishSourcePatch = useCallback((patch: SourcePatch) => {
+    setSourcePatchError(null)
+    setSourcePatch(patch)
+  }, [])
+
   const protectedSourceOptions = useMemo(() => ({
     onEditSource: (id: string) => enterSourceMode(id),
-    // Task 7 负责 proposal 服务；服务缺失时 NodeView 保持该操作禁用。
-    onConvert: () => {},
+    onConvert: (id: string) => {
+      const session = sessionRef.current
+      if (!session) return
+      try {
+        publishSourcePatch(session.proposeFragmentConversion(id))
+      } catch (error) {
+        setSourcePatchError(error instanceof Error ? error.message : String(error))
+      }
+    },
     onConfirmChange: (request: ProtectedChangeRequest) => setProtectedChangeRequest(request),
+    conversionAvailable: losslessMarkdown,
     getCurrentSource: () => sessionRef.current?.serialize(),
-  }), [enterSourceMode])
+  }), [enterSourceMode, losslessMarkdown, publishSourcePatch])
 
   const insertImage = useCallback(() => {
     void (async () => {
@@ -1011,7 +1062,41 @@ export default function App() {
       const name = deriveAutoFileName(editorRef.current)
       if (name) void doSave('save', name)
     },
+    sourceProtection: (): SourceProtectionAccess | undefined => {
+      const session = sessionRef.current
+      if (!losslessMarkdown || !session) return undefined
+      return {
+        mode: () => session.view().mode,
+        context: () => session.view().protectedFragments
+          .map((fragment) => `protected:${fragment.id}:${fragment.reason}\n${fragment.raw}`)
+          .join('\n\n'),
+        protectedIdsForOps,
+        propose: (fragmentId, expectedRaw, nextRaw) => {
+          const fragment = session.view().protectedFragments.find((candidate) => candidate.id === fragmentId)
+          if (!fragment) throw new Error(`Protected source fragment ${fragmentId} does not exist`)
+          if (fragment.raw !== expectedRaw) throw new Error('Protected source changed; refresh the document context before proposing a patch')
+          return session.proposeFragmentReplacement(fragmentId, nextRaw, 'ai')
+        },
+        publish: publishSourcePatch,
+      }
+    },
   }
+
+  const confirmSourcePatch = useCallback((patch: SourcePatch): { ok: true } | { ok: false; error: string } => {
+    const current = editorRef.current
+    const session = sessionRef.current
+    if (!current || !session) return { ok: false, error: 'Document is not ready' }
+    const result = applyConfirmedSourcePatch(current, session, patch)
+    if (!result.ok) return result
+    const view = session.view()
+    applyProjectionProvenance(current, view.visual.doc)
+    synchronizeSessionChrome(view)
+    setSourceText(view.source)
+    mirrorSessionDirty(session)
+    setSourcePatch(null)
+    setSourcePatchError(null)
+    return result
+  }, [mirrorSessionDirty, synchronizeSessionChrome])
 
   const fileName = filePath ? filePath.replace(/^.*[/\\]/, '') : null
   const statusText =
@@ -1129,6 +1214,7 @@ export default function App() {
                 </>
               ) : (
                 <>
+                  {sourcePatchError && <div className="source-patch-error" role="alert">{sourcePatchError}</div>}
                   {fmOpen && <FrontmatterPanel value={fmText} onChange={onFrontmatterChange} />}
                   <EditorContent editor={editor} />
                 </>
@@ -1196,6 +1282,13 @@ export default function App() {
           request={protectedChangeRequest}
           session={sessionRef.current ?? undefined}
           onDismiss={() => setProtectedChangeRequest(null)}
+        />
+      )}
+      {sourcePatch && (
+        <SourcePatchCard
+          patch={sourcePatch}
+          onConfirm={confirmSourcePatch}
+          onCancel={() => setSourcePatch(null)}
         />
       )}
     </div>

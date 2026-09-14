@@ -36,6 +36,7 @@ import {
   type EditQueueItem,
 } from './edit-queue'
 import { DOC_NAV_SCHEME, navigateToBlock, parseDocNavHref } from './doc-nav'
+import type { SourceProtectionAccess } from '../markdown/sourcePatch'
 
 // Word-parity count (docs word-count.ts): Asian chars one by one + non-Asian words
 const ASIAN_RE =
@@ -127,6 +128,7 @@ export interface MarkdownAiDeps {
   restoreSnapshot(snapshot: DocSnapshot): void
   /** fired when a run with at least one mutation finishes (auto-save hook) */
   onRunDone(mutated: boolean): void
+  sourceProtection?(): SourceProtectionAccess | undefined
 }
 
 export function AiPanel({
@@ -369,6 +371,7 @@ export function AiPanel({
           () => ({
             write: (spec, onProgress, signal) => runDocWriterRef.current(spec, onProgress, signal),
           }),
+          () => depsRef.current.sourceProtection?.(),
         ),
         createSearchSkill(),
       ]),

@@ -3049,3 +3049,26 @@ div.tiptap-mathematics-render {
   font-size: 12px;
   color: var(--color-text-secondary);
 }
+
+.source-patch-card {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 40;
+  width: min(640px, calc(100vw - 48px));
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--md-pop-bg);
+  box-shadow: var(--md-pop-shadow);
+}
+
+.source-patch-title { font-weight: 600; }
+.source-patch-fragment { margin: 4px 0 10px; color: var(--color-text-secondary); font-size: 12px; }
+.source-patch-diff { max-height: 260px; overflow: auto; border: 1px solid var(--color-border); }
+.source-patch-line { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--color-border); }
+.source-patch-line code { min-width: 0; padding: 4px 6px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.source-patch-before { background: var(--md-ai-anchor-bg); }
+.source-patch-after { border-left: 1px solid var(--color-border); }
+.source-patch-error { color: var(--md-toast-error-bg); }
+.source-patch-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }

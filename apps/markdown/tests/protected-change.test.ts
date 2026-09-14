@@ -717,6 +717,28 @@ describe('ProtectedSourceView', () => {
     expect(host.querySelector('img')).toBeNull()
     expect(host.querySelector<HTMLButtonElement>('[data-protected-convert]')?.disabled).toBe(true)
   })
+
+  it('enables conversion only when a proposal service is available and only publishes the request', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    roots.push({ root, host })
+    const convert = vi.fn()
+
+    act(() => root.render(createElement(ProtectedSourceView, {
+      node: { attrs: { id: 'html-1', raw: '<details>raw</details>', reason: 'raw-html' }, isInline: false } as never,
+      editor: { isEditable: true } as never,
+      onEditSource: () => {},
+      onConvert: convert,
+      conversionAvailable: true,
+    })))
+
+    const button = host.querySelector<HTMLButtonElement>('[data-protected-convert]')!
+    expect(button.disabled).toBe(false)
+    act(() => button.click())
+    expect(convert).toHaveBeenCalledOnce()
+    expect(convert).toHaveBeenCalledWith('html-1')
+  })
 })
 
 describe('ProtectedChangeConfirm', () => {

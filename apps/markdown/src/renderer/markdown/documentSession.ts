@@ -3,6 +3,7 @@ import { frontmatterInner, parseRawDocEnvelope, type RawDocEnvelope } from './do
 import { projectScan, serializeProjectedGroup, type MarkdownCodec, type ProjectedFragment, type VisualProjection } from './sourceProjection'
 import { scanMarkdownSource, type SourceRange } from './sourceScanner'
 import { rewriteMarkdownImageSources } from '../../shared/markdown-image-sources'
+import { createSourcePatch, validateSourcePatch, type SourcePatch } from './sourcePatch'
 
 export type EditorMode = 'visual' | 'source'
 
@@ -31,6 +32,10 @@ export interface MarkdownDocumentSession {
   applyVisual(next: VisualProjection): SessionUpdate
   previewApprovedVisual(next: VisualProjection, protectedIds: readonly string[]): SessionUpdate
   applyVisualWithApprovedFragments(next: VisualProjection, protectedIds: readonly string[]): SessionUpdate
+  proposeFragmentReplacement(fragmentId: string, nextRaw: string, origin?: SourcePatch['origin']): SourcePatch
+  proposeFragmentConversion(fragmentId: string): SourcePatch
+  previewConfirmedPatch(patch: SourcePatch): SessionUpdate
+  applyConfirmedPatch(patch: SourcePatch): SessionUpdate
   applySource(next: string): SessionUpdate
   restoreHistorySource(next: string): SessionUpdate
   enterSource(fragmentId?: string): SessionUpdate
@@ -446,6 +451,70 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     return applyVisual(next, new Set(protectedIds))
   }
 
+  const proposeFragmentReplacement = (
+    fragmentId: string,
+    nextRaw: string,
+    origin: SourcePatch['origin'] = 'ai',
+  ): SourcePatch => {
+    const fragment = currentView().protectedFragments.find((candidate) => candidate.id === fragmentId)
+    if (!fragment) throw new Error(`Protected source fragment ${fragmentId} does not exist`)
+    return createSourcePatch(origin, fragmentId, fragment.raw, nextRaw, revision)
+  }
+
+  const proposeFragmentConversion = (fragmentId: string): SourcePatch => {
+    const fragment = currentView().protectedFragments.find((candidate) => candidate.id === fragmentId)
+    if (!fragment) throw new Error(`Protected source fragment ${fragmentId} does not exist`)
+    let nextRaw: string
+    try {
+      nextRaw = codec.serialize(codec.parse(fragment.raw))
+    } catch (error) {
+      throw new Error(`Unable to convert protected source: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (!nextRaw || nextRaw === fragment.raw) throw new Error('Unable to convert protected source safely')
+    return createSourcePatch('conversion', fragmentId, fragment.raw, nextRaw, revision)
+  }
+
+  const previewConfirmedPatch = (patch: SourcePatch): SessionUpdate => {
+    const view = currentView()
+    const validation = validateSourcePatch(patch, revision, view.protectedFragments)
+    if (!validation.ok) return { ok: false, view, error: validation.error }
+    const fragment = view.protectedFragments.find((candidate) => candidate.id === patch.fragmentId)
+    if (!fragment || state.source.slice(fragment.range.from, fragment.range.to) !== patch.expectedRaw) {
+      return { ok: false, view, error: 'raw-changed' }
+    }
+    const nextSource = `${state.source.slice(0, fragment.range.from)}${patch.nextRaw}${state.source.slice(fragment.range.to)}`
+    const preview = createMarkdownDocumentSession(nextSource, codec).view()
+    return {
+      ok: true,
+      view: { ...preview, revision: revision + 1, mode, dirty: nextSource !== baseline },
+      changedRange: { from: fragment.range.from, to: fragment.range.from + patch.nextRaw.length },
+    }
+  }
+
+  const applyConfirmedPatch = (patch: SourcePatch): SessionUpdate => {
+    const view = currentView()
+    const validation = validateSourcePatch(patch, revision, view.protectedFragments)
+    if (!validation.ok) return { ok: false, view, error: validation.error }
+    const fragment = view.protectedFragments.find((candidate) => candidate.id === patch.fragmentId)
+    if (!fragment || state.source.slice(fragment.range.from, fragment.range.to) !== patch.expectedRaw) {
+      return { ok: false, view: currentView(), error: 'raw-changed' }
+    }
+    const nextSource = `${state.source.slice(0, fragment.range.from)}${patch.nextRaw}${state.source.slice(fragment.range.to)}`
+    let next: DocumentState
+    try {
+      next = createState(nextSource, codec)
+      validateState(next)
+    } catch (error) {
+      return { ok: false, view: currentView(), error: error instanceof Error ? error.message : String(error) }
+    }
+    state = next
+    revision += 1
+    mode = state.fallbackReason ? 'source' : mode
+    selection = undefined
+    conflictReason = undefined
+    return success({ from: fragment.range.from, to: fragment.range.from + patch.nextRaw.length })
+  }
+
   const applySource = (next: string): SessionUpdate => {
     if (next !== state.source) {
       state = createState(next, codec)
@@ -580,6 +649,10 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     applyVisual,
     previewApprovedVisual,
     applyVisualWithApprovedFragments,
+    proposeFragmentReplacement,
+    proposeFragmentConversion,
+    previewConfirmedPatch,
+    applyConfirmedPatch,
     applySource,
     restoreHistorySource,
     enterSource,

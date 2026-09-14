@@ -13,6 +13,8 @@ import {
   type FrontmatterAccess,
   type MdOp,
 } from '../editor/ops'
+import { protectedIdsForOps } from '../editor/ops'
+import type { SourceProtectionAccess } from '../markdown/sourcePatch'
 import { t } from '../i18n/locale'
 import {
   DraftLanding,
@@ -76,7 +78,7 @@ function selectionMarkdown(editor: Editor): string {
 }
 
 /** Per-turn context: numbered block skeleton + selection, same shape as the docs agent */
-export function buildDocContext(editor: Editor): string {
+export function buildDocContext(editor: Editor, protection?: SourceProtectionAccess): string {
   const doc = editor.state.doc
   const blockCount = doc.childCount
   if (isBlankDoc(doc)) {
@@ -106,6 +108,7 @@ export function buildDocContext(editor: Editor): string {
       `(a non-text block is selected: ${blockLabel(doc.child(startIndex))})`
     lines.push('', `## User selection (${where})`, selection)
   }
+  if (protection) lines.push('', '## Protected source (read-only)', protection.context())
   return lines.join('\n')
 }
 
@@ -148,6 +151,19 @@ export const AGENT_TOOLS: AgentToolDef[] = [
         },
       },
       required: ['ops'],
+    },
+  },
+  {
+    name: 'propose_source_patch',
+    description: 'Only when the user explicitly named or selected one protected source fragment: propose an exact raw replacement for user confirmation. This never edits the document.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fragmentId: { type: 'string', description: 'protected fragment id from document context' },
+        expectedRaw: { type: 'string', description: 'the complete current protected raw source' },
+        nextRaw: { type: 'string', description: 'the complete replacement raw source' },
+      },
+      required: ['fragmentId', 'expectedRaw', 'nextRaw'],
     },
   },
   {
@@ -263,10 +279,12 @@ function opsSummary(ops: MdOp[], applied: number): string {
   return t('aiToolApplyOpsDone', { n: applied })
 }
 
-function applyOps(editor: Editor, input: unknown, fm?: FrontmatterAccess): ToolExecution {
+function applyOps(editor: Editor, input: unknown, fm?: FrontmatterAccess, protection?: SourceProtectionAccess): ToolExecution {
   const label = t('aiToolApplyOps')
   const parsed = validateOps(input)
   if ('error' in parsed) return fail(parsed.error, label)
+  const protectedIds = protection?.protectedIdsForOps(editor, parsed.ops) ?? protectedIdsForOps(editor, parsed.ops)
+  if (protectedIds.length) return fail(`Protected source fragment(s) ${protectedIds.join(', ')} require an explicit source patch proposal; the batch was not applied.`, label)
   if (usesBlockIndexes(parsed.ops) && editedExternally(editor)) return fail(STALE_DOC_ERROR, label)
   const r = runOps(editor, parsed.ops, { source: 'ai', frontmatter: fm })
   const lines = r.results.map((res, i) =>
@@ -359,6 +377,7 @@ async function writeDocument(
   call: AgentToolCall,
   signal: AbortSignal | undefined,
   writer: AiDocWriter | undefined,
+  protection?: SourceProtectionAccess,
 ): Promise<ToolExecution> {
   const label = t('aiToolWriteDoc')
   const plan = String(call.input.plan ?? '').trim()
@@ -379,6 +398,12 @@ async function writeDocument(
       'the document is not blank: pass afterIndex to insert the new content after a block, or replaceDocument=true when the user asked to rewrite the whole document',
       label,
     )
+  }
+  if (position.kind === 'whole') {
+    const ids = (protection?.protectedIdsForOps ?? protectedIdsForOps)(editor, [{
+      op: 'replaceBlocks', target: { start: 0, end: doc.childCount - 1 }, markdown: '',
+    }])
+    if (ids.length) return fail(`Protected source fragment(s) ${ids.join(', ')} require an explicit source patch proposal; the document was not written.`, label)
   }
   const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v))
   const draft = new DraftLanding(editor, position)
@@ -440,13 +465,17 @@ export function executeTool(
   signal?: AbortSignal,
   fm?: FrontmatterAccess,
   writer?: AiDocWriter,
+  protection?: SourceProtectionAccess,
 ): ToolExecution | Promise<ToolExecution> {
   const doc = editor.state.doc
   const maxIndex = doc.childCount - 1
+  if (protection?.mode() === 'source' && ['apply_ops', 'write_document', 'insert_image', 'generate_image'].includes(call.name)) {
+    return fail('Structured document writes are unavailable in source mode; you may still read the source.', call.name)
+  }
 
   switch (call.name) {
     case 'write_document':
-      return writeDocument(editor, call, signal, writer)
+      return writeDocument(editor, call, signal, writer, protection)
 
     case 'read_frontmatter': {
       if (!fm) return fail('frontmatter is not available', t('aiToolReadFm'))
@@ -461,7 +490,7 @@ export function executeTool(
     case 'get_document_context': {
       markDocSeen(editor)
       return {
-        output: buildDocContext(editor),
+        output: buildDocContext(editor, protection),
         mutated: false,
         summary: t('aiToolReadDoc'),
       }
@@ -484,14 +513,29 @@ export function executeTool(
         ? `\n\n[truncated — continue with offset=${offset + READ_PAGE_CHARS}]`
         : ''
       return {
-        output: page + notice,
+        output: page + notice + (protection ? `\n\n${protection.context()}` : ''),
         mutated: false,
         summary: t('aiToolReadBlocks'),
       }
     }
 
     case 'apply_ops':
-      return applyOps(editor, call.input.ops, fm)
+      return applyOps(editor, call.input.ops, fm, protection)
+
+    case 'propose_source_patch': {
+      const fragmentId = typeof call.input.fragmentId === 'string' ? call.input.fragmentId : undefined
+      const expectedRaw = typeof call.input.expectedRaw === 'string' ? call.input.expectedRaw : undefined
+      const nextRaw = typeof call.input.nextRaw === 'string' ? call.input.nextRaw : undefined
+      if (!protection) return fail('Protected source patches are unavailable for this document.', call.name)
+      if (!fragmentId || expectedRaw === undefined || nextRaw === undefined) return fail('fragmentId, expectedRaw, and nextRaw must each be complete strings.', call.name)
+      try {
+        const patch = protection.propose(fragmentId, expectedRaw, nextRaw)
+        protection.publish(patch)
+        return { output: `Proposed source patch ${patch.id}; waiting for user confirmation.`, mutated: false, summary: call.name }
+      } catch (error) {
+        return fail(error instanceof Error ? error.message : String(error), call.name)
+      }
+    }
 
     case 'image_search': {
       const query = String(call.input.query ?? '').trim()

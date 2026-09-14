@@ -17,6 +17,8 @@ export interface ProtectedSourceOptions {
   onEditSource(id: string): void
   onConvert(id: string): void
   onConfirmChange(request: ProtectedChangeRequest): void
+  /** Proposal-only conversion is unavailable until Task 7 wires a publisher. */
+  conversionAvailable?: boolean
   getCurrentSource?(): string | undefined
 }
 
@@ -26,6 +28,7 @@ const noopProtectedSourceOptions: ProtectedSourceOptions = {
   onEditSource() {},
   onConvert() {},
   onConfirmChange() {},
+  conversionAvailable: false,
 }
 
 export interface ProtectedSourceAuthority {
@@ -161,7 +164,9 @@ export function protectedSourceAuthority(editor: Editor): ProtectedSourceAuthori
   }
 }
 
-function finalizeProtectedTransition(editor: Editor, root: Transaction, source: string | undefined): boolean {
+/** Record the actual post-dispatch source endpoint for a trusted protected edit.
+ * This is intentionally private-authority adjacent; callers never set its meta. */
+export function finalizeProtectedSourceTransition(editor: Editor, root: Transaction, source: string | undefined): boolean {
   if (source === undefined || guardState(editor.state).accepted !== root) return false
   editor.view.dispatch(editor.state.tr
     .setMeta(protectedSourceFinalizeKey, { root, source })
@@ -318,7 +323,7 @@ export function applyProtectedChange(
     if (!authority.accepts(transaction)) {
       return { ok: false, error: 'Protected change was rejected' }
     }
-    if (expectedSource !== undefined && !finalizeProtectedTransition(editor, transaction, session?.serialize())) {
+    if (expectedSource !== undefined && !finalizeProtectedSourceTransition(editor, transaction, session?.serialize())) {
       return { ok: false, error: 'Protected change was rejected' }
     }
     editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true))
