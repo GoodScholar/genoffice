@@ -210,6 +210,47 @@ describe('protected source change guard', () => {
     editor.destroy()
   })
 
+  it('rejects an evil document that reuses an approved undo source pair', () => {
+    const requestSink = vi.fn()
+    const { editor, session } = createLosslessEditor('<details>A</details>\n', requestSink)
+    const position = anyProtectedPosition(editor)
+    const atom = editor.state.doc.nodeAt(position)!
+    editor.view.dispatch(editor.state.tr.setNodeMarkup(position, undefined, { ...atom.attrs, raw: '<details>B</details>' }))
+    const request = requestSink.mock.calls[0][0] as ProtectedChangeRequest
+    expect(applyProtectedChange(editor, request, session)).toEqual({ ok: true })
+    const approvedSource = session.serialize()
+    expect(undo(editor.state, editor.view.dispatch)).toBe(true)
+    const restoredSource = session.serialize()
+    const before = editor.getJSON()
+    const evil = editor.schema.nodeFromJSON({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'EVIL' }] }] })
+
+    editor.view.dispatch(editor.state.tr
+      .replaceWith(0, editor.state.doc.content.size, evil.content)
+      .step(new SourceSnapshotStep(approvedSource, restoredSource)))
+
+    expect(editor.getJSON()).toEqual(before)
+    expect(session.serialize()).toBe(restoredSource)
+    editor.destroy()
+  })
+
+  it('keeps accepted transactions local to their editor state and baseline', () => {
+    const extensions = buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] })
+    const content = { type: 'doc', content: [{ type: 'protectedSourceBlock', attrs: { id: 'local', raw: '<a>', reason: 'raw-html' } }] }
+    const first = new Editor({ element: document.createElement('div'), extensions, content })
+    const second = new Editor({ element: document.createElement('div'), extensions, content })
+    const atom = first.state.doc.nodeAt(0)!
+    const transaction = first.state.tr.delete(0, atom.nodeSize)
+    protectedSourceAuthority(first).authorize(transaction)
+    first.view.dispatch(transaction)
+
+    expect(protectedSourceAuthority(first).accepts(transaction)).toBe(true)
+    expect(protectedSourceAuthority(second).accepts(transaction)).toBe(false)
+    replaceEditorBaseline(first, content)
+    expect(protectedSourceAuthority(first).accepts(transaction)).toBe(false)
+    first.destroy()
+    second.destroy()
+  })
+
   it('blocks a raw replacement and records it as a replace request', () => {
     const request = vi.fn()
     const editor = createEditor(request)
@@ -406,6 +447,42 @@ describe('protected source change guard', () => {
     expect(editor.getJSON()).toEqual(beforeDoc)
     expect(session.serialize()).toBe(beforeSource)
     rejectApproved = false
+    expect(applyProtectedChange(editor, request, session)).toEqual({ ok: true })
+    editor.destroy()
+  })
+
+  it('discards a pending signature when an append transaction throws, then retries cleanly', () => {
+    const requestSink = vi.fn()
+    let throwAppend = true
+    const throwingAppender = Extension.create({
+      addProseMirrorPlugins() {
+        return [new Plugin({
+          appendTransaction(transactions) {
+            if (throwAppend && transactions.some((transaction) => transaction.getMeta(APPROVED_PROTECTED_CHANGE) === true)) {
+              throw new Error('append failed')
+            }
+            return null
+          },
+        })]
+      },
+    })
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: [...buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [], protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange: requestSink } }), throwingAppender],
+      content: '',
+    })
+    const session = createMarkdownDocumentSession('<!-- raw -->\n', createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
+    const position = anyProtectedPosition(editor)
+    const atom = editor.state.doc.nodeAt(position)!
+    const beforeSource = session.serialize()
+    editor.view.dispatch(editor.state.tr.delete(position, position + atom.nodeSize))
+    const request = requestSink.mock.calls[0][0] as ProtectedChangeRequest
+
+    expect(applyProtectedChange(editor, request, session)).toMatchObject({ ok: false })
+    expect(session.serialize()).toBe(beforeSource)
+    throwAppend = false
     expect(applyProtectedChange(editor, request, session)).toEqual({ ok: true })
     editor.destroy()
   })

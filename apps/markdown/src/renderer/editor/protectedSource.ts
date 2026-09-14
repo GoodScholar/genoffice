@@ -43,20 +43,15 @@ interface ProtectedSourceSignature {
 
 interface ProtectedSourceGuardState {
   pending: WeakMap<Transaction, ProtectedSourceSignature>
-  accepted: WeakSet<Transaction>
+  accepted?: Transaction
+  acceptedSignature?: ProtectedSourceSignature
   transitions: Set<string>
-  sourceTransitions: Set<string>
 }
 
 const protectedSourceGuardKey = new PluginKey<ProtectedSourceGuardState>('protectedSourceGuard')
-const acceptedProtectedTransactions = new WeakSet<Transaction>()
 
 function transitionKey(signature: ProtectedSourceSignature): string {
   return `${JSON.stringify(signature.beforeDoc)}\u0000${JSON.stringify(signature.afterDoc)}\u0000${signature.beforeSource ?? ''}\u0000${signature.afterSource ?? ''}`
-}
-
-function sourceTransitionKey(beforeSource: string, afterSource: string): string {
-  return `${beforeSource}\u0000${afterSource}`
 }
 
 function transactionSignature(transaction: Transaction): ProtectedSourceSignature {
@@ -72,6 +67,16 @@ function sameSignature(left: ProtectedSourceSignature, right: ProtectedSourceSig
   return transitionKey(left) === transitionKey(right)
 }
 
+function registerTransition(transitions: Set<string>, signature: ProtectedSourceSignature): void {
+  transitions.add(transitionKey(signature))
+  transitions.add(transitionKey({
+    beforeDoc: signature.afterDoc,
+    afterDoc: signature.beforeDoc,
+    beforeSource: signature.afterSource,
+    afterSource: signature.beforeSource,
+  }))
+}
+
 function guardState(state: EditorState): ProtectedSourceGuardState {
   const value = protectedSourceGuardKey.getState(state)
   if (!value) throw new Error('Protected source guard is not installed')
@@ -83,26 +88,25 @@ function allows(state: ProtectedSourceGuardState, transaction: Transaction, edit
   actual.beforeDoc = editorState.doc.toJSON()
   const pending = state.pending.get(transaction)
   if (pending && sameSignature(pending, actual)) return true
-  if (state.transitions.has(transitionKey(actual))) return true
-  return actual.beforeSource !== undefined && actual.afterSource !== undefined
-    && state.sourceTransitions.has(sourceTransitionKey(actual.beforeSource, actual.afterSource))
+  return state.transitions.has(transitionKey(actual))
 }
 
 /** 每个 EditorState 保存独立的不可公开伪造授权记录。 */
 export function protectedSourceAuthority(editor: Editor): ProtectedSourceAuthority {
-  const state = guardState(editor.state)
   return {
     authorize(transaction) {
-      state.pending.set(transaction, transactionSignature(transaction))
+      guardState(editor.state).pending.set(transaction, transactionSignature(transaction))
     },
     revoke(transaction) {
-      state.pending.delete(transaction)
+      guardState(editor.state).pending.delete(transaction)
     },
     allows(transaction, editorState) {
-      return allows(state, transaction, editorState)
+      return allows(guardState(editor.state), transaction, editorState)
     },
     accepts(transaction) {
-      return state.accepted.has(transaction) || acceptedProtectedTransactions.has(transaction)
+      const state = guardState(editor.state)
+      return state.accepted === transaction
+        || (sourceSnapshotPairFromTransaction(transaction) !== undefined && allows(state, transaction, editor.state))
     },
   }
 }
@@ -251,6 +255,7 @@ export function applyProtectedChange(
       authority.revoke(transaction)
       return { ok: false, error: 'Protected change was rejected' }
     }
+    authority.revoke(transaction)
     editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true))
     return { ok: true }
   } catch (error) {
@@ -272,33 +277,28 @@ export const ProtectedSourceGuard = Extension.create<ProtectedSourceOptions>({
     return [new Plugin({
       key: protectedSourceGuardKey,
       state: {
-        init() {
+        init(): ProtectedSourceGuardState {
           return {
             pending: new WeakMap<Transaction, ProtectedSourceSignature>(),
-            accepted: new WeakSet<Transaction>(),
             transitions: new Set<string>(),
-            sourceTransitions: new Set<string>(),
           }
         },
         apply(transaction, value, oldState) {
-          if (!allows(value, transaction, oldState)) return value
-          value.accepted.add(transaction)
-          acceptedProtectedTransactions.add(transaction)
+          if (!allows(value, transaction, oldState)) {
+            if (transaction.getMeta('appendedTransaction') !== value.accepted || !value.acceptedSignature) {
+              return { ...value, accepted: undefined, acceptedSignature: undefined }
+            }
+            const transitions = new Set(value.transitions)
+            const signature = { ...value.acceptedSignature, afterDoc: transaction.doc.toJSON() }
+            registerTransition(transitions, signature)
+            return { ...value, transitions, acceptedSignature: signature }
+          }
+          const transitions = new Set(value.transitions)
           const signature = value.pending.get(transaction)
           if (signature) {
-            value.transitions.add(transitionKey(signature))
-            value.transitions.add(transitionKey({
-              beforeDoc: signature.afterDoc,
-              afterDoc: signature.beforeDoc,
-              beforeSource: signature.afterSource,
-              afterSource: signature.beforeSource,
-            }))
-            if (signature.beforeSource !== undefined && signature.afterSource !== undefined) {
-              value.sourceTransitions.add(sourceTransitionKey(signature.beforeSource, signature.afterSource))
-              value.sourceTransitions.add(sourceTransitionKey(signature.afterSource, signature.beforeSource))
-            }
+            registerTransition(transitions, signature)
           }
-          return value
+          return { ...value, accepted: transaction, acceptedSignature: signature, transitions }
         },
       },
       props: {
