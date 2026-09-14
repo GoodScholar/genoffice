@@ -33,6 +33,7 @@ import { ToastHost } from './components/toast'
 import { TableMenu } from './components/TableMenu'
 import { FrontmatterPanel } from './components/FrontmatterPanel'
 import { AiAskPopover } from './components/AiAskPopover'
+import { SourceEditor } from './components/SourceEditor'
 import { AiPanel, GensparkMark, type AiPreset, type MarkdownAiDeps } from './ai/AiPanel'
 import { EDIT_QUEUE_MAX, selectionForAnchor, type EditQueueItem } from './ai/edit-queue'
 import { addQueueAnchor, clearQueueAnchors, removeQueueAnchors } from './editor/aiQueueAnchors'
@@ -133,6 +134,16 @@ export function applyProjectionProvenance(editor: Editor, visualDoc: JSONContent
   editor.view.dispatch(transaction)
 }
 
+/** Apply a completed source-mode edit as one visual-editor undo step. */
+export function replaceSourceModeVisualDocument(editor: Editor, visualDoc: JSONContent): void {
+  const next = editor.schema.nodeFromJSON(visualDoc)
+  editor.view.dispatch(
+    editor.state.tr
+      .replaceWith(0, editor.state.doc.content.size, next.content)
+      .setMeta('addToHistory', true),
+  )
+}
+
 type SaveInvoker = (request: SaveMarkdownRequest) => Promise<SaveMarkdownResult>
 
 export async function requestSourceBackedSave(
@@ -221,6 +232,9 @@ export default function App() {
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [outlineItems, setOutlineItems] = useState<OutlineItem[]>([])
   const [zoom, setZoom] = useState(100)
+  const [editorMode, setEditorMode] = useState<'visual' | 'source'>('visual')
+  const [sourceText, setSourceText] = useState('')
+  const [sourceModeError, setSourceModeError] = useState<string | null>(null)
 
   const statusRef = useRef<LoadStatus>('loading')
   const dirtyRef = useRef(false)
@@ -228,11 +242,13 @@ export default function App() {
   const envelopeRef = useRef<DocEnvelope>(EMPTY_ENVELOPE)
   const sessionRef = useRef<MarkdownDocumentSession | null>(null)
   const syncingProjectionRef = useRef(false)
+  const editorModeRef = useRef<'visual' | 'source'>('visual')
   const editorRef = useRef<Editor | null>(null)
   const filePathRef = useRef<string | null>(null)
   const slashMenuRef = useRef<SlashMenuHandle>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const losslessMarkdown = losslessMarkdownEnabled(window.location.search, import.meta.env.DEV)
+  editorModeRef.current = editorMode
 
   const zoomOut = useCallback(
     () => setZoom((value) => Math.max(MIN_ZOOM, Math.round(value) - ZOOM_STEP)),
@@ -290,13 +306,16 @@ export default function App() {
     onUpdate: ({ editor: updated, transaction }) => {
       if (!transaction.getMeta('uiOnly')) {
         const session = sessionRef.current
-        if (losslessMarkdown && session && !syncingProjectionRef.current) {
+        if (losslessMarkdown && session && !syncingProjectionRef.current && editorModeRef.current === 'visual') {
           const update = session.applyVisual({
             doc: updated.getJSON(),
             frontmatterInner: session.view().visual.frontmatterInner,
           })
           if (!update.ok) {
             session.enterSource()
+            setEditorMode('source')
+            setSourceText(session.view().source)
+            setSourceModeError(update.error)
             setSaveState('failed')
           } else {
             applyProjectionProvenance(updated, update.view.visual.doc)
@@ -341,6 +360,9 @@ export default function App() {
               .run()
             syncingProjectionRef.current = false
             mirrorSessionDirty(session)
+            setEditorMode(session.view().mode)
+            setSourceText(session.view().source)
+            setSourceModeError(session.view().fallbackReason ?? null)
           } else {
             // the initial load must not be undoable — Cmd+Z right after opening
             // would otherwise blank the document (and Cmd+S overwrite the file)
@@ -363,6 +385,9 @@ export default function App() {
             editor.chain().setMeta('addToHistory', false).setContent(session.view().visual.doc).run()
             syncingProjectionRef.current = false
             mirrorSessionDirty(session)
+            setEditorMode(session.view().mode)
+            setSourceText(session.view().source)
+            setSourceModeError(session.view().fallbackReason ?? null)
           }
         }
         statusRef.current = 'ready'
@@ -392,6 +417,9 @@ export default function App() {
         })
         if (!update.ok) {
           session.enterSource()
+          setEditorMode('source')
+          setSourceText(session.view().source)
+          setSourceModeError(update.error)
           setSaveState('failed')
           return
         }
@@ -403,6 +431,61 @@ export default function App() {
     },
     [losslessMarkdown, markDirty, mirrorSessionDirty],
   )
+
+  const enterSourceMode = useCallback((fragmentId?: string) => {
+    const current = editorRef.current
+    const session = sessionRef.current
+    if (!losslessMarkdown || !current || !session) return
+
+    const projected = session.applyVisual({
+      doc: current.getJSON(),
+      frontmatterInner: session.view().visual.frontmatterInner,
+    })
+    const entered = session.enterSource(fragmentId)
+    setEditorMode('source')
+    setSourceText(entered.view.source)
+    setSourceModeError(projected.ok ? (entered.ok ? null : entered.error) : projected.error)
+    mirrorSessionDirty(session)
+  }, [losslessMarkdown, mirrorSessionDirty])
+
+  const enterVisualMode = useCallback(() => {
+    const current = editorRef.current
+    const session = sessionRef.current
+    if (!losslessMarkdown || !current || !session) return
+
+    const entered = session.enterVisual()
+    if (!entered.ok) {
+      setEditorMode('source')
+      setSourceText(entered.view.source)
+      setSourceModeError(entered.error)
+      return
+    }
+    try {
+      syncingProjectionRef.current = true
+      replaceSourceModeVisualDocument(current, entered.view.visual.doc)
+      applyProjectionProvenance(current, entered.view.visual.doc)
+      setEditorMode('visual')
+      setSourceModeError(null)
+      mirrorSessionDirty(session)
+    } catch (error) {
+      session.enterSource()
+      setEditorMode('source')
+      setSourceText(session.view().source)
+      setSourceModeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      syncingProjectionRef.current = false
+    }
+  }, [losslessMarkdown, mirrorSessionDirty])
+
+  const onSourceChange = useCallback((next: string) => {
+    const session = sessionRef.current
+    if (!losslessMarkdown || !session) return
+    const update = session.applySource(next)
+    setEditorMode('source')
+    setSourceText(update.view.source)
+    setSourceModeError(update.ok ? null : update.error)
+    mirrorSessionDirty(session)
+  }, [losslessMarkdown, mirrorSessionDirty])
 
   /** Serialize and write to disk; false when canceled/failed (caller keeps the tab open) */
   const doSave = useCallback(async (mode: SaveMode, suggestedName?: string): Promise<boolean> => {
@@ -433,6 +516,7 @@ export default function App() {
           const saved = synchronizeSourceBackedSave(session, current, ticket, result)
           setImageBaseDir(dirOf(result.path))
           setFilePath(result.path)
+          setSourceText(saved.source)
           mirrorSessionDirty(session)
           setSaveState(saved.dirty ? 'idle' : 'saved')
           return true
@@ -827,6 +911,7 @@ export default function App() {
     replace: t('replace'),
     replaceAll: t('replaceAll'),
   }
+  const sourceMode = losslessMarkdown && editorMode === 'source'
 
   if (status === 'error') {
     return (
@@ -840,6 +925,11 @@ export default function App() {
     <div className="app">
       <Ribbon
         editor={editor}
+        mode={sourceMode ? 'source' : 'visual'}
+        onModeChange={(mode) => {
+          if (mode === 'source') enterSourceMode()
+          else enterVisualMode()
+        }}
         disabled={status !== 'ready'}
         dirty={dirty}
         onSave={() => void doSave('save')}
@@ -889,9 +979,9 @@ export default function App() {
             />
           )}
         </div>
-        {outlineOpen && <OutlinePane items={outlineItems} onJump={jumpToOutline} />}
+        {!sourceMode && outlineOpen && <OutlinePane items={outlineItems} onJump={jumpToOutline} />}
         <div className="app-content">
-          {showFind && findTarget && (
+          {!sourceMode && showFind && findTarget && (
             <FindPanel
               target={findTarget}
               strings={findStrings}
@@ -901,8 +991,22 @@ export default function App() {
           )}
           <div className="editor-scroll" ref={scrollRef}>
             <div className="doc-page" style={{ zoom: zoom / 100 }}>
-              {fmOpen && <FrontmatterPanel value={fmText} onChange={onFrontmatterChange} />}
-              <EditorContent editor={editor} />
+              {sourceMode ? (
+                <>
+                  {sourceModeError && <div className="source-mode-error" role="alert">{t('sourceModeError')}: {sourceModeError}</div>}
+                  <SourceEditor
+                    value={sourceText}
+                    selection={sessionRef.current?.view().sourceSelection}
+                    onChange={onSourceChange}
+                    onExit={enterVisualMode}
+                  />
+                </>
+              ) : (
+                <>
+                  {fmOpen && <FrontmatterPanel value={fmText} onChange={onFrontmatterChange} />}
+                  <EditorContent editor={editor} />
+                </>
+              )}
             </div>
           </div>
           <footer className="status-bar">
@@ -946,10 +1050,10 @@ export default function App() {
           </footer>
         </div>
       </div>
-      <SlashMenu ref={slashMenuRef} state={slashState} onDismiss={() => setSlashState(null)} />
+      {!sourceMode && <SlashMenu ref={slashMenuRef} state={slashState} onDismiss={() => setSlashState(null)} />}
       <ToastHost />
-      <TableMenu editor={editor} scrollRef={scrollRef} zoom={zoom} />
-      {editor && status === 'ready' && (
+      {!sourceMode && <TableMenu editor={editor} scrollRef={scrollRef} zoom={zoom} />}
+      {!sourceMode && editor && status === 'ready' && (
         <AiAskPopover
           editor={editor}
           queueFull={editQueue.length >= EDIT_QUEUE_MAX}

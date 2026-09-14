@@ -30,8 +30,10 @@ import {
   IconUndo,
 } from './icons'
 
-interface Props {
+export interface RibbonProps {
   editor: Editor | null
+  mode: 'visual' | 'source'
+  onModeChange(mode: 'visual' | 'source'): void
   disabled: boolean
   dirty: boolean
   onSave: () => void
@@ -153,6 +155,8 @@ function IconBtn({
 
 export function Ribbon({
   editor,
+  mode,
+  onModeChange,
   disabled,
   dirty,
   onSave,
@@ -169,7 +173,7 @@ export function Ribbon({
   aiOpen,
   onToggleAi,
   onAiPreset,
-}: Props) {
+}: RibbonProps) {
   const { t } = useI18n()
   const collapse = useRibbonCollapse('mdapp.ribbonCollapsed')
   const [linkOpen, setLinkOpen] = useState(false)
@@ -213,7 +217,7 @@ export function Ribbon({
     inside: () => [linkAnchorRef.current],
   })
 
-  const off = disabled || !editor || !state
+  const off = disabled || mode === 'source' || !editor || !state
 
   const openLink = () => {
     if (!editor) return
@@ -257,7 +261,7 @@ export function Ribbon({
           className="qa-btn"
           data-tip={t('save')}
           aria-label={t('save')}
-          disabled={off || !dirty}
+          disabled={disabled || !dirty}
           onMouseDown={(e) => e.preventDefault()}
           onClick={onSave}
         >
@@ -305,6 +309,22 @@ export function Ribbon({
             onChange={(e) => onToggleAutoSave(e.target.checked)}
           />
         </label>
+        <button
+          type="button"
+          className={`mode-toggle${mode === 'visual' ? ' active' : ''}`}
+          disabled={disabled || mode === 'visual'}
+          onClick={() => onModeChange('visual')}
+        >
+          {t('visualMode')}
+        </button>
+        <button
+          type="button"
+          className={`mode-toggle${mode === 'source' ? ' active' : ''}`}
+          disabled={disabled || mode === 'source'}
+          onClick={() => onModeChange('source')}
+        >
+          {t('sourceMode')}
+        </button>
         <RibbonExpandButton state={collapse} label={t('ribbonExpand')} />
       </div>
 

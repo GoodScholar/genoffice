@@ -196,6 +196,37 @@ button {
   box-shadow: var(--md-page-shadow);
 }
 
+.source-mode-error {
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--md-error-border);
+  border-radius: 6px;
+  background: var(--md-error-bg);
+  color: var(--md-error);
+  font-size: 13px;
+}
+
+.source-editor {
+  display: block;
+  width: 100%;
+  min-height: calc(100vh - 220px);
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+.source-editor:focus-visible {
+  outline: 2px solid var(--md-focus);
+  outline-offset: 2px;
+}
+
 .status-bar {
   flex: 0 0 auto;
   display: flex;
@@ -454,6 +485,27 @@ html.genoffice-popover-open .ribbon-tabs {
 }
 
 .qa-btn:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.mode-toggle {
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 7px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mode-toggle.active,
+.mode-toggle:hover:not(:disabled) {
+  background: var(--active-bg);
+}
+
+.mode-toggle:disabled {
   color: var(--text-muted);
   cursor: default;
 }
