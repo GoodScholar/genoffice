@@ -95,6 +95,27 @@ describe('scanMarkdownSource', () => {
     ])
   })
 
+  it('restores CRLF token slices from the real Marked lexer when assigning trailingRaw', () => {
+    const scan = scanMarkdownSource('A\r\n\r\nB.', markedLex)
+
+    expect(scan).toMatchObject({ fallbackToSource: false })
+    expect(scan.units).toEqual([
+      expect.objectContaining({ raw: 'A', trailingRaw: '\r\n\r\n', range: { from: 0, to: 1 } }),
+      expect.objectContaining({ raw: 'B.', trailingRaw: '', range: { from: 5, to: 7 } }),
+    ])
+  })
+
+  it('reports inline HTML CRLF ranges against the original source offsets', () => {
+    const source = 'Before <u>text</u>\r\n\r\nAfter.'
+    const scan = scanMarkdownSource(source, markedLex)
+
+    expect(scan).toMatchObject({ fallbackToSource: false })
+    const protectedRange = scan.units[0]?.protection?.ranges[0]
+    expect(protectedRange).toEqual({ from: 7, to: 18 })
+    expect(source.slice(protectedRange?.from, protectedRange?.to)).toBe('<u>text</u>')
+    expect(scan.units[0]).toMatchObject({ trailingRaw: '\r\n\r\n' })
+  })
+
   it('protects a precisely bounded HTML pair split by the real marked inline lexer', () => {
     const source = 'Before <u>text</u> after'
     const scan = scanMarkdownSource(source, markedLex)

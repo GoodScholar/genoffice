@@ -1,0 +1,363 @@
+import type { JSONContent } from '@tiptap/core'
+import { frontmatterInner, parseRawDocEnvelope, type RawDocEnvelope } from './docText'
+import { projectScan, serializeProjectedGroup, type MarkdownCodec, type ProjectedFragment, type VisualProjection } from './sourceProjection'
+import { scanMarkdownSource, type SourceRange } from './sourceScanner'
+
+export type EditorMode = 'visual' | 'source'
+
+export interface SessionView {
+  source: string
+  visual: VisualProjection
+  protectedFragments: ProjectedFragment[]
+  dirty: boolean
+  revision: number
+  mode: EditorMode
+  sourceSelection?: SourceRange
+  fallbackReason?: string
+}
+
+export type SessionUpdate =
+  | { ok: true; view: SessionView; changedRange?: SourceRange }
+  | { ok: false; view: SessionView; error: string }
+
+export interface SaveTicket {
+  revision: number
+  source: string
+}
+
+export interface MarkdownDocumentSession {
+  view(): SessionView
+  applyVisual(next: VisualProjection): SessionUpdate
+  applySource(next: string): SessionUpdate
+  enterSource(fragmentId?: string): SessionUpdate
+  enterVisual(): SessionUpdate
+  serialize(): string
+  beginSave(): SaveTicket
+  markSaved(sourceActuallyWritten: string, ticket: SaveTicket): SessionView
+}
+
+interface SourceUnitState {
+  sourceId: string
+  raw: string
+  trailingRaw: string
+  range: SourceRange
+  fingerprint?: string
+  protectedFragments: ProjectedFragment[]
+}
+
+interface DocumentState {
+  source: string
+  envelope: RawDocEnvelope
+  units: SourceUnitState[]
+  visual: VisualProjection
+  fallbackReason?: string
+}
+
+interface SaveState {
+  revision: number
+  source: string
+  units: SourceUnitState[]
+}
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+function fingerprint(nodes: JSONContent[]): string {
+  const withoutSourceIds = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(withoutSourceIds)
+    if (!value || typeof value !== 'object') return value
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => key !== 'sourceId')
+        .map(([key, child]) => [key, withoutSourceIds(child)]),
+    )
+  }
+  return JSON.stringify(withoutSourceIds(nodes))
+}
+
+function normaliseEol(value: string, envelope: RawDocEnvelope): string {
+  if (envelope.eol === '\n') return value.replace(/\r\n/g, '\n')
+  return value.replace(/\r?\n/g, '\r\n')
+}
+
+function ensureCanonicalBoundary(value: string, envelope: RawDocEnvelope): string {
+  const eol = envelope.eol
+  if (value.endsWith(eol + eol)) return value
+  return value.endsWith(eol) ? value + eol : value + eol + eol
+}
+
+function sourcePrefix(envelope: RawDocEnvelope): string {
+  return envelope.bomRaw + envelope.frontmatterRaw
+}
+
+function localFragment(fragment: ProjectedFragment, bodyOffset: number): ProjectedFragment {
+  return { ...fragment, range: { from: fragment.range.from + bodyOffset, to: fragment.range.to + bodyOffset } }
+}
+
+function visualFrontmatter(raw: string): string {
+  return frontmatterInner(raw.replace(/\r\n/g, '\n'))
+}
+
+function collectProtected(nodes: JSONContent[]): Map<string, { raw: string, count: number }> {
+  const found = new Map<string, { raw: string, count: number }>()
+  const visit = (node: JSONContent): void => {
+    if (node.type === 'protectedSourceInline' || node.type === 'protectedSourceBlock') {
+      const id = typeof node.attrs?.id === 'string' ? node.attrs.id : ''
+      const raw = typeof node.attrs?.raw === 'string' ? node.attrs.raw : ''
+      if (id) {
+        const previous = found.get(id)
+        found.set(id, { raw, count: (previous?.count ?? 0) + 1 })
+      }
+    }
+    node.content?.forEach(visit)
+  }
+  nodes.forEach(visit)
+  return found
+}
+
+function completeProjectedGroups(visual: VisualProjection): Array<{ sourceId?: string, nodes: JSONContent[] }> {
+  const groups: Array<{ sourceId?: string, nodes: JSONContent[] }> = []
+  for (const node of visual.doc.content ?? []) {
+    const sourceId = typeof node.attrs?.sourceId === 'string' ? node.attrs.sourceId : undefined
+    const previous = groups[groups.length - 1]
+    if (sourceId && previous?.sourceId === sourceId) previous.nodes.push(node)
+    else groups.push({ sourceId, nodes: [node] })
+  }
+  return groups
+}
+
+function withFreshRanges(state: DocumentState): DocumentState {
+  const visual = { ...state.visual, frontmatterInner: visualFrontmatter(state.envelope.frontmatterRaw) }
+  return { ...state, visual }
+}
+
+function createState(source: string, codec: MarkdownCodec): DocumentState {
+  const envelope = parseRawDocEnvelope(source)
+  const scan = scanMarkdownSource(envelope.bodyRaw, codec.lex)
+  if (scan.fallbackToSource) {
+    return withFreshRanges({
+      source,
+      envelope,
+      units: [],
+      visual: { doc: { type: 'doc', content: [] }, frontmatterInner: '' },
+      fallbackReason: scan.error ?? 'Unable to project source safely',
+    })
+  }
+
+  const projection = projectScan(scan, codec)
+  if (projection.fallbackToSource) {
+    return withFreshRanges({
+      source,
+      envelope,
+      units: [],
+      visual: projection.visual,
+      fallbackReason: 'Unable to project source safely',
+    })
+  }
+
+  const units = scan.units.map((unit) => ({
+    sourceId: unit.id,
+    raw: unit.raw,
+    trailingRaw: unit.trailingRaw,
+    range: unit.range,
+    fingerprint: projection.fingerprints.get(unit.id) ?? fingerprint((projection.visual.doc.content ?? []).filter((node) => node.attrs?.sourceId === unit.id)),
+    protectedFragments: projection.fragments.filter((fragment) => fragment.id === unit.id || fragment.id.startsWith(`${unit.id}-i`)),
+  }))
+  return withFreshRanges({ source, envelope, units, visual: projection.visual })
+}
+
+function unitText(unit: SourceUnitState): string {
+  return unit.raw + unit.trailingRaw
+}
+
+function validateState(state: DocumentState): void {
+  if (state.units.length === 0) {
+    if (state.source !== sourcePrefix(state.envelope) + state.envelope.bodyRaw) throw new Error('Document session source envelope is inconsistent')
+    return
+  }
+  let cursor = 0
+  let body = ''
+  for (const unit of state.units) {
+    if (unit.range.from !== cursor || unit.range.to !== cursor + unit.raw.length) {
+      throw new Error('Document session unit ranges are inconsistent')
+    }
+    body += unitText(unit)
+    cursor = unit.range.to + unit.trailingRaw.length
+  }
+  if (body !== state.envelope.bodyRaw || state.source !== sourcePrefix(state.envelope) + body) {
+    throw new Error('Document session source concatenation is inconsistent')
+  }
+}
+
+function changedRange(source: string): SourceRange {
+  return { from: 0, to: source.length }
+}
+
+function snapshotUnits(units: SourceUnitState[]): SourceUnitState[] {
+  return units.map((unit) => ({ ...unit, range: { ...unit.range }, protectedFragments: clone(unit.protectedFragments) }))
+}
+
+export function createMarkdownDocumentSession(source: string, codec: MarkdownCodec): MarkdownDocumentSession {
+  let state = createState(source, codec)
+  let baseline = source
+  let revision = 0
+  let mode: EditorMode = state.fallbackReason ? 'source' : 'visual'
+  let selection: SourceRange | undefined
+  let tickets = new WeakMap<SaveTicket, SaveState>()
+  let conflictReason: string | undefined
+
+  const currentView = (): SessionView => ({
+    source: state.source,
+    visual: clone(state.visual),
+    protectedFragments: state.units.flatMap((unit) => unit.protectedFragments.map((fragment) => localFragment(fragment, state.envelope.bodyOffset))),
+    dirty: state.source !== baseline,
+    revision,
+    mode,
+    ...(selection ? { sourceSelection: { ...selection } } : {}),
+    ...((conflictReason ?? state.fallbackReason) ? { fallbackReason: conflictReason ?? state.fallbackReason } : {}),
+  })
+
+  const success = (range?: SourceRange): SessionUpdate => ({ ok: true, view: currentView(), ...(range ? { changedRange: range } : {}) })
+
+  const applyVisual = (next: VisualProjection): SessionUpdate => {
+    if (state.fallbackReason) return { ok: false, view: currentView(), error: state.fallbackReason }
+    const candidateNodes = next.doc.content ?? []
+    const expected = new Map(state.units.flatMap((unit) => unit.protectedFragments.map((fragment) => [fragment.id, fragment.raw] as const)))
+    const found = collectProtected(candidateNodes)
+    for (const [id, raw] of expected) {
+      const candidate = found.get(id)
+      if (!candidate || candidate.count !== 1 || candidate.raw !== raw) {
+        return { ok: false, view: currentView(), error: `Protected source fragment ${id} requires confirmation` }
+      }
+    }
+    for (const id of found.keys()) {
+      if (!expected.has(id)) return { ok: false, view: currentView(), error: `Unknown protected source fragment ${id}` }
+    }
+
+    const previousById = new Map(state.units.map((unit) => [unit.sourceId, unit]))
+    const groups = completeProjectedGroups(next)
+    const used = new Set<string>()
+    const pieces: string[] = []
+    try {
+      for (let index = 0; index < groups.length; index += 1) {
+        const group = groups[index]!
+        const previous = group.sourceId ? previousById.get(group.sourceId) : undefined
+        const canReuse = !!previous && !used.has(previous.sourceId) && previous.fingerprint === fingerprint(group.nodes)
+        if (canReuse) {
+          used.add(previous!.sourceId)
+          pieces.push(unitText(previous!))
+          continue
+        }
+
+        let serialized = normaliseEol(serializeProjectedGroup(group.nodes, codec), state.envelope)
+        if (!previous && index > 0) {
+          const last = pieces.length - 1
+          pieces[last] = ensureCanonicalBoundary(pieces[last]!, state.envelope)
+        }
+        if (previous) {
+          if (previous.raw.endsWith('\n') && !serialized.endsWith('\n')) serialized += state.envelope.eol
+          if (!previous.raw.endsWith('\n')) serialized = serialized.replace(/(?:\r?\n)+$/, '')
+          serialized += previous.trailingRaw
+        }
+        if (!previous && index < groups.length - 1) serialized = ensureCanonicalBoundary(serialized, state.envelope)
+        pieces.push(serialized)
+      }
+    } catch (error) {
+      return { ok: false, view: currentView(), error: error instanceof Error ? error.message : String(error) }
+    }
+
+    let body = pieces.join('')
+    if (state.envelope.trailingNewline) {
+      if (body !== '' && !body.endsWith('\n')) body += state.envelope.eol
+    } else {
+      body = body.replace(/(?:\r?\n)+$/, '')
+    }
+    const nextSource = sourcePrefix(state.envelope) + body
+    if (nextSource === state.source) return success()
+    state = createState(nextSource, codec)
+    revision += 1
+    mode = state.fallbackReason ? 'source' : 'visual'
+    selection = undefined
+    conflictReason = undefined
+    return success(changedRange(nextSource))
+  }
+
+  const applySource = (next: string): SessionUpdate => {
+    if (next !== state.source) {
+      state = createState(next, codec)
+      revision += 1
+      conflictReason = undefined
+    }
+    mode = 'source'
+    selection = undefined
+    if (state.fallbackReason) return { ok: false, view: currentView(), error: state.fallbackReason }
+    return success(changedRange(next))
+  }
+
+  const enterSource = (fragmentId?: string): SessionUpdate => {
+    mode = 'source'
+    selection = fragmentId
+      ? currentView().protectedFragments.find((fragment) => fragment.id === fragmentId)?.range
+      : undefined
+    return success(selection)
+  }
+
+  const enterVisual = (): SessionUpdate => {
+    if (state.fallbackReason) return { ok: false, view: currentView(), error: state.fallbackReason }
+    mode = 'visual'
+    selection = undefined
+    return success()
+  }
+
+  const serialize = (): string => {
+    validateState(state)
+    return state.source
+  }
+
+  const beginSave = (): SaveTicket => {
+    const ticket = { revision, source: serialize() }
+    tickets.set(ticket, { revision, source: ticket.source, units: snapshotUnits(state.units) })
+    return ticket
+  }
+
+  const markSaved = (sourceActuallyWritten: string, ticket: SaveTicket): SessionView => {
+    const saved = tickets.get(ticket)
+    if (!saved || saved.revision !== ticket.revision || saved.source !== ticket.source) throw new Error('Invalid save ticket')
+    tickets.delete(ticket)
+    if (revision === ticket.revision) {
+      state = createState(sourceActuallyWritten, codec)
+      baseline = sourceActuallyWritten
+      mode = state.fallbackReason ? 'source' : mode
+      selection = undefined
+      conflictReason = undefined
+      return currentView()
+    }
+
+    const written = createState(sourceActuallyWritten, codec)
+    if (written.fallbackReason || state.fallbackReason) {
+      baseline = sourceActuallyWritten
+      return currentView()
+    }
+    const savedById = new Map(saved.units.map((unit) => [unit.sourceId, unit]))
+    const writtenById = new Map(written.units.map((unit) => [unit.sourceId, unit]))
+    let hasConflict = false
+    const rebased = state.units.map((unit) => {
+      const original = savedById.get(unit.sourceId)
+      const actual = writtenById.get(unit.sourceId)
+      if (!original || !actual) return unit
+      const userChanged = unitText(unit) !== unitText(original)
+      const mainChanged = unitText(actual) !== unitText(original)
+      if (userChanged && mainChanged) hasConflict = true
+      return userChanged ? unit : actual
+    })
+    const body = rebased.map(unitText).join('')
+    const rebasedSource = sourcePrefix(written.envelope) + body
+    state = createState(rebasedSource, codec)
+    baseline = sourceActuallyWritten
+    conflictReason = hasConflict ? 'rebase conflict: user and save result changed the same source unit' : undefined
+    return currentView()
+  }
+
+  return { view: currentView, applyVisual, applySource, enterSource, enterVisual, serialize, beginSave, markSaved }
+}

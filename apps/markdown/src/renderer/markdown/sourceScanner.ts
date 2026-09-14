@@ -218,6 +218,23 @@ function failed(error: string): SourceScan {
   return { units: [], fallbackToSource: true, error }
 }
 
+/** Consume a lexer raw value against the original source without normalizing it. */
+function consumeTokenRaw(source: string, raw: string, from: number): string | null {
+  let cursor = from
+  for (const character of raw) {
+    if (character === '\n') {
+      if (source[cursor] === '\n') cursor += 1
+      else if (source.startsWith('\r\n', cursor)) cursor += 2
+      else return null
+    } else if (source[cursor] === character) {
+      cursor += 1
+    } else {
+      return null
+    }
+  }
+  return source.slice(from, cursor)
+}
+
 export function scanMarkdownSource(
   bodyRaw: string,
   lex: (source: string) => SourceToken[],
@@ -237,19 +254,21 @@ export function scanMarkdownSource(
 
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index]
-    if (!token.raw || !bodyRaw.startsWith(token.raw, cursor)) {
+    if (!token.raw) {
       return failed('Lexer token raw does not continuously cover the source')
     }
+    const raw = consumeTokenRaw(bodyRaw, token.raw, cursor)
+    if (raw === null) return failed('Lexer token raw does not continuously cover the source')
     if (token.type === 'space') {
-      if (!/^[ \t\r\n]+$/.test(token.raw) || units.length === 0) {
+      if (!/^[ \t\r\n]+$/.test(raw) || units.length === 0) {
         return failed('Lexer space token cannot be assigned to a preceding unit')
       }
       const previous = units[units.length - 1]
-      previous.trailingRaw += token.raw
-      cursor += token.raw.length
+      previous.trailingRaw += raw
+      cursor += raw.length
       continue
     }
-    const range = { from: cursor, to: cursor + token.raw.length }
+    const range = { from: cursor, to: cursor + raw.length }
     cursor = range.to
     const blank = tokens[index + 1]?.type === 'space' ? '' : blankLines.exec(bodyRaw.slice(cursor))?.[0] ?? ''
     cursor += blank.length
@@ -259,12 +278,12 @@ export function scanMarkdownSource(
       if (legacyRanges.some((legacy) => intersects(range, legacy))) {
         protection = { display: 'block', reason: 'legacy-fenced-div', ranges: [range] }
       } else if (token.type === 'html') {
-        protection = topLevelHtmlProtection(token.raw, range)
+        protection = topLevelHtmlProtection(raw, range)
       } else {
-        protection = inlineProtection(token, range)
+        protection = inlineProtection({ ...token, raw }, range)
       }
     }
-    units.push({ id: `${idPrefix}-b${units.length}`, raw: token.raw, range, trailingRaw: blank, protection })
+    units.push({ id: `${idPrefix}-b${units.length}`, raw, range, trailingRaw: blank, protection })
   }
 
   if (cursor !== bodyRaw.length) return failed('Lexer token raw does not completely cover the source')
