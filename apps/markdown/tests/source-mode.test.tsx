@@ -205,6 +205,18 @@ describe('source-mode history checkpoint', () => {
     expect(undo(editor.state, editor.view.dispatch)).toBe(false)
     editor.destroy()
   })
+
+  it('creates a valid editable empty document baseline without history', () => {
+    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }), content: 'Old', contentType: 'markdown' })
+    replaceEditorBaseline(editor, { type: 'doc', content: [] })
+
+    expect(() => editor.state.doc.check()).not.toThrow()
+    expect(editor.state.doc.firstChild?.type.name).toBe('paragraph')
+    expect(() => editor.state.doc.resolve(1)).not.toThrow()
+    expect(undoDepth(editor.state)).toBe(0)
+    expect(redo(editor.state, editor.view.dispatch)).toBe(false)
+    editor.destroy()
+  })
   it('serializes an invertible no-document source snapshot step in the history transaction', () => {
     const editor = new Editor({
       element: document.createElement('div'),

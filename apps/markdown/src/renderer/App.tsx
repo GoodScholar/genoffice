@@ -159,12 +159,18 @@ export function replaceSourceModeVisualDocument(editor: Editor, visualDoc: JSONC
 }
 
 /** Install a newly loaded document as a fresh ProseMirror history baseline. */
-export function replaceEditorBaseline(editor: Editor, visualDoc: JSONContent): void {
+export function replaceEditorBaseline(editor: Editor, visualDoc: JSONContent, onInstalled?: (editor: Editor) => void): void {
+  const doc = visualDoc.content?.length
+    ? editor.schema.nodeFromJSON(visualDoc)
+    : editor.schema.topNodeType.createAndFill()
+  if (!doc) throw new Error('Unable to create an editable document baseline')
   editor.view.updateState(EditorState.create({
     schema: editor.schema,
-    doc: editor.schema.nodeFromJSON(visualDoc),
+    doc,
     plugins: editor.state.plugins,
   }))
+  onInstalled?.(editor)
+  editor.view.dispatch(editor.state.tr.setMeta('addToHistory', false).setMeta('uiOnly', true))
 }
 
 /** Leave source mode without recording a no-op round trip. */
@@ -426,7 +432,7 @@ export default function App() {
             const session = createMarkdownDocumentSession(raw, createTiptapMarkdownCodec(editor))
             sessionRef.current = session
             syncingProjectionRef.current = true
-            replaceEditorBaseline(editor, session.view().visual.doc)
+            replaceEditorBaseline(editor, session.view().visual.doc, (next) => setOutlineItems(collectOutline(next)))
             syncingProjectionRef.current = false
             mirrorSessionDirty(session)
             setEditorMode(session.view().mode)
@@ -451,7 +457,7 @@ export default function App() {
             const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
             sessionRef.current = session
             syncingProjectionRef.current = true
-            replaceEditorBaseline(editor, session.view().visual.doc)
+            replaceEditorBaseline(editor, session.view().visual.doc, (next) => setOutlineItems(collectOutline(next)))
             syncingProjectionRef.current = false
             mirrorSessionDirty(session)
             setEditorMode(session.view().mode)
@@ -537,7 +543,7 @@ export default function App() {
         return
       }
       syncingProjectionRef.current = true
-      replaceEditorBaseline(current, entered.view.visual.doc)
+      replaceEditorBaseline(current, entered.view.visual.doc, (next) => setOutlineItems(collectOutline(next)))
       applyProjectionProvenance(current, entered.view.visual.doc)
       syncingProjectionRef.current = false
       synchronizeSessionChrome(entered.view)
