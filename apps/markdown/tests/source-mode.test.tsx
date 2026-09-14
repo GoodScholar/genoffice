@@ -2,9 +2,18 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Editor } from '@tiptap/core'
-import { replaceSourceModeVisualDocument } from '../src/renderer/App'
+import { redo, undo, undoDepth } from '@tiptap/pm/history'
+import {
+  completeSourceModeTransition,
+  applyProjectionProvenance,
+  replaceSourceModeVisualDocument,
+  restoreSourceModeHistoryCheckpoint,
+  type SourceModeSnapshot,
+} from '../src/renderer/App'
 import { SourceEditor } from '../src/renderer/components/SourceEditor'
+import { Ribbon } from '../src/renderer/components/Ribbon'
 import { buildExtensions } from '../src/renderer/editor/extensions'
+import { LocaleProvider } from '../src/renderer/i18n/locale'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
 import { createTiptapMarkdownCodec, type MarkdownCodec } from '../src/renderer/markdown/sourceProjection'
 
@@ -31,6 +40,15 @@ function renderSourceEditor(props: React.ComponentProps<typeof SourceEditor>): H
   return textarea
 }
 
+function renderComponent(element: React.ReactElement): HTMLElement {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  roots.push({ root, host })
+  act(() => root.render(element))
+  return host
+}
+
 describe('SourceEditor', () => {
   it('focuses and selects the supplied source range after mount', () => {
     const textarea = renderSourceEditor({
@@ -43,6 +61,18 @@ describe('SourceEditor', () => {
     expect(document.activeElement).toBe(textarea)
     expect(textarea.selectionStart).toBe(1)
     expect(textarea.selectionEnd).toBe(6)
+  })
+
+  it('maps a CRLF source range to the textarea selection offsets', () => {
+    const source = '\uFEFFfirst\r\nsecond'
+    const textarea = renderSourceEditor({
+      value: source,
+      selection: { from: source.indexOf('second'), to: source.length },
+      onChange: () => {},
+      onExit: () => {},
+    })
+
+    expect(textarea.value.slice(textarea.selectionStart, textarea.selectionEnd)).toBe('second')
   })
 
   it('returns BOM and CRLF source text unchanged', () => {
@@ -61,6 +91,19 @@ describe('SourceEditor', () => {
     })
 
     expect(onChange).toHaveBeenCalledWith(edited)
+  })
+
+  it('preserves untouched mixed line endings when editing the final character', () => {
+    const onChange = vi.fn()
+    const source = 'a\r\nb\nc'
+    const textarea = renderSourceEditor({ value: source, onChange, onExit: () => {} })
+
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'a\nb\nc!')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    expect(onChange).toHaveBeenCalledWith('a\r\nb\nc!')
   })
 
   it('does not intercept Cmd or Ctrl+S', () => {
@@ -123,6 +166,133 @@ describe('source-mode visual handoff', () => {
 
     expect(update).toMatchObject({ ok: false, view: expect.objectContaining({ mode: 'source' }) })
     expect(session.serialize()).toBe('\uFEFFsource\r\nthat must stay')
+    editor.destroy()
+  })
+})
+
+describe('source-mode history checkpoint', () => {
+  it('does not dispatch or add history for an unchanged source round trip', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: 'Before.',
+      contentType: 'markdown',
+    })
+    const codec: MarkdownCodec = {
+      lex: (source) => [{ type: 'paragraph', raw: source }],
+      parse: (source) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: source.trim() }] }] }),
+      serialize: (doc) => String(doc.content?.[0]?.content?.[0]?.text ?? ''),
+    }
+    const session = createMarkdownDocumentSession('Before.\n', codec)
+    const start: SourceModeSnapshot = { source: session.view().source, visual: session.view().visual }
+    session.enterSource()
+    const dispatch = vi.spyOn(editor.view, 'dispatch')
+
+    const transition = completeSourceModeTransition(session, editor, start)
+
+    expect(transition).toMatchObject({ ok: true, changed: false })
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(undoDepth(editor.state)).toBe(0)
+    editor.destroy()
+  })
+
+  it('keeps the source replacement separate and restores body plus frontmatter through real undo and redo', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: 'Old.',
+      contentType: 'markdown',
+    })
+    const codec: MarkdownCodec = {
+      lex: (source) => [{ type: 'paragraph', raw: source }],
+      parse: (source) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: source.trim().replace(/^---[\s\S]*?---\s*/, '') }] }] }),
+      serialize: (doc) => String(doc.content?.[0]?.content?.[0]?.text ?? ''),
+    }
+    const session = createMarkdownDocumentSession('---\ntitle: before\n---\n\nBefore.\n', codec)
+    editor.commands.setContent(session.view().visual.doc)
+    const start: SourceModeSnapshot = { source: session.view().source, visual: session.view().visual }
+    editor.commands.setContent('Before visual edit.', { contentType: 'markdown' })
+    const visualUpdate = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: 'title: before' })
+    if (!visualUpdate.ok) throw new Error(visualUpdate.error)
+    applyProjectionProvenance(editor, visualUpdate.view.visual.doc)
+    const visualStart: SourceModeSnapshot = { source: session.view().source, visual: session.view().visual }
+
+    session.enterSource()
+    session.applySource('---\ntitle: after\n---\n\nAfter source edit.\n')
+    const transition = completeSourceModeTransition(session, editor, visualStart)
+    expect(transition).toMatchObject({ ok: true, changed: true })
+    expect(undoDepth(editor.state)).toBe(2)
+    const checkpoint = transition.checkpoint!
+
+    let restored: ReturnType<typeof restoreSourceModeHistoryCheckpoint>
+    const dispatchAndRestore = (transaction: Parameters<typeof editor.view.dispatch>[0]) => {
+      editor.view.dispatch(transaction)
+      restored = restoreSourceModeHistoryCheckpoint(session, editor, transaction, checkpoint)
+    }
+    expect(undo(editor.state, dispatchAndRestore)).toBe(true)
+    expect(editor.getText()).toBe('Before visual edit.')
+    expect(restored).toBeDefined()
+    expect(session.view()).toMatchObject({ source: visualStart.source, mode: 'visual' })
+    expect(session.view().visual.frontmatterInner).toBe('title: before')
+    expect(editor.getText()).toBe('Before visual edit.')
+    expect(redo(editor.state, dispatchAndRestore)).toBe(true)
+    expect(restored).toBeDefined()
+    expect(session.view()).toMatchObject({ source: '---\ntitle: after\n---\n\nAfter source edit.\n', mode: 'visual' })
+    expect(session.view().visual.frontmatterInner).toBe('title: after')
+    expect(editor.getText()).toBe('After source edit.')
+    expect(start.source).toContain('title: before')
+    editor.destroy()
+  })
+})
+
+describe('source-mode ribbon', () => {
+  it('disables frontmatter and outline controls in source mode', () => {
+    ;(window as unknown as { markdownApi: { onLanguageChanged: () => () => void } }).markdownApi = {
+      onLanguageChanged: () => () => {},
+    }
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({
+        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashItems: () => [],
+      }),
+      content: 'Body',
+    })
+    const host = renderComponent(
+      <LocaleProvider initial="zh">
+        <Ribbon
+          editor={editor}
+          mode="source"
+          onModeChange={() => {}}
+          disabled={false}
+          dirty
+          onSave={() => {}}
+          onFind={() => {}}
+          autoSave={false}
+          onToggleAutoSave={() => {}}
+          imageEnabled
+          onInsertImage={() => {}}
+          frontmatterOpen={false}
+          onToggleFrontmatter={() => {}}
+          outlineOpen={false}
+          onToggleOutline={() => {}}
+          hasOutline
+          aiOpen={false}
+          onToggleAi={() => {}}
+          onAiPreset={() => {}}
+        />
+      </LocaleProvider>,
+    )
+
+    const buttonByLabel = (label: string) => host.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement
+    expect(buttonByLabel('属性').disabled).toBe(true)
+    expect(buttonByLabel('大纲').disabled).toBe(true)
     editor.destroy()
   })
 })

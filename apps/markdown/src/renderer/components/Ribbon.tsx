@@ -511,7 +511,7 @@ export function Ribbon({
             <IconBtn
               title={t('fmProperties')}
               active={frontmatterOpen}
-              disabled={disabled}
+              disabled={off}
               onClick={onToggleFrontmatter}
             >
               <IconProperties size={ICON} />
@@ -519,7 +519,7 @@ export function Ribbon({
             <IconBtn
               title={t('outline')}
               active={outlineOpen}
-              disabled={disabled || (!hasOutline && !outlineOpen)}
+              disabled={off || (!hasOutline && !outlineOpen)}
               onClick={onToggleOutline}
             >
               <IconOutlineView size={ICON} />
