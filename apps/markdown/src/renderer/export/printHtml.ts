@@ -25,6 +25,7 @@ ul, ol { padding-left: 1.6em; margin: 0.6em 0; }
 li > p { margin: 0.15em 0; }
 blockquote { margin: 0.8em 0; padding: 0.1em 1em; border-left: 3px solid #d0d5db; color: #57606a; }
 code { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 0.875em; background: rgba(129,139,152,0.14); border-radius: 4px; padding: 0.15em 0.35em; }
+code.md-protected-source-inline { white-space: pre-wrap; }
 pre { background: #f6f8fa; border: 1px solid #e4e7eb; border-radius: 8px; padding: 12px 16px; margin: 0.8em 0; white-space: pre-wrap; break-inside: avoid; }
 pre code { background: none; padding: 0; font-size: 0.85em; line-height: 1.6; }
 hr { border: none; border-top: 2px solid #e4e7eb; margin: 1.6em 0; }
@@ -77,6 +78,7 @@ export function buildPrintHtml(editorRoot: HTMLElement, title: string): string {
     }
     const safeCode = document.createElement('code')
     safeCode.textContent = code.textContent ?? ''
+    if (source.classList.contains('protected-source-inline')) safeCode.classList.add('md-protected-source-inline')
     if (code.parentElement?.tagName === 'PRE') {
       const pre = document.createElement('pre')
       pre.append(safeCode)

@@ -88,4 +88,31 @@ describe('buildPrintHtml', () => {
     expect(printed.body.querySelector('p')).toBeNull()
     expect(printed.body.querySelector('[onclick], [tabindex], [data-protected-source], [data-protected-convert]')).toBeNull()
   })
+
+  it('preserves protected inline source whitespace without styling ordinary inline code', () => {
+    const raw = 'first line\nsecond line  \t🙂'
+    const protectedHtml = buildPrintHtml(protectedSourceRoot(raw, true), 'Notes')
+    const regularHtml = buildPrintHtml(editorRoot('<p>ordinary <code>inline code</code></p>'), 'Notes')
+    const blockHtml = buildPrintHtml(protectedSourceRoot('block source', false), 'Notes')
+    const protectedPrinted = new DOMParser().parseFromString(protectedHtml, 'text/html')
+    const regularPrinted = new DOMParser().parseFromString(regularHtml, 'text/html')
+    const blockPrinted = new DOMParser().parseFromString(blockHtml, 'text/html')
+    const protectedCode = protectedPrinted.body.querySelector('code')
+
+    expect(protectedCode?.textContent).toBe(raw)
+    expect(protectedCode?.classList.contains('md-protected-source-inline')).toBe(true)
+    expect(regularPrinted.body.querySelector('code')?.classList.contains('md-protected-source-inline')).toBe(false)
+    expect(blockPrinted.body.querySelector('pre > code')?.classList.contains('md-protected-source-inline')).toBe(false)
+
+    const frame = document.createElement('iframe')
+    document.body.append(frame)
+    const frameDocument = frame.contentDocument!
+    frameDocument.open()
+    frameDocument.write(protectedHtml)
+    frameDocument.close()
+    expect(frame.contentWindow!.getComputedStyle(
+      frameDocument.body.querySelector('code.md-protected-source-inline')!,
+    ).whiteSpace).toBe('pre-wrap')
+    frame.remove()
+  })
 })
