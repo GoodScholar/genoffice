@@ -234,6 +234,12 @@ export function serializeProjectedGroup(nodes: JSONContent[], codec: MarkdownCod
   const serializedJson = JSON.stringify(nodes)
   const character = markerCharacter(serializedJson)
   const sentinels: Sentinel[] = []
+  const onlyNode = nodes.length === 1 ? nodes[0] : undefined
+  const onlyInline = onlyNode?.content?.length === 1 ? onlyNode.content[0] : undefined
+  const literalHeadingMarker = onlyNode?.type === 'paragraph'
+    && onlyInline?.type === 'text'
+    && !onlyInline.marks?.length
+    && /^#{1,6}$/.test(onlyInline.text ?? '')
   const rewrite = (node: JSONContent): JSONContent => {
     if (node.type === 'protectedSourceInline' || node.type === 'protectedSourceBlock') {
       const id = String(node.attrs?.id ?? '')
@@ -257,7 +263,8 @@ export function serializeProjectedGroup(nodes: JSONContent[], codec: MarkdownCod
     }
     return node.content ? { ...node, content: node.content.map(rewrite) } : node
   }
-  const output = codec.serialize({ type: 'doc', content: nodes.map(rewrite) })
+  let output = codec.serialize({ type: 'doc', content: nodes.map(rewrite) })
+  if (literalHeadingMarker) output = output.replace(/^#/, '\\#')
   for (const sentinel of sentinels) {
     const count = output.split(sentinel.value).length - 1
     if (count !== 1) throw new Error('Protected source serialization sentinel mismatch')

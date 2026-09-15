@@ -415,6 +415,48 @@ describe('MarkdownDocumentSession', () => {
     expect(session.serialize()).toBe('# Heading\n')
   })
 
+  it('keeps a lone heading marker as literal paragraph text while typing', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+
+    editor.commands.insertContent('#')
+    const update = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+
+    expect(update).toMatchObject({ ok: true, view: { mode: 'visual' } })
+    expect(session.serialize()).toBe('\\#\n')
+  })
+
+  it('keeps consecutive heading markers literal until a heading shortcut completes', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+
+    editor.commands.insertContent('#')
+    const first = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+    expect(first).toMatchObject({ ok: true })
+    applyProjectionProvenance(editor, first.view.visual.doc)
+    editor.commands.insertContent('#')
+    const second = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+
+    expect(second).toMatchObject({ ok: true, view: { mode: 'visual' } })
+    expect(session.serialize()).toBe('\\##\n')
+  })
+
   it('keeps a paragraph Enter visual through typing, undo, and redo', () => {
     const editor = new Editor({
       extensions: buildExtensions({
