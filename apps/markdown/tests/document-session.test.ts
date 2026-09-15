@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Editor, type JSONContent } from '@tiptap/core'
+import { closeHistory } from '@tiptap/pm/history'
 import { buildExtensions } from '../src/renderer/editor/extensions'
 import { applyProjectionProvenance, replaceEditorBaseline } from '../src/renderer/App'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
@@ -366,6 +367,123 @@ describe('MarkdownDocumentSession', () => {
 
     expect(update).toMatchObject({ ok: true, view: { mode: 'visual' } })
     expect(session.serialize()).toBe('a\n\n\n\n')
+  })
+
+  it('keeps visual mode while a heading Enter is empty, then persists its text', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const source = '# Heading\n\nFollowing\n'
+    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+    editor.commands.setTextSelection(editor.state.doc.firstChild!.nodeSize - 1)
+    editor.commands.keyboardShortcut('Enter')
+
+    const emptyUpdate = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+    expect(emptyUpdate).toMatchObject({ ok: true, view: { mode: 'visual', source } })
+    applyProjectionProvenance(editor, emptyUpdate.view.visual.doc)
+
+    editor.commands.insertContent('Body')
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe('# Heading\n\nBody\n\nFollowing\n')
+  })
+
+  it('keeps visual mode while an empty paragraph is formatted as a heading', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+
+    editor.commands.setHeading({ level: 1 })
+    const emptyUpdate = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+    expect(emptyUpdate).toMatchObject({ ok: true, view: { mode: 'visual', source: '' } })
+    applyProjectionProvenance(editor, emptyUpdate.view.visual.doc)
+
+    editor.commands.insertContent('Heading')
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe('# Heading\n')
+  })
+
+  it('keeps a paragraph Enter visual through typing, undo, and redo', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+
+    editor.commands.insertContent('First')
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    applyProjectionProvenance(editor, session.view().visual.doc)
+    editor.commands.keyboardShortcut('Enter')
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    applyProjectionProvenance(editor, session.view().visual.doc)
+    editor.commands.insertContent('Second')
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    applyProjectionProvenance(editor, session.view().visual.doc)
+
+    editor.commands.undo()
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true, view: { mode: 'visual' } })
+    editor.commands.redo()
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true, view: { mode: 'visual' } })
+  })
+
+  it('keeps visual mode when Enter adds another list item', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+    editor.commands.insertContent('Item one')
+    const paragraphUpdate = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+    expect(paragraphUpdate).toMatchObject({ ok: true })
+    applyProjectionProvenance(editor, paragraphUpdate.view.visual.doc)
+    editor.commands.toggleBulletList()
+    const listUpdate = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+    expect(listUpdate).toMatchObject({ ok: true })
+    applyProjectionProvenance(editor, listUpdate.view.visual.doc)
+    let textEnd = 0
+    editor.state.doc.descendants((node, pos) => {
+      if (node.isText) textEnd = pos + node.nodeSize
+    })
+    editor.commands.setTextSelection(textEnd)
+    editor.commands.keyboardShortcut('Enter')
+
+    const emptyUpdate = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+    expect(emptyUpdate).toMatchObject({ ok: true, view: { mode: 'visual' } })
+    applyProjectionProvenance(editor, emptyUpdate.view.visual.doc)
+    editor.view.dispatch(closeHistory(editor.state.tr))
+    editor.commands.insertContent('Item two')
+    const textUpdate = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+    expect(textUpdate).toMatchObject({ ok: true, view: { mode: 'visual' } })
+    applyProjectionProvenance(editor, textUpdate.view.visual.doc)
+    expect(session.serialize()).toBe('- Item one\n- Item two\n')
+    editor.view.dispatch(closeHistory(editor.state.tr))
+
+    editor.commands.undo()
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true, view: { mode: 'visual' } })
+    editor.commands.redo()
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true, view: { mode: 'visual' } })
   })
 
   it.each([

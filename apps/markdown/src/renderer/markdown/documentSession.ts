@@ -141,6 +141,14 @@ function withoutEmptyParagraphs(nodes: JSONContent[]): JSONContent[] {
     .map((node) => node.content ? { ...node, content: withoutEmptyParagraphs(node.content) } : node)
 }
 
+function withoutTopLevelEmptyParagraphs(nodes: JSONContent[]): JSONContent[] {
+  return nodes.filter((node) => node.type !== 'paragraph' || (node.content?.length ?? 0) > 0)
+}
+
+function topLevelEmptyParagraphCount(nodes: JSONContent[]): number {
+  return nodes.filter((node) => node.type === 'paragraph' && (node.content?.length ?? 0) === 0).length
+}
+
 function withoutGeneratedTrailingParagraph(nodes: JSONContent[]): JSONContent[] {
   return nodes.filter((node) => !isGeneratedTrailingParagraph(node))
 }
@@ -149,6 +157,56 @@ function isSchemaBaselineParagraph(node: JSONContent | undefined): boolean {
   return node?.type === 'paragraph'
     && node.attrs?.sourceId === null
     && (node.content?.length ?? 0) === 0
+}
+
+function isTransientEmptyTextBlock(node: JSONContent): boolean {
+  if (node.type === 'paragraph' || node.type === 'heading') {
+    return (node.content?.length ?? 0) === 0 && !isUserTrailingEmptyParagraph(node)
+  }
+  return false
+}
+
+function isTransientEmptyNode(node: JSONContent): boolean {
+  if (isTransientEmptyTextBlock(node)) return true
+  return node.type === 'listItem'
+    && node.content?.length === 1
+    && node.content[0]?.type === 'paragraph'
+    && (node.content[0].content?.length ?? 0) === 0
+}
+
+function isSingleTransientEmptyInsertion(nodes: JSONContent[], previous: JSONContent[]): boolean {
+  if (nodes.length === previous.length + 1) {
+    return nodes.some((node, index) => isTransientEmptyNode(node)
+      && projectionFingerprint([...nodes.slice(0, index), ...nodes.slice(index + 1)]) === projectionFingerprint(previous))
+  }
+  if (nodes.length !== previous.length) return false
+  return nodes.some((node, index) => {
+    const prior = previous[index]
+    if (!prior || node.type !== prior.type) return false
+    if (!node.content || !prior.content) return false
+    if (!isSingleTransientEmptyInsertion(node.content, prior.content)) return false
+    return projectionFingerprint([...nodes.slice(0, index), prior, ...nodes.slice(index + 1)])
+      === projectionFingerprint(previous)
+  })
+}
+
+function isSingleTransientEmptyReplacement(nodes: JSONContent[], previous: JSONContent[]): boolean {
+  if (nodes.length !== previous.length) return false
+  return nodes.some((node, index) => isTransientEmptyTextBlock(node)
+    && isTransientEmptyTextBlock(previous[index]!)
+    && projectionFingerprint([...nodes.slice(0, index), ...nodes.slice(index + 1)])
+      === projectionFingerprint([...previous.slice(0, index), ...previous.slice(index + 1)]))
+}
+
+function withoutFirstTransientEmptyNode(nodes: JSONContent[]): JSONContent[] | undefined {
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]!
+    if (isTransientEmptyNode(node)) return [...nodes.slice(0, index), ...nodes.slice(index + 1)]
+    if (!node.content) continue
+    const content = withoutFirstTransientEmptyNode(node.content)
+    if (content) return nodes.map((candidate, candidateIndex) => candidateIndex === index ? { ...candidate, content } : candidate)
+  }
+  return undefined
 }
 
 function normaliseEol(value: string, envelope: RawDocEnvelope): string {
@@ -434,6 +492,18 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       : incomingNodes
     const hasUserTrailingEmpty = isUserTrailingEmptyParagraph(candidateNodes[candidateNodes.length - 1])
     let restoreTransient: (() => void) | undefined
+    const retryWithoutTransientEmpty = (): SessionUpdate | undefined => {
+      if (hasUserTrailingEmpty && !userTrailingEmpty) return undefined
+      const content = withoutFirstTransientEmptyNode(candidateNodes)
+      if (!content) return undefined
+      const retried = applyVisual({ ...next, doc: { ...next.doc, content } }, approvedIds)
+      if (!retried.ok) return undefined
+      state = {
+        ...state,
+        visual: { ...state.visual, doc: { ...next.doc, content: clone(candidateNodes) } },
+      }
+      return success(retried.changedRange)
+    }
     const expected = new Map(state.units.flatMap((unit) => unit.protectedFragments.map((fragment) => [fragment.id, fragment.raw] as const)))
     const found = collectProtected(candidateNodes)
     for (const [id, raw] of expected) {
@@ -445,6 +515,16 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     }
     for (const id of found.keys()) {
       if (!expected.has(id)) return { ok: false, view: currentView(), error: `Unknown protected source fragment ${id}` }
+    }
+
+    const previousNodes = withoutGeneratedTrailingParagraph(state.visual.doc.content ?? [])
+    if (!userTrailingEmpty && !frontmatterChanged && (isSingleTransientEmptyInsertion(candidateNodes, previousNodes)
+      || isSingleTransientEmptyReplacement(candidateNodes, previousNodes))) {
+      state = {
+        ...state,
+        visual: { ...state.visual, doc: { ...next.doc, content: clone(candidateNodes) } },
+      }
+      return success()
     }
 
     if (userTrailingEmpty && !hasUserTrailingEmpty) {
@@ -554,6 +634,8 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       }
     } catch (error) {
       restoreTransient?.()
+      const retried = retryWithoutTransientEmpty()
+      if (retried) return retried
       return { ok: false, view: currentView(), error: error instanceof Error ? error.message : String(error) }
     }
 
@@ -580,17 +662,28 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     if (nextSource === state.source) {
       if (projectionFingerprint(candidateNodes) === projectionFingerprint(state.visual.doc.content ?? [])) return success()
       restoreTransient?.()
+      const retried = retryWithoutTransientEmpty()
+      if (retried) return retried
       return { ok: false, view: currentView(), error: 'Visual projection cannot be represented by a safe source rewrite' }
     }
     const projected = createState(nextSource, codec)
     const projectedNodes = projected.visual.doc.content ?? []
+    const editableEmptyBaseline = candidateNodes.length === 1
+      && isTransientEmptyTextBlock(candidateNodes[0]!)
+      && projectedNodes.length === 0
     const sameProjection = projectionFingerprint(candidateNodes) === projectionFingerprint(projectedNodes)
+      || editableEmptyBaseline
+      || (topLevelEmptyParagraphCount(candidateNodes) < topLevelEmptyParagraphCount(state.visual.doc.content ?? [])
+        && projectionFingerprint(withoutTopLevelEmptyParagraphs(candidateNodes))
+          === projectionFingerprint(withoutTopLevelEmptyParagraphs(projectedNodes)))
       || (approvedIds.size > 0 && projectionFingerprint(withoutEmptyParagraphs(candidateNodes)) === projectionFingerprint(withoutEmptyParagraphs(projectedNodes)))
     const projectedWithoutUserEmpty = hasUserTrailingEmpty ? candidateNodes.slice(0, -1) : candidateNodes
     const userEmptyProjection = hasUserTrailingEmpty
       && projectionFingerprint(projectedWithoutUserEmpty) === projectionFingerprint(projectedNodes)
     if (projected.fallbackReason || (!sameProjection && !userEmptyProjection)) {
       restoreTransient?.()
+      const retried = retryWithoutTransientEmpty()
+      if (retried) return retried
       return { ok: false, view: currentView(), error: 'Visual projection cannot be represented by a safe source rewrite' }
     }
     if (hasUserTrailingEmpty) {
