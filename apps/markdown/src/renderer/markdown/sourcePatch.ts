@@ -26,13 +26,19 @@ export interface SourceReadBlock {
   protected: ReadonlyArray<{ id: string, reason: string, raw: string }>
 }
 
+/** One async visual mutation's lifetime, revoked permanently by a mode/session transition. */
+export interface VisualOperationLease {
+  isCurrent(): boolean
+  release(): void
+}
+
 /** The only bridge used by AI/UI adapters for protected-source mutations. */
 export interface SourceProtectionAccess {
   mode(): 'visual' | 'source'
   /** True only while the session/editor pair that began an async tool is still visual. */
   isCurrent?(): boolean
-  /** Register a UI-only draft that must be removed before this session is replaced or leaves visual mode. */
-  registerProvisionalDraft?(cleanup: () => void): () => void
+  /** Register an async visual operation, optionally with a UI-only draft to clear on revocation. */
+  registerVisualOperation?(cleanup?: () => void): VisualOperationLease
   /** Complete session source, including BOM/frontmatter/original EOL bytes. */
   source(): string
   /** Current source-backed body blocks, indexed exactly as read_blocks exposes them. */

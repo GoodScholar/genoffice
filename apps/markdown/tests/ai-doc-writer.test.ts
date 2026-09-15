@@ -233,15 +233,19 @@ describe('write_document tool', () => {
     let release: (() => void) | undefined
     const wait = new Promise<void>((resolve) => { release = resolve })
     let visual = true
-    const cleanups = new Set<() => void>()
+    const operations = new Set<{ active: boolean, cleanup?: () => void }>()
     const access = {
       mode: () => visual ? 'visual' as const : 'source' as const,
       isCurrent: () => visual,
-      registerProvisionalDraft: (cleanup: () => void) => {
-        cleanups.add(cleanup)
-        return () => cleanups.delete(cleanup)
+      registerVisualOperation: (cleanup?: () => void) => {
+        const operation = { active: true, cleanup }
+        operations.add(operation)
+        return {
+          isCurrent: () => operation.active,
+          release: () => operations.delete(operation),
+        }
       },
-    } as SourceProtectionAccess & { registerProvisionalDraft(cleanup: () => void): () => void }
+    } as SourceProtectionAccess
     const writer: AiDocWriter = { write: async (_spec, onProgress) => {
       onProgress('Draft preview.')
       await wait
@@ -250,7 +254,10 @@ describe('write_document tool', () => {
     const pending = executeTool(editor, { id: 't', name: 'write_document', input: { plan: 'p', afterIndex: 0 } }, undefined, undefined, writer, access) as Promise<{ isError?: boolean, mutated?: boolean }>
     await tick()
     visual = false
-    for (const cleanup of cleanups) cleanup()
+    for (const operation of operations) {
+      operation.active = false
+      operation.cleanup?.()
+    }
     const sourceEntry = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
     expect(undoDepth(editor.state)).toBe(historyDepth)
     expect(session.enterSource()).toMatchObject({ ok: true })
@@ -260,6 +267,60 @@ describe('write_document tool', () => {
     expect(sourceEntry).toMatchObject({ ok: true })
     await expect(pending).resolves.toMatchObject({ isError: true, mutated: false })
     expect(session.serialize()).toBe('User source edit\n')
+  })
+
+  it('does not revive a cancelled writer after a source-mode round trip', async () => {
+    const editor = createEditor('Old')
+    const session = createMarkdownDocumentSession('Old\n', createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+    let visual = true
+    const operations = new Set<{ active: boolean, cleanup?: () => void }>()
+    editor.on('update', ({ editor: updated, transaction }) => {
+      if (!transaction.getMeta('uiOnly') && visual && session.view().mode === 'visual') {
+        session.applyVisual({ doc: updated.getJSON(), frontmatterInner: session.view().visual.frontmatterInner })
+      }
+    })
+    let release: (() => void) | undefined
+    const wait = new Promise<void>((resolve) => { release = resolve })
+    const access = {
+      mode: () => visual ? 'visual' as const : 'source' as const,
+      isCurrent: () => visual,
+      registerVisualOperation: (cleanup?: () => void) => {
+        const operation = { active: true, cleanup }
+        operations.add(operation)
+        return {
+          isCurrent: () => operation.active,
+          release: () => operations.delete(operation),
+        }
+      },
+    } as SourceProtectionAccess
+    const writer: AiDocWriter = { write: async (_spec, onProgress) => {
+      onProgress('Draft preview.')
+      await wait
+      return { ok: true, markdown: 'Writer output.' }
+    } }
+    const pending = executeTool(editor, { id: 't', name: 'write_document', input: { plan: 'p', afterIndex: 0 } }, undefined, undefined, writer, access) as Promise<{ isError?: boolean, mutated?: boolean }>
+
+    await tick()
+    visual = false
+    for (const operation of operations) {
+      operation.active = false
+      operation.cleanup?.()
+    }
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.enterSource()).toMatchObject({ ok: true })
+    expect(session.applySource('User source\n')).toMatchObject({ ok: true })
+    const returned = session.enterVisual()
+    expect(returned).toMatchObject({ ok: true })
+    replaceEditorBaseline(editor, returned.view.visual.doc)
+    visual = true
+    const historyDepth = undoDepth(editor.state)
+    release?.()
+
+    await expect(pending).resolves.toMatchObject({ isError: true, mutated: false })
+    expect(texts(editor)).toEqual(['User source'])
+    expect(session.serialize()).toBe('User source\n')
+    expect(undoDepth(editor.state)).toBe(historyDepth)
   })
 
   it('a discarded write leaves the document unchanged', async () => {

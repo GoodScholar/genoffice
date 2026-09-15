@@ -14,7 +14,7 @@ import {
   type MdOp,
 } from '../editor/ops'
 import { protectedIdsForOps } from '../editor/ops'
-import type { SourceProtectionAccess } from '../markdown/sourcePatch'
+import type { SourceProtectionAccess, VisualOperationLease } from '../markdown/sourcePatch'
 import { t } from '../i18n/locale'
 import {
   DraftLanding,
@@ -280,8 +280,8 @@ function fail(output: string, summary: string): ToolExecution {
   return { output, isError: true, summary }
 }
 
-function visualWriteIsCurrent(protection?: SourceProtectionAccess): boolean {
-  return protection?.mode() !== 'source' && protection?.isCurrent?.() !== false
+function visualWriteIsCurrent(protection?: SourceProtectionAccess, lease?: VisualOperationLease): boolean {
+  return lease?.isCurrent() !== false && protection?.mode() !== 'source' && protection?.isCurrent?.() !== false
 }
 
 function clampIndex(value: unknown, max: number): number | null {
@@ -347,28 +347,49 @@ async function insertImageFromUrl(
   signal: AbortSignal | undefined,
   labels: { fail: string; done: string },
   protection?: SourceProtectionAccess,
+  leased?: VisualOperationLease,
 ): Promise<ToolExecution> {
-  const fetched = await window.markdownApi.fetchImage(url)
+  const lease = leased ?? protection?.registerVisualOperation?.()
+  const release = () => {
+    if (!leased) lease?.release()
+  }
+  const finish = (result: ToolExecution) => {
+    release()
+    return result
+  }
+  let fetched: Awaited<ReturnType<typeof window.markdownApi.fetchImage>>
+  try {
+    fetched = await window.markdownApi.fetchImage(url)
+  } catch (error) {
+    release()
+    throw error
+  }
   // never write after the user hit stop (the download may resolve long after the abort)
-  if (signal?.aborted) return fail('stopped by the user; the image was not inserted', labels.fail)
-  if (!fetched) return fail('download failed (the image may not be accessible)', labels.fail)
+  if (signal?.aborted) return finish(fail('stopped by the user; the image was not inserted', labels.fail))
+  if (!fetched) return finish(fail('download failed (the image may not be accessible)', labels.fail))
   const ext = sniffImageExt(fetched.base64)
   if (!ext) {
-    return fail(
+    return finish(fail(
       'unsupported image format (only png/jpg/gif can be embedded) — pick a different image',
       labels.fail,
-    )
+    ))
   }
-  const rel = await window.markdownApi.saveImage({ base64: fetched.base64, ext })
-  if (signal?.aborted) return fail('stopped by the user; the image was not inserted', labels.fail)
+  let rel: Awaited<ReturnType<typeof window.markdownApi.saveImage>>
+  try {
+    rel = await window.markdownApi.saveImage({ base64: fetched.base64, ext })
+  } catch (error) {
+    release()
+    throw error
+  }
+  if (signal?.aborted) return finish(fail('stopped by the user; the image was not inserted', labels.fail))
   if (!rel) {
-    return fail(
+    return finish(fail(
       'the document has no saved location yet, so there is nowhere to store the image file — ask the user to save the document first, then retry',
       labels.fail,
-    )
+    ))
   }
-  if (!visualWriteIsCurrent(protection)) {
-    return { ...fail('the document is no longer active in visual mode; the image was not inserted', labels.fail), mutated: false }
+  if (!visualWriteIsCurrent(protection, lease)) {
+    return finish({ ...fail('the document is no longer active in visual mode; the image was not inserted', labels.fail), mutated: false })
   }
   // downloads can take long: user edits made meanwhile must keep the freshness
   // baseline stale, so only our own insertion may mark the doc seen
@@ -384,13 +405,13 @@ async function insertImageFromUrl(
     source: 'ai',
   })
   const res = r.results[0]!
-  if (!res.ok) return fail(res.error, labels.fail)
+  if (!res.ok) return finish(fail(res.error, labels.fail))
   if (!userEditedDuringFetch) markDocSeen(editor)
-  return {
+  return finish({
     output: `Inserted the image (saved as ${rel}). ${INDEX_CHANGE_NOTICE}`,
     mutated: true,
     summary: labels.done,
-  }
+  })
 }
 
 async function writeDocument(
@@ -428,30 +449,36 @@ async function writeDocument(
   }
   const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v))
   const draft = new DraftLanding(editor, position)
-  const unregisterDraft = protection?.registerProvisionalDraft?.(() => draft.finish())
+  const lease = protection?.registerVisualOperation?.(() => draft.finish())
+  const finish = (value: ToolExecution) => {
+    lease?.release()
+    return value
+  }
   let result: DocWriteResult
   let rendered: string | null
   try {
     result = await writer.write(
       { plan, title: str(call.input.title), context: str(call.input.context) },
       (markdown) => {
-        if (visualWriteIsCurrent(protection)) draft.update(markdown)
+        if (visualWriteIsCurrent(protection, lease)) draft.update(markdown)
       },
       signal,
     )
+  } catch (error) {
+    lease?.release()
+    throw error
   } finally {
     rendered = draft.finish()
-    unregisterDraft?.()
   }
-  if (editor.isDestroyed) return fail('the document was closed', label)
-  if (!visualWriteIsCurrent(protection)) {
-    return { ...fail('the document is no longer active in visual mode; the draft was not committed', label), mutated: false }
+  if (editor.isDestroyed) return finish(fail('the document was closed', label))
+  if (!visualWriteIsCurrent(protection, lease)) {
+    return finish({ ...fail('the document is no longer active in visual mode; the draft was not committed', label), mutated: false })
   }
   if (!result.ok || !result.markdown?.trim()) {
-    return fail(
+    return finish(fail(
       `The writer produced nothing (${result.error ?? 'no output'}); the document is unchanged. Tell the user briefly and offer to try again.`,
       t('aiToolWriteDocFailed'),
-    )
+    ))
   }
   // a kept partial whose tail no longer parses lands what the user saw rendered
   let parses: boolean
@@ -475,16 +502,16 @@ async function writeDocument(
       : { op: 'insertContent', after: draft.indexBefore(), markdown }
   const r = runOps(editor, [op], { source: 'ai' })
   const res = r.results[0]!
-  if (!res.ok) return fail(res.error, t('aiToolWriteDocFailed'))
+  if (!res.ok) return finish(fail(res.error, t('aiToolWriteDocFailed')))
   markDocSeen(editor)
   const note = result.truncated
     ? ' The stream ended early, so the content is INCOMPLETE (the user chose to keep it): the tail is missing. Say so and offer to finish the missing sections with write_document (afterIndex at the end) or apply_ops insertContent.'
     : ''
-  return {
+  return finish({
     output: `Content written by the system (${result.markdown.length} chars). ${res.message} ${INDEX_CHANGE_NOTICE}${note}\nReply with one or two sentences describing what was written; do not paste the content.`,
     mutated: true,
     summary: result.truncated ? t('aiToolWriteDocPartial') : label,
-  }
+  })
 }
 
 export function executeTool(
@@ -620,6 +647,7 @@ export function executeTool(
       const prompt = String(call.input.prompt ?? '').trim()
       if (!prompt) return fail('prompt must not be empty', t('aiToolGenImage'))
       const aspectRatio = String(call.input.aspectRatio ?? '').trim()
+      const lease = protection?.registerVisualOperation?.()
       return window.markdownApi
         .aiGenerateImage({ prompt, ...(aspectRatio ? { aspectRatio } : {}) })
         .then((generated): ToolExecution | Promise<ToolExecution> => {
@@ -632,8 +660,9 @@ export function executeTool(
           return insertImageFromUrl(editor, generated.url, call.input, signal, {
             fail: t('aiToolGenImage'),
             done: t('aiToolGenImageDone'),
-          }, protection)
+          }, protection, lease)
         })
+        .finally(() => lease?.release())
     }
 
     default:

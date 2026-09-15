@@ -367,7 +367,7 @@ export default function App() {
   const savingRef = useRef(false)
   const envelopeRef = useRef<DocEnvelope>(EMPTY_ENVELOPE)
   const sessionRef = useRef<MarkdownDocumentSession | null>(null)
-  const provisionalDraftsRef = useRef(new Set<() => void>())
+  const provisionalDraftsRef = useRef(new Set<{ active: boolean, cleanup?: () => void }>())
   const syncingProjectionRef = useRef(false)
   const editorModeRef = useRef<'visual' | 'source'>('visual')
   const sourceModeStartRef = useRef<SourceModeSnapshot | null>(null)
@@ -403,7 +403,10 @@ export default function App() {
   }, [])
 
   const clearProvisionalDrafts = useCallback(() => {
-    for (const cleanup of provisionalDraftsRef.current) cleanup()
+    for (const draft of provisionalDraftsRef.current) {
+      draft.active = false
+      draft.cleanup?.()
+    }
     provisionalDraftsRef.current.clear()
   }, [])
 
@@ -1031,9 +1034,16 @@ export default function App() {
         mode: () => session.view().mode,
         isCurrent: () => sessionRef.current === session && editorModeRef.current === 'visual'
           && session.view().mode === 'visual' && !editorRef.current?.isDestroyed,
-        registerProvisionalDraft: (cleanup) => {
-          provisionalDraftsRef.current.add(cleanup)
-          return () => provisionalDraftsRef.current.delete(cleanup)
+        registerVisualOperation: (cleanup) => {
+          const operation = { active: true, cleanup }
+          provisionalDraftsRef.current.add(operation)
+          return {
+            isCurrent: () => operation.active && sessionRef.current === session,
+            release: () => {
+              operation.active = false
+              provisionalDraftsRef.current.delete(operation)
+            },
+          }
         },
         source: () => session.serialize(),
         sourceBlocks: () => session.sourceBlocks(),

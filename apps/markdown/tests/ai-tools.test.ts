@@ -644,6 +644,33 @@ describe('insert_image', () => {
     await expect(pending).resolves.toMatchObject({ isError: true, mutated: false })
     expect(editor.getMarkdown()).not.toContain('assets/pic.png')
   })
+
+  it('does not revive an image request after a source-mode round trip', async () => {
+    let release: ((value: { base64: string, mime: string }) => void) | undefined
+    const download = new Promise<{ base64: string, mime: string }>((resolve) => { release = resolve })
+    withApi({ fetchImage: () => download, saveImage: async () => 'assets/pic.png' })
+    const editor = createEditor('# User source')
+    let visual = true
+    let revoke: (() => void) | undefined
+    const access = sourceAccess({
+      isCurrent: () => visual,
+      registerVisualOperation: () => {
+        let active = true
+        revoke = () => { active = false }
+        return { isCurrent: () => active, release: () => { active = false } }
+      },
+    })
+    const pending = executeTool(editor, call('insert_image', { url: 'https://example.com/x.png' }), undefined, undefined, undefined, access) as Promise<{ isError?: boolean, mutated?: boolean }>
+
+    visual = false
+    revoke?.()
+    visual = true
+    release?.({ base64: PNG, mime: 'image/png' })
+
+    await expect(pending).resolves.toMatchObject({ isError: true, mutated: false })
+    expect(editor.getMarkdown()).toContain('# User source')
+    expect(editor.getMarkdown()).not.toContain('assets/pic.png')
+  })
 })
 
 describe('blank/selection edge cases (Bugbot #871)', () => {
