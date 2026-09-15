@@ -160,7 +160,7 @@ export function createTiptapMarkdownCodec(editor: Editor): MarkdownCodec {
   if (!markdown) throw new Error('TipTap Markdown extension is required for source projection')
   return {
     lex: (source) => markdown.instance.lexer(source) as SourceToken[],
-    parse: (source) => markdown.parse(source),
+    parse: (source) => editor.schema.nodeFromJSON(markdown.parse(source)).toJSON(),
     serialize: (doc) => markdown.serialize(doc),
   }
 }
