@@ -210,21 +210,25 @@ button {
   display: block;
   width: 100%;
   min-height: calc(100vh - 220px);
-  resize: vertical;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 12px;
   background: var(--surface);
   color: var(--text-primary);
-  font-family: 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 14px;
-  line-height: 1.55;
+}
+
+.source-editor .cm-editor {
+  min-height: calc(100vh - 220px);
   tab-size: 2;
 }
 
-.source-editor:focus-visible {
+.source-editor .cm-content {
+  padding: 12px;
+}
+
+.source-editor .cm-editor.cm-focused {
   outline: 2px solid var(--md-focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
 .protected-source {

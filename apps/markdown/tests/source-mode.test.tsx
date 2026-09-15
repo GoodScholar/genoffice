@@ -1,6 +1,8 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { undoDepth as cmUndoDepth } from '@codemirror/commands'
+import { EditorView } from '@codemirror/view'
 import { Editor } from '@tiptap/core'
 import { redo, undo, undoDepth } from '@tiptap/pm/history'
 import {
@@ -33,15 +35,30 @@ afterEach(() => {
   }
 })
 
-function renderSourceEditor(props: React.ComponentProps<typeof SourceEditor>): HTMLTextAreaElement {
+function mountSourceEditor(props: React.ComponentProps<typeof SourceEditor>) {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
   roots.push({ root, host })
   act(() => root.render(<SourceEditor {...props} />))
-  const textarea = host.querySelector('textarea')
-  if (!textarea) throw new Error('SourceEditor did not render a textarea')
-  return textarea
+  const editor = host.querySelector<HTMLElement>('.cm-editor')
+  if (!editor) throw new Error('SourceEditor did not render a CodeMirror editor')
+  return {
+    editor,
+    render(next: React.ComponentProps<typeof SourceEditor>) {
+      act(() => root.render(<SourceEditor {...next} />))
+    },
+  }
+}
+
+function renderSourceEditor(props: React.ComponentProps<typeof SourceEditor>): HTMLElement {
+  return mountSourceEditor(props).editor
+}
+
+function sourceView(editor: HTMLElement): EditorView {
+  const view = EditorView.findFromDOM(editor)
+  if (!view) throw new Error('SourceEditor did not expose a CodeMirror view')
+  return view
 }
 
 function renderComponent(element: React.ReactElement): HTMLElement {
@@ -54,70 +71,118 @@ function renderComponent(element: React.ReactElement): HTMLElement {
 }
 
 describe('SourceEditor', () => {
+  it('renders a Markdown CodeMirror editor with source-editing extensions', () => {
+    const editor = renderSourceEditor({
+      value: '# Heading\n\nText',
+      onChange: () => {},
+      onExit: () => {},
+    })
+
+    expect(editor.querySelector('[contenteditable="true"]')).not.toBeNull()
+    expect(editor.querySelector('.cm-gutters')).not.toBeNull()
+    expect(editor.querySelector('.cm-lineNumbers')).not.toBeNull()
+    expect(editor.querySelector('.cm-foldGutter')).not.toBeNull()
+    expect(editor.querySelector('.cm-activeLine')).not.toBeNull()
+    expect([...editor.querySelectorAll('.cm-line')].map((line) => line.textContent).join('\n')).toBe('# Heading\n\nText')
+  })
+
   it('focuses and selects the supplied source range after mount', () => {
-    const textarea = renderSourceEditor({
+    const editor = renderSourceEditor({
       value: '\uFEFFfirst\r\nsecond',
       selection: { from: 1, to: 6 },
       onChange: () => {},
       onExit: () => {},
     })
 
-    expect(document.activeElement).toBe(textarea)
-    expect(textarea.selectionStart).toBe(1)
-    expect(textarea.selectionEnd).toBe(6)
+    expect(document.activeElement).toBe(editor.querySelector('[contenteditable="true"]'))
+    expect(document.getSelection()?.toString()).toBe('first')
   })
 
-  it('maps a CRLF source range to the textarea selection offsets', () => {
+  it('maps a CRLF source range to the normalized CodeMirror selection offsets', () => {
     const source = '\uFEFFfirst\r\nsecond'
-    const textarea = renderSourceEditor({
+    renderSourceEditor({
       value: source,
       selection: { from: source.indexOf('second'), to: source.length },
       onChange: () => {},
       onExit: () => {},
     })
 
-    expect(textarea.value.slice(textarea.selectionStart, textarea.selectionEnd)).toBe('second')
+    expect(document.getSelection()?.toString()).toBe('second')
   })
 
-  it('returns BOM and CRLF source text unchanged', () => {
-    const onChange = vi.fn()
-    const source = '\uFEFFone\r\ntwo\r\n'
-    const textarea = renderSourceEditor({
-      value: source,
-      onChange,
-      onExit: () => {},
-    })
-    const edited = `${source}three`
+  it('does not intercept Cmd or Ctrl+S', () => {
+    const editor = renderSourceEditor({ value: 'text', onChange: () => {}, onExit: () => {} })
+    const content = editor.querySelector<HTMLElement>('[contenteditable="true"]')!
 
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, edited)
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-
-    expect(onChange).toHaveBeenCalledWith(edited)
+    for (const options of [{ metaKey: true }, { ctrlKey: true }]) {
+      const event = new KeyboardEvent('keydown', { key: 's', bubbles: true, cancelable: true, ...options })
+      content.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(false)
+    }
   })
 
-  it('preserves untouched mixed line endings when editing the final character', () => {
-    const onChange = vi.fn()
-    const source = 'a\r\nb\nc'
-    const textarea = renderSourceEditor({ value: source, onChange, onExit: () => {} })
+  it('leaves Escape available to return to visual mode', () => {
+    const onExit = vi.fn()
+    const editor = renderSourceEditor({ value: 'text', onChange: () => {}, onExit })
+    const content = editor.querySelector<HTMLElement>('[contenteditable="true"]')!
 
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'a\nb\nc!')
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-    })
+    act(() => content.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+
+    expect(onExit).toHaveBeenCalledOnce()
+  })
+
+  it('writes a CRLF source edit without losing the BOM or untouched line endings', () => {
+    const onChange = vi.fn()
+    const editor = renderSourceEditor({ value: '\uFEFFone\r\ntwo\r\n', onChange, onExit: () => {} })
+    const view = sourceView(editor)
+
+    act(() => view.dispatch({ changes: { from: view.state.doc.length, insert: 'three' } }))
+
+    expect(onChange).toHaveBeenCalledWith('\uFEFFone\r\ntwo\r\nthree')
+  })
+
+  it('preserves untouched mixed line endings when a CodeMirror transaction changes the final character', () => {
+    const onChange = vi.fn()
+    const editor = renderSourceEditor({ value: 'a\r\nb\nc', onChange, onExit: () => {} })
+    const view = sourceView(editor)
+
+    act(() => view.dispatch({ changes: { from: view.state.doc.length, insert: '!' } }))
 
     expect(onChange).toHaveBeenCalledWith('a\r\nb\nc!')
   })
 
-  it('does not intercept Cmd or Ctrl+S', () => {
-    const textarea = renderSourceEditor({ value: 'text', onChange: () => {}, onExit: () => {} })
+  it('keeps external source replacement out of the local CodeMirror history and callbacks', () => {
+    const onChange = vi.fn()
+    const initial = { value: 'before', onChange, onExit: () => {} }
+    const mounted = mountSourceEditor(initial)
+    const view = sourceView(mounted.editor)
 
-    for (const options of [{ metaKey: true }, { ctrlKey: true }]) {
-      const event = new KeyboardEvent('keydown', { key: 's', bubbles: true, cancelable: true, ...options })
-      textarea.dispatchEvent(event)
-      expect(event.defaultPrevented).toBe(false)
-    }
+    mounted.render({ ...initial, value: '\uFEFFafter\r\nsource' })
+
+    expect(view.state.doc.toString()).toBe('\uFEFFafter\nsource')
+    expect(onChange).not.toHaveBeenCalled()
+    expect(cmUndoDepth(view.state)).toBe(0)
+  })
+
+  it('uses CodeMirror history for source edits', () => {
+    const onChange = vi.fn()
+    const editor = renderSourceEditor({ value: 'before', onChange, onExit: () => {} })
+    const view = sourceView(editor)
+    act(() => view.dispatch({ changes: { from: view.state.doc.length, insert: '!' } }))
+
+    const content = editor.querySelector<HTMLElement>('[contenteditable="true"]')!
+    const event = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })
+    act(() => content.dispatchEvent(event))
+
+    expect(view.state.doc.toString()).toBe('before')
+    expect(onChange).toHaveBeenLastCalledWith('before')
+
+    act(() => content.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'y', ctrlKey: true, bubbles: true, cancelable: true,
+    })))
+
+    expect(view.state.doc.toString()).toBe('before!')
+    expect(onChange).toHaveBeenLastCalledWith('before!')
   })
 })
 
