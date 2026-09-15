@@ -1181,8 +1181,8 @@ export default function App() {
               focusRequest={findFocus}
             />
           )}
-          <div className="editor-scroll" ref={scrollRef}>
-            <div className="doc-page" style={{ zoom: zoom / 100 }}>
+          <div className={`editor-scroll${sourceMode ? ' source-mode-scroll' : ''}`} ref={scrollRef}>
+            <div className={`doc-page${sourceMode ? ' source-mode-page' : ''}`} style={{ zoom: zoom / 100 }}>
               {sourceMode ? (
                 <>
                   {sourceModeError && <div className="source-mode-error" role="alert">{t('sourceModeError')}: {sourceModeError}</div>}
