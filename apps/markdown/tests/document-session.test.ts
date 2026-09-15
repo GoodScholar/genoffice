@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Editor, type JSONContent } from '@tiptap/core'
 import { buildExtensions } from '../src/renderer/editor/extensions'
-import { replaceEditorBaseline } from '../src/renderer/App'
+import { applyProjectionProvenance, replaceEditorBaseline } from '../src/renderer/App'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
 import { createTiptapMarkdownCodec, type MarkdownCodec, type VisualProjection } from '../src/renderer/markdown/sourceProjection'
 import {
@@ -344,6 +344,28 @@ describe('MarkdownDocumentSession', () => {
     editor.commands.insertContentAt(editor.state.doc.content.size - 1, 'User text')
     expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
     expect(session.serialize()).toContain('User text')
+  })
+
+  it('keeps visual mode when Enter creates an empty paragraph after typed text', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
+    editors.push(editor)
+    const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+    editor.commands.insertContent('a')
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    applyProjectionProvenance(editor, session.view().visual.doc)
+
+    editor.commands.splitBlock()
+    const update = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+
+    expect(update).toMatchObject({ ok: true, view: { mode: 'visual' } })
+    expect(session.serialize()).toBe('a\n\n\n\n')
   })
 
   it.each([

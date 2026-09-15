@@ -70,11 +70,16 @@ export const UserTrailingEmptyParagraph = Extension.create({
             && last?.attrs.sourceId === null
           )
             return
+          const inheritedSourceId = previousTail !== null
+            && last !== null
+            && state.doc.childCount === oldState.doc.childCount + 1
+            && last.attrs.sourceId === previousTail.attrs.sourceId
+            && !last.eq(previousTail)
           if (
             !last ||
             last.type.name !== 'paragraph' ||
             last.content.size !== 0 ||
-            last.attrs.sourceId !== null
+            (last.attrs.sourceId !== null && !inheritedSourceId)
           )
             return
           const position = state.doc.content.size - last.nodeSize
