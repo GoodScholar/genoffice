@@ -101,18 +101,19 @@ describe('source patch confirmation', () => {
   })
 
   it('confirms through one trusted projection transaction and restores source on undo/redo', () => {
-    let session: ReturnType<typeof createMarkdownDocumentSession> | undefined
+    const sessionRef: { current?: ReturnType<typeof createMarkdownDocumentSession> } = {}
     const editor = new Editor({
       element: document.createElement('div'),
       extensions: buildExtensions({
         slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
         slashItems: () => [],
-        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange() {}, getCurrentSource: () => session?.serialize() },
+        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange() {}, getCurrentSource: () => sessionRef.current?.serialize() },
       }),
       content: '',
     })
     editors.push(editor)
-    session = createMarkdownDocumentSession('<details>old</details>\n\nSafe\n', createTiptapMarkdownCodec(editor))
+    const session = createMarkdownDocumentSession('<details>old</details>\n\nSafe\n', createTiptapMarkdownCodec(editor))
+    sessionRef.current = session
     replaceEditorBaseline(editor, session.view().visual.doc)
     editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
     const fragment = session.view().protectedFragments[0]!
@@ -127,18 +128,19 @@ describe('source patch confirmation', () => {
   })
 
   it('rejects a visual proposal while either the App or session remains in source mode, then accepts it after visual return', () => {
-    let session: ReturnType<typeof createMarkdownDocumentSession> | undefined
+    const sessionRef: { current?: ReturnType<typeof createMarkdownDocumentSession> } = {}
     const editor = new Editor({
       element: document.createElement('div'),
       extensions: buildExtensions({
         slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
         slashItems: () => [],
-        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange() {}, getCurrentSource: () => session?.serialize() },
+        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange() {}, getCurrentSource: () => sessionRef.current?.serialize() },
       }),
       content: '',
     })
     editors.push(editor)
-    session = createMarkdownDocumentSession('<details>old</details>\n\nSafe\n', createTiptapMarkdownCodec(editor))
+    const session = createMarkdownDocumentSession('<details>old</details>\n\nSafe\n', createTiptapMarkdownCodec(editor))
+    sessionRef.current = session
     replaceEditorBaseline(editor, session.view().visual.doc)
     editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
     const fragment = session.view().protectedFragments[0]!

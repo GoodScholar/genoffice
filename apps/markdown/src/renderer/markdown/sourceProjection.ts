@@ -45,16 +45,23 @@ function protectedBlock(id: string, raw: string, reason: ProtectedReason): JSONC
 }
 
 function stableFingerprint(value: JSONContent[]): string {
-  const withoutSourceIds = (current: unknown): unknown => {
-    if (Array.isArray(current)) return current.map(withoutSourceIds)
+  const withoutSourceIds = (current: unknown, topLevel = false): unknown => {
+    if (Array.isArray(current)) return current.map((child) => withoutSourceIds(child, topLevel))
     if (!current || typeof current !== 'object') return current
-    return Object.fromEntries(
-      Object.entries(current as Record<string, unknown>)
+    const record = current as Record<string, unknown>
+    const result = Object.fromEntries(
+      Object.entries(record)
         .filter(([key]) => key !== 'sourceId')
         .map(([key, child]) => [key, withoutSourceIds(child)]),
-    )
+    ) as Record<string, unknown>
+    const sourceId = record.attrs && typeof record.attrs === 'object'
+      ? (record.attrs as Record<string, unknown>).sourceId
+      : undefined
+    if (topLevel && result.type === 'paragraph' && sourceId != null
+      && Array.isArray(result.content) && result.content.length === 0) delete result.content
+    return result
   }
-  return JSON.stringify(withoutSourceIds(value))
+  return JSON.stringify(value.map((node) => withoutSourceIds(node, true)))
 }
 
 function markerCharacter(excluded: string): string {

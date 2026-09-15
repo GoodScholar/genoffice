@@ -428,6 +428,7 @@ async function writeDocument(
   }
   const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v))
   const draft = new DraftLanding(editor, position)
+  const unregisterDraft = protection?.registerProvisionalDraft?.(() => draft.finish())
   let result: DocWriteResult
   let rendered: string | null
   try {
@@ -440,6 +441,7 @@ async function writeDocument(
     )
   } finally {
     rendered = draft.finish()
+    unregisterDraft?.()
   }
   if (editor.isDestroyed) return fail('the document was closed', label)
   if (!visualWriteIsCurrent(protection)) {

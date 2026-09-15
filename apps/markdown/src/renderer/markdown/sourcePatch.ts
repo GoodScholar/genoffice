@@ -31,6 +31,8 @@ export interface SourceProtectionAccess {
   mode(): 'visual' | 'source'
   /** True only while the session/editor pair that began an async tool is still visual. */
   isCurrent?(): boolean
+  /** Register a UI-only draft that must be removed before this session is replaced or leaves visual mode. */
+  registerProvisionalDraft?(cleanup: () => void): () => void
   /** Complete session source, including BOM/frontmatter/original EOL bytes. */
   source(): string
   /** Current source-backed body blocks, indexed exactly as read_blocks exposes them. */

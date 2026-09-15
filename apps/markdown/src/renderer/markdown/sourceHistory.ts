@@ -48,7 +48,7 @@ export function sourceSnapshotFromTransaction(transaction: Transaction): string 
   return sourceSnapshotPairFromTransaction(transaction)?.source
 }
 
-/** 返回 transaction 中源码快照的双端值，供受保护事务校验精确的历史转换。 */
+/** Return both source snapshot endpoints for exact protected history transition checks. */
 export function sourceSnapshotPairFromTransaction(transaction: Transaction): { beforeSource: string, source: string } | undefined {
   let beforeSource: string | undefined
   let source: string | undefined

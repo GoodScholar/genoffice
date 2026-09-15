@@ -89,22 +89,34 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
+/** TipTap omits `content: []` only for source-bound top-level empty paragraphs. */
+function normaliseSourceBoundEmptyParagraph(record: Record<string, unknown>, result: Record<string, unknown>, topLevel: boolean): void {
+  const sourceId = record.attrs && typeof record.attrs === 'object'
+    ? (record.attrs as Record<string, unknown>).sourceId
+    : undefined
+  if (topLevel && result.type === 'paragraph' && sourceId != null
+    && Array.isArray(result.content) && result.content.length === 0) delete result.content
+}
+
 function fingerprint(nodes: JSONContent[]): string {
-  const withoutSourceIds = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(withoutSourceIds)
+  const withoutSourceIds = (value: unknown, topLevel = false): unknown => {
+    if (Array.isArray(value)) return value.map((child) => withoutSourceIds(child, topLevel))
     if (!value || typeof value !== 'object') return value
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
+    const record = value as Record<string, unknown>
+    const result = Object.fromEntries(
+      Object.entries(record)
         .filter(([key]) => key !== 'sourceId')
         .map(([key, child]) => [key, withoutSourceIds(child)]),
-    )
+    ) as Record<string, unknown>
+    normaliseSourceBoundEmptyParagraph(record, result, topLevel)
+    return result
   }
-  return JSON.stringify(withoutSourceIds(nodes))
+  return JSON.stringify(nodes.map((node) => withoutSourceIds(node, true)))
 }
 
 function projectionFingerprint(nodes: JSONContent[]): string {
-  const comparable = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(comparable)
+  const comparable = (value: unknown, topLevel = false): unknown => {
+    if (Array.isArray(value)) return value.map((child) => comparable(child, topLevel))
     if (!value || typeof value !== 'object') return value
     const record = value as Record<string, unknown>
     const result = Object.fromEntries(
@@ -115,18 +127,12 @@ function projectionFingerprint(nodes: JSONContent[]): string {
     if (typeof record.type === 'string' && record.type.startsWith('protectedSource') && result.attrs && typeof result.attrs === 'object') {
       delete (result.attrs as Record<string, unknown>).id
     }
-    // Markdown parser paragraphs carry a source unit id. TipTap omits an empty
-    // paragraph's content array, while the projection writes `content: []`.
     // Do not generalise this to nested table/list nodes: there emptiness is structural.
-    const sourceId = record.attrs && typeof record.attrs === 'object'
-      ? (record.attrs as Record<string, unknown>).sourceId
-      : undefined
-    if (result.type === 'paragraph' && sourceId != null
-      && Array.isArray(result.content) && result.content.length === 0) delete result.content
+    normaliseSourceBoundEmptyParagraph(record, result, topLevel)
     if (result.attrs && typeof result.attrs === 'object' && Object.keys(result.attrs as Record<string, unknown>).length === 0) delete result.attrs
     return result
   }
-  return JSON.stringify(comparable(nodes))
+  return JSON.stringify(nodes.map((node) => comparable(node, true)))
 }
 
 function withoutEmptyParagraphs(nodes: JSONContent[]): JSONContent[] {
@@ -366,7 +372,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
   let revision = 0
   let mode: EditorMode = state.fallbackReason ? 'source' : 'visual'
   let selection: SourceRange | undefined
-  let tickets = new WeakMap<SaveTicket, SaveState>()
+  const tickets = new WeakMap<SaveTicket, SaveState>()
   let conflictReason: string | undefined
   let userTrailingEmpty: UserTrailingEmptyRelation | undefined
 
@@ -635,7 +641,7 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     try {
       nextRaw = codec.serialize(codec.parse(fragment.raw))
     } catch (error) {
-      throw new Error(`Unable to convert protected source: ${error instanceof Error ? error.message : String(error)}`)
+      throw new Error(`Unable to convert protected source: ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
     if (!nextRaw || nextRaw === fragment.raw) throw new Error('Unable to convert protected source safely')
     return createSourcePatch('conversion', fragmentId, fragment.raw, nextRaw, revision)

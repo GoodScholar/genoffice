@@ -12,6 +12,9 @@ import {
 import { executeTool } from '../src/renderer/ai/tools'
 import { MARKDOWN_RULES } from '../src/renderer/ai/markdown-skill'
 import type { SourceProtectionAccess } from '../src/renderer/markdown/sourcePatch'
+import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
+import { createTiptapMarkdownCodec } from '../src/renderer/markdown/sourceProjection'
+import { replaceEditorBaseline } from '../src/renderer/App'
 
 const editors: Editor[] = []
 afterEach(() => {
@@ -139,6 +142,7 @@ describe('write_document tool', () => {
     expect(exec.isError).toBeFalsy()
     expect(exec.mutated).toBe(true)
     expect(texts(editor)).toEqual(['T', 'body'])
+    expect(undoDepth(editor.state)).toBe(1)
     expect(editor.commands.undo()).toBe(true)
     expect(texts(editor)).toEqual([''])
   })
@@ -219,6 +223,43 @@ describe('write_document tool', () => {
     expect(result).toMatchObject({ isError: true, mutated: false })
     expect(result.output).toContain('no longer active')
     expect(texts(editor)).toEqual([''])
+  })
+
+  it('removes published draft bytes before source mode synchronizes the session', async () => {
+    const editor = createEditor('Old')
+    const session = createMarkdownDocumentSession('Old\n', createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+    const historyDepth = undoDepth(editor.state)
+    let release: (() => void) | undefined
+    const wait = new Promise<void>((resolve) => { release = resolve })
+    let visual = true
+    const cleanups = new Set<() => void>()
+    const access = {
+      mode: () => visual ? 'visual' as const : 'source' as const,
+      isCurrent: () => visual,
+      registerProvisionalDraft: (cleanup: () => void) => {
+        cleanups.add(cleanup)
+        return () => cleanups.delete(cleanup)
+      },
+    } as SourceProtectionAccess & { registerProvisionalDraft(cleanup: () => void): () => void }
+    const writer: AiDocWriter = { write: async (_spec, onProgress) => {
+      onProgress('Draft preview.')
+      await wait
+      return { ok: true, markdown: 'Final.' }
+    } }
+    const pending = executeTool(editor, { id: 't', name: 'write_document', input: { plan: 'p', afterIndex: 0 } }, undefined, undefined, writer, access) as Promise<{ isError?: boolean, mutated?: boolean }>
+    await tick()
+    visual = false
+    for (const cleanup of cleanups) cleanup()
+    const sourceEntry = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
+    expect(undoDepth(editor.state)).toBe(historyDepth)
+    expect(session.enterSource()).toMatchObject({ ok: true })
+    expect(session.applySource('User source edit\n')).toMatchObject({ ok: true })
+    release?.()
+
+    expect(sourceEntry).toMatchObject({ ok: true })
+    await expect(pending).resolves.toMatchObject({ isError: true, mutated: false })
+    expect(session.serialize()).toBe('User source edit\n')
   })
 
   it('a discarded write leaves the document unchanged', async () => {

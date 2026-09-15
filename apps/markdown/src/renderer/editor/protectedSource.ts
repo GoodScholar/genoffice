@@ -51,7 +51,7 @@ interface ProtectedSourceGuardState {
   transitions: TransitionEvent[]
 }
 
-/** 一次确认只对应一个可逆事件；append 只补充这个事件的最终端点。 */
+/** One confirmation maps to one reversible event; appends only finalize that event's endpoint. */
 interface TransitionEvent {
   root: Transaction
   before: ProtectedSourceSignature
@@ -143,7 +143,7 @@ function allows(state: ProtectedSourceGuardState, transaction: Transaction, edit
   return state.transitions.some((transition) => matchesHistoryEvent(transition, actual, currentSource))
 }
 
-/** 每个 EditorState 保存独立的不可公开伪造授权记录。 */
+/** Each EditorState owns a private, non-forgeable authorization record. */
 export function protectedSourceAuthority(editor: Editor): ProtectedSourceAuthority {
   return {
     authorize(transaction) {
@@ -286,7 +286,7 @@ function protectedChangeKind(
   return removed ? 'delete' : 'replace'
 }
 
-/** 基于实时编辑器状态重建已确认操作，绝不派发生成请求时的过期 transaction。 */
+/** Rebuild an approved operation from live editor state; never dispatch its stale request transaction. */
 export function applyProtectedChange(
   editor: Editor,
   request: ProtectedChangeRequest,
@@ -335,7 +335,7 @@ export function applyProtectedChange(
   }
 }
 
-/** 阻止破坏性受保护源码 transaction，直到调用方显式确认并重建请求。 */
+/** Block destructive protected-source transactions until an explicit confirmation rebuilds the request. */
 export const ProtectedSourceGuard = Extension.create<ProtectedSourceOptions>({
   name: 'protectedSourceGuard',
   priority: 1000,

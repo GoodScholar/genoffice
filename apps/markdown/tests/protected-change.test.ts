@@ -73,17 +73,18 @@ function createDuplicateProtectedEditor(onConfirmChange = vi.fn()): Editor {
 }
 
 function createLosslessEditor(source: string, onConfirmChange = vi.fn()): { editor: Editor, session: ReturnType<typeof createMarkdownDocumentSession> } {
-  let session: ReturnType<typeof createMarkdownDocumentSession> | undefined
+  const sessionRef: { current?: ReturnType<typeof createMarkdownDocumentSession> } = {}
   const editor = new Editor({
     element: document.createElement('div'),
     extensions: buildExtensions({
       slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
       slashItems: () => [],
-      protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange, getCurrentSource: () => session?.serialize() },
+      protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange, getCurrentSource: () => sessionRef.current?.serialize() },
     }),
     content: '',
   })
-  session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+  const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+  sessionRef.current = session
   replaceEditorBaseline(editor, session.view().visual.doc)
   editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
   return { editor, session }
@@ -162,7 +163,8 @@ describe('protected source change guard', () => {
     const editor = createEditor()
     const position = protectedPosition(editor)
     const visual = editor.getJSON()
-    const protectedNode = visual.content?.[1]!
+    const protectedNode = visual.content?.[1]
+    if (!protectedNode) throw new Error('Expected protected node')
     protectedNode.attrs = { ...protectedNode.attrs, id: 'html-2' }
 
     applyProjectionProvenance(editor, visual)
@@ -374,17 +376,18 @@ describe('protected source change guard', () => {
 
   it('commits an approved change to the session only after dispatch, then saves and restores it through undo/redo', () => {
     const requestSink = vi.fn()
-    let session: ReturnType<typeof createMarkdownDocumentSession> | undefined
+    const sessionRef: { current?: ReturnType<typeof createMarkdownDocumentSession> } = {}
     const editor = new Editor({
       element: document.createElement('div'),
       extensions: buildExtensions({
         slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
         slashItems: () => [],
-        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange: requestSink, getCurrentSource: () => session?.serialize() },
+        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange: requestSink, getCurrentSource: () => sessionRef.current?.serialize() },
       }),
       content: '',
     })
-    session = createMarkdownDocumentSession('Before\n\n<!-- raw -->\n', createTiptapMarkdownCodec(editor))
+    const session = createMarkdownDocumentSession('Before\n\n<!-- raw -->\n', createTiptapMarkdownCodec(editor))
+    sessionRef.current = session
     editor.commands.setContent(session.view().visual.doc)
     editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
     const position = anyProtectedPosition(editor)
@@ -515,7 +518,7 @@ describe('protected source change guard', () => {
 
   it('finalizes one approved event after an appended visual change and restores its final source', () => {
     const requestSink = vi.fn()
-    let session: ReturnType<typeof createMarkdownDocumentSession> | undefined
+    const sessionRef: { current?: ReturnType<typeof createMarkdownDocumentSession> } = {}
     const appender = Extension.create({
       addProseMirrorPlugins() {
         return [new Plugin({
@@ -531,11 +534,12 @@ describe('protected source change guard', () => {
       extensions: [...buildExtensions({
         slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
         slashItems: () => [],
-        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange: requestSink, getCurrentSource: () => session?.serialize() },
+        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange: requestSink, getCurrentSource: () => sessionRef.current?.serialize() },
       }), appender],
       content: '',
     })
-    session = createMarkdownDocumentSession('Before\n\n<!-- raw -->\n', createTiptapMarkdownCodec(editor))
+    const session = createMarkdownDocumentSession('Before\n\n<!-- raw -->\n', createTiptapMarkdownCodec(editor))
+    sessionRef.current = session
     replaceEditorBaseline(editor, session.view().visual.doc)
     editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
     editor.on('update', ({ editor: updated }) => {
@@ -558,7 +562,7 @@ describe('protected source change guard', () => {
 
   it('rejects an appended transaction that expands an approval to another protected atom', () => {
     const requestSink = vi.fn()
-    let session: ReturnType<typeof createMarkdownDocumentSession> | undefined
+    const sessionRef: { current?: ReturnType<typeof createMarkdownDocumentSession> } = {}
     let appended = 0
     const destructiveAppender = Extension.create({
       addProseMirrorPlugins() {
@@ -584,11 +588,12 @@ describe('protected source change guard', () => {
       extensions: [...buildExtensions({
         slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
         slashItems: () => [],
-        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange: requestSink, getCurrentSource: () => session?.serialize() },
+        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange: requestSink, getCurrentSource: () => sessionRef.current?.serialize() },
       }), destructiveAppender],
       content: '',
     })
-    session = createMarkdownDocumentSession('<details>A</details>\n\n<details>B</details>\n', createTiptapMarkdownCodec(editor))
+    const session = createMarkdownDocumentSession('<details>A</details>\n\n<details>B</details>\n', createTiptapMarkdownCodec(editor))
+    sessionRef.current = session
     replaceEditorBaseline(editor, session.view().visual.doc)
     editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
     let protectedCount = 0

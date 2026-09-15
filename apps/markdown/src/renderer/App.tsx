@@ -261,7 +261,7 @@ export function restoreSourceHistoryTransaction(
   transaction: Transaction,
 ): ReturnType<MarkdownDocumentSession['view']> | undefined {
   const source = sourceSnapshotFromTransaction(transaction)
-  // onTransaction 运行于 session 恢复之前，因此这里正好是历史事务的真实源码前端点。
+  // onTransaction runs before session restoration, so this is the source history's actual endpoint.
   if (source === undefined || !protectedSourceAuthority(editor).accepts(transaction, session.serialize())) return undefined
   const restored = session.restoreHistorySource(source)
   return restored.ok ? restored.view : undefined
@@ -367,6 +367,7 @@ export default function App() {
   const savingRef = useRef(false)
   const envelopeRef = useRef<DocEnvelope>(EMPTY_ENVELOPE)
   const sessionRef = useRef<MarkdownDocumentSession | null>(null)
+  const provisionalDraftsRef = useRef(new Set<() => void>())
   const syncingProjectionRef = useRef(false)
   const editorModeRef = useRef<'visual' | 'source'>('visual')
   const sourceModeStartRef = useRef<SourceModeSnapshot | null>(null)
@@ -401,10 +402,19 @@ export default function App() {
     setFmOpen(inner.trim() !== '')
   }, [])
 
+  const clearProvisionalDrafts = useCallback(() => {
+    for (const cleanup of provisionalDraftsRef.current) cleanup()
+    provisionalDraftsRef.current.clear()
+  }, [])
+
+  useEffect(() => () => clearProvisionalDrafts(), [clearProvisionalDrafts])
+
   const enterSourceMode = useCallback((fragmentId?: string) => {
     const current = editorRef.current
     const session = sessionRef.current
     if (!current || !session) return
+
+    clearProvisionalDrafts()
 
     const projected = session.applyVisual({
       doc: current.getJSON(),
@@ -415,13 +425,13 @@ export default function App() {
     } else {
       sourceModeStartRef.current = null
     }
-    // 同步可视投影后再从当前会话解析片段；NodeView 不缓存源码范围。
+    // Reparse fragments from the synchronized visual projection; NodeViews do not cache source ranges.
     const entered = session.enterSource(fragmentId)
     setEditorMode('source')
     setSourceText(entered.view.source)
     setSourceModeError(projected.ok ? (entered.ok ? null : entered.error) : projected.error)
     mirrorSessionDirty(session)
-  }, [mirrorSessionDirty])
+  }, [clearProvisionalDrafts, mirrorSessionDirty])
 
   const publishSourcePatch = useCallback((patch: SourcePatch) => {
     setSourcePatchError(null)
@@ -528,6 +538,7 @@ export default function App() {
           const raw = await window.markdownApi.readFile(path)
           if (cancelled) return
           setImageBaseDir(dirOf(path))
+          clearProvisionalDrafts()
           const session = createMarkdownDocumentSession(raw, createTiptapMarkdownCodec(editor))
           sessionRef.current = session
           syncingProjectionRef.current = true
@@ -540,6 +551,7 @@ export default function App() {
           synchronizeSessionChrome(session.view())
           setFilePath(path)
         } else {
+          clearProvisionalDrafts()
           const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
           sessionRef.current = session
           syncingProjectionRef.current = true
@@ -564,7 +576,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [editor, mirrorSessionDirty, synchronizeSessionChrome])
+  }, [clearProvisionalDrafts, editor, mirrorSessionDirty, synchronizeSessionChrome])
 
   const onFrontmatterChange = useCallback(
     (inner: string) => {
@@ -1019,6 +1031,10 @@ export default function App() {
         mode: () => session.view().mode,
         isCurrent: () => sessionRef.current === session && editorModeRef.current === 'visual'
           && session.view().mode === 'visual' && !editorRef.current?.isDestroyed,
+        registerProvisionalDraft: (cleanup) => {
+          provisionalDraftsRef.current.add(cleanup)
+          return () => provisionalDraftsRef.current.delete(cleanup)
+        },
         source: () => session.serialize(),
         sourceBlocks: () => session.sourceBlocks(),
         frontmatter: () => session.frontmatter(),

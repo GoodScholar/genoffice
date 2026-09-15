@@ -106,6 +106,38 @@ describe('MarkdownDocumentSession', () => {
   })
 
   it.each([
+    ['LF', '#   Title\n\nAlpha.\n\n<div>raw</div>\n'],
+    ['CRLF', '#   Title\r\n\r\nAlpha.\r\n\r\n<div>raw</div>\r\n'],
+  ])('keeps untouched spaced-heading source unchanged when entering source mode with %s', (_name, source) => {
+    const editor = new Editor({
+      extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }),
+      content: '',
+    })
+    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe(source)
+    expect(session.view()).toMatchObject({ revision: 0, dirty: false })
+    editor.destroy()
+  })
+
+  it('keeps the untouched Typora fixture byte-for-byte after a real visual projection', () => {
+    const editor = new Editor({
+      extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }),
+      content: '',
+    })
+    const source = fixture('typora-html.md')
+    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+    replaceEditorBaseline(editor, session.view().visual.doc)
+
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.serialize()).toBe(source)
+    expect(session.view()).toMatchObject({ revision: 0, dirty: false })
+    editor.destroy()
+  })
+
+  it.each([
     ['LF', '\n'],
     ['CRLF', '\r\n'],
   ])('rewrites edited frontmatter with %s EOL while preserving the body', (_name, eol) => {
@@ -646,7 +678,8 @@ describe('MarkdownDocumentSession', () => {
   it('checks protected raw before accepting an otherwise unchanged visual projection', () => {
     const session = createMarkdownDocumentSession('<details>P</details>\n', createCodec())
     const next = cloneVisual(session.view().visual)
-    const protectedNode = next.doc.content?.[0]!
+    const protectedNode = next.doc.content?.[0]
+    if (!protectedNode) throw new Error('Expected protected node')
     protectedNode.attrs = { ...protectedNode.attrs, raw: '<details>changed</details>\n' }
 
     expect(session.applyVisual(next)).toMatchObject({ ok: false })

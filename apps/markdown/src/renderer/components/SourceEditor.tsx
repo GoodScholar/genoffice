@@ -55,7 +55,7 @@ export function SourceEditor({ value, selection, disabled, onChange, onExit }: S
     if (!textarea) return
     textarea.focus()
     if (selection) textarea.setSelectionRange(textareaOffset(value, selection.from), textareaOffset(value, selection.to))
-  }, [value, selection?.from, selection?.to])
+  }, [value, selection])
 
   return (
     <textarea

@@ -17,7 +17,7 @@ function changeLabel(kind: ProtectedChangeRequest['kind']): string {
   return t('protectedChangeDelete')
 }
 
-/** 破坏性 atom 操作的确认边界；批准时始终从实时编辑器状态重建 steps。 */
+/** Confirmation boundary for destructive atom operations; rebuild steps from current editor state. */
 export function ProtectedChangeConfirm({ editor, request, session, onDismiss }: ProtectedChangeConfirmProps) {
   const [error, setError] = useState<string | null>(null)
   const confirm = () => {
