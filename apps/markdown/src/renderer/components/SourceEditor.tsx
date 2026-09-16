@@ -57,19 +57,30 @@ function sourceOffset(source: string, editorOffset: number): number {
 function sourceForEditorEdit(source: string, nextEditorText: string): string {
   const previousEditorText = editorText(source)
   let prefix = 0
-  while (prefix < previousEditorText.length && prefix < nextEditorText.length
-    && previousEditorText[prefix] === nextEditorText[prefix]) prefix += 1
+  while (
+    prefix < previousEditorText.length &&
+    prefix < nextEditorText.length &&
+    previousEditorText[prefix] === nextEditorText[prefix]
+  )
+    prefix += 1
 
   let suffix = 0
-  while (suffix < previousEditorText.length - prefix && suffix < nextEditorText.length - prefix
-    && previousEditorText[previousEditorText.length - suffix - 1] === nextEditorText[nextEditorText.length - suffix - 1]) suffix += 1
+  while (
+    suffix < previousEditorText.length - prefix &&
+    suffix < nextEditorText.length - prefix &&
+    previousEditorText[previousEditorText.length - suffix - 1] ===
+      nextEditorText[nextEditorText.length - suffix - 1]
+  )
+    suffix += 1
 
   const inserted = nextEditorText.slice(prefix, nextEditorText.length - suffix)
   const useCrLfForNewlines = source.includes('\r\n') && !/(^|[^\r])\n/.test(source)
   const sourceInserted = useCrLfForNewlines ? inserted.replace(/\n/g, '\r\n') : inserted
-  return source.slice(0, sourceOffset(source, prefix))
-    + sourceInserted
-    + source.slice(sourceOffset(source, previousEditorText.length - suffix))
+  return (
+    source.slice(0, sourceOffset(source, prefix)) +
+    sourceInserted +
+    source.slice(sourceOffset(source, previousEditorText.length - suffix))
+  )
 }
 
 const highlight = HighlightStyle.define([
@@ -90,25 +101,45 @@ const theme = EditorView.theme({
   },
   '.cm-content': { caretColor: 'var(--text-primary)' },
   '.cm-cursor': { borderLeftColor: 'var(--text-primary)' },
-  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground': {
-    backgroundColor: 'var(--md-selection)',
+  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground':
+    {
+      backgroundColor: 'var(--md-selection)',
+    },
+  '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'transparent' },
+  '&.cm-focused .cm-activeLine, &.cm-focused .cm-activeLineGutter': {
+    backgroundColor: 'color-mix(in srgb, var(--hover) 60%, var(--surface))',
   },
-  '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--hover)' },
+  '&.cm-focused .cm-activeLineGutter': { color: 'var(--text-primary)' },
   '.cm-gutters': {
     backgroundColor: 'var(--surface)',
     color: 'var(--text-secondary)',
     borderRight: '1px solid var(--border)',
   },
   '.cm-foldPlaceholder': {
+    display: 'inline-block',
+    margin: '0 4px',
+    padding: '0 5px',
+    lineHeight: '1.2',
+    verticalAlign: 'baseline',
     backgroundColor: 'var(--hover)',
     border: '1px solid var(--border)',
     color: 'var(--text-secondary)',
+  },
+  '.cm-foldPlaceholder:hover': {
+    backgroundColor: 'var(--active-bg)',
+    borderColor: 'var(--border-hover)',
   },
   '.cm-matchingBracket, .cm-selectionMatch': { backgroundColor: 'var(--md-selection)' },
 })
 
 /** The lossless source surface: CodeMirror edits a normalized view and writes raw source deltas. */
-export function SourceEditor({ value, selection, disabled = false, onChange, onExit }: SourceEditorProps) {
+export function SourceEditor({
+  value,
+  selection,
+  disabled = false,
+  onChange,
+  onExit,
+}: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const sourceRef = useRef(value)
@@ -139,9 +170,18 @@ export function SourceEditor({ value, selection, disabled = false, onChange, onE
           highlightSelectionMatches(),
           markdown(),
           EditorView.lineWrapping,
-          editable.current.of([EditorState.readOnly.of(disabled), EditorView.editable.of(!disabled)]),
+          editable.current.of([
+            EditorState.readOnly.of(disabled),
+            EditorView.editable.of(!disabled),
+          ]),
           keymap.of([
-            { key: 'Escape', run: () => { onExitRef.current(); return true } },
+            {
+              key: 'Escape',
+              run: () => {
+                onExitRef.current()
+                return true
+              },
+            },
             ...defaultKeymap,
             ...historyKeymap,
             ...foldKeymap,
@@ -151,7 +191,11 @@ export function SourceEditor({ value, selection, disabled = false, onChange, onE
       }),
       dispatchTransactions: (transactions, editor) => {
         editor.update(transactions)
-        if (transactions.some((transaction) => transaction.docChanged && !transaction.annotation(Transaction.remote))) {
+        if (
+          transactions.some(
+            (transaction) => transaction.docChanged && !transaction.annotation(Transaction.remote),
+          )
+        ) {
           const nextSource = sourceForEditorEdit(sourceRef.current, editor.state.doc.toString())
           sourceRef.current = nextSource
           onChangeRef.current(nextSource)
@@ -183,7 +227,12 @@ export function SourceEditor({ value, selection, disabled = false, onChange, onE
   useLayoutEffect(() => {
     const view = viewRef.current
     if (!view) return
-    view.dispatch({ effects: editable.current.reconfigure([EditorState.readOnly.of(disabled), EditorView.editable.of(!disabled)]) })
+    view.dispatch({
+      effects: editable.current.reconfigure([
+        EditorState.readOnly.of(disabled),
+        EditorView.editable.of(!disabled),
+      ]),
+    })
   }, [disabled])
 
   useLayoutEffect(() => {

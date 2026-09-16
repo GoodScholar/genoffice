@@ -116,6 +116,41 @@ afterEach(() => {
 })
 
 describe('real source-mode round trips', () => {
+  it.each(['', '\n', '\r\n\r\n', ' \t\n'])(
+    'returns to an editable visual document after clearing source to %j',
+    (source) => {
+      const harness = createHarness()
+      editors.push(harness.editor)
+      const original = '# 标题'
+
+      harness.enterSource()
+      harness.session.applySource(original)
+      expect(harness.leaveSource()).toMatchObject({ ok: true, changed: true })
+      expect(harness.enterSource()).toMatchObject({ ok: true })
+      harness.session.applySource(source)
+      expect(harness.leaveSource()).toMatchObject({ ok: true, changed: true })
+      expect(harness.editor.getText()).toBe('')
+      expect(() => harness.editor.state.doc.check()).not.toThrow()
+      expect(harness.session.view()).toMatchObject({ source, mode: 'visual' })
+
+      expect(harness.enterSource()).toMatchObject({ ok: true })
+      expect(harness.leaveSource()).toMatchObject({ ok: true, changed: false })
+      expect(harness.session.serialize()).toBe(source)
+
+      expect(undo(harness.editor.state, harness.editor.view.dispatch)).toBe(true)
+      expect(harness.editor.getText({ blockSeparator: '' })).toBe('标题')
+      expect(harness.session.serialize()).toBe(original)
+      expect(redo(harness.editor.state, harness.editor.view.dispatch)).toBe(true)
+      expect(harness.editor.getText()).toBe('')
+      expect(harness.session.serialize()).toBe(source)
+
+      harness.editor.commands.insertContent('继续编辑')
+      expect(harness.editor.getText()).toBe('继续编辑')
+      expect(harness.session.serialize()).toContain('继续编辑')
+      expect(harness.session.view().mode).toBe('visual')
+    },
+  )
+
   it.each([
     ['heading', '# 标题'],
     ['bold paragraph', '**项目二**'],

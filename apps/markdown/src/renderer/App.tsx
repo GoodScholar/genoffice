@@ -10,12 +10,12 @@ import type { Editor, JSONContent } from '@tiptap/core'
 import { EditorState, TextSelection, type Transaction } from '@tiptap/pm/state'
 import { closeHistory } from '@tiptap/pm/history'
 import { useI18n } from './i18n/locale'
+import { frontmatterInner, parseDocText, type DocEnvelope } from './markdown/docText'
 import {
-  frontmatterInner,
-  parseDocText,
-  type DocEnvelope,
-} from './markdown/docText'
-import { createMarkdownDocumentSession, type MarkdownDocumentSession, type SaveTicket } from './markdown/documentSession'
+  createMarkdownDocumentSession,
+  type MarkdownDocumentSession,
+  type SaveTicket,
+} from './markdown/documentSession'
 import { isGeneratedTrailingParagraph } from './markdown/generatedTrailingNode'
 import { createTiptapMarkdownCodec } from './markdown/sourceProjection'
 import { SourceSnapshotStep, sourceSnapshotFromTransaction } from './markdown/sourceHistory'
@@ -44,7 +44,11 @@ import { mermaidSvgToPng, renderMermaid } from './editor/mermaid'
 import { resolveImageSrc } from './editor/localImage'
 import type { ExportFormat, SaveMarkdownRequest, SaveMarkdownResult, SaveMode } from '../shared/ipc'
 import { uiOp } from './editor/ops'
-import { finalizeProtectedSourceTransition, protectedSourceAuthority, type ProtectedChangeRequest } from './editor/protectedSource'
+import {
+  finalizeProtectedSourceTransition,
+  protectedSourceAuthority,
+  type ProtectedChangeRequest,
+} from './editor/protectedSource'
 import { protectedIdsForOps } from './editor/ops'
 import type { SourcePatch, SourceProtectionAccess } from './markdown/sourcePatch'
 
@@ -150,25 +154,44 @@ export type SourceModeTransition =
   | { ok: true; changed: true; view: ReturnType<MarkdownDocumentSession['view']> }
 
 /** Apply a completed source-mode edit as one isolated visual-editor undo step. */
-export function replaceSourceModeVisualDocument(editor: Editor, visualDoc: JSONContent, beforeSource: string, afterSource: string): void {
-  const next = editor.schema.nodeFromJSON(visualDoc)
+export function replaceSourceModeVisualDocument(
+  editor: Editor,
+  visualDoc: JSONContent,
+  beforeSource: string,
+  afterSource: string,
+): void {
+  // Empty Markdown has no blocks; the editor schema still requires an editable paragraph.
+  const next = visualDoc.content?.length
+    ? editor.schema.nodeFromJSON(visualDoc)
+    : editor.schema.topNodeType.createAndFill()
+  if (!next) throw new Error('Unable to create an editable source-mode document')
+  next.check()
   let transaction = editor.state.tr.setMeta('addToHistory', true)
-  if (!editor.state.doc.eq(next)) transaction = transaction.replaceWith(0, editor.state.doc.content.size, next.content)
+  if (!editor.state.doc.eq(next))
+    transaction = transaction.replaceWith(0, editor.state.doc.content.size, next.content)
   transaction = transaction.step(new SourceSnapshotStep(beforeSource, afterSource))
   protectedSourceAuthority(editor).authorize(transaction)
   editor.view.dispatch(closeHistory(transaction))
   const actual = editor.state.doc
-  const appendedGeneratedTail = actual.childCount === next.childCount + 1
-    && isGeneratedTrailingParagraph(actual.lastChild?.toJSON())
-    && actual.content.cut(0, actual.content.size - actual.lastChild!.nodeSize).eq(next.content)
-  if (!actual.eq(next) && !appendedGeneratedTail) throw new Error('Source-mode visual document was rejected')
+  const appendedGeneratedTail =
+    actual.childCount === next.childCount + 1 &&
+    isGeneratedTrailingParagraph(actual.lastChild?.toJSON()) &&
+    actual.content.cut(0, actual.content.size - actual.lastChild!.nodeSize).eq(next.content)
+  if (!actual.eq(next) && !appendedGeneratedTail)
+    throw new Error('Source-mode visual document was rejected')
   // This zero-step barrier belongs to no history event, but prevents the next
   // visual edit from merging into the source-mode replacement.
-  editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true))
+  editor.view.dispatch(
+    closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true),
+  )
 }
 
 /** Restore an AI rollback snapshot only through the existing signed source-history bridge. */
-export function restoreAiSourceSnapshot(editor: Editor, session: MarkdownDocumentSession, source: string): { ok: true } | { ok: false; error: string } {
+export function restoreAiSourceSnapshot(
+  editor: Editor,
+  session: MarkdownDocumentSession,
+  source: string,
+): { ok: true } | { ok: false; error: string } {
   const preview = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
   const fallbackReason = preview.view().fallbackReason
   if (fallbackReason) return { ok: false, error: fallbackReason }
@@ -178,21 +201,29 @@ export function restoreAiSourceSnapshot(editor: Editor, session: MarkdownDocumen
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
-  return session.serialize() === source ? { ok: true } : { ok: false, error: 'AI snapshot restore was rejected' }
+  return session.serialize() === source
+    ? { ok: true }
+    : { ok: false, error: 'AI snapshot restore was rejected' }
 }
 
 /** Install a newly loaded document as a fresh ProseMirror history baseline. */
-export function replaceEditorBaseline(editor: Editor, visualDoc: JSONContent, onInstalled?: (editor: Editor) => void): void {
+export function replaceEditorBaseline(
+  editor: Editor,
+  visualDoc: JSONContent,
+  onInstalled?: (editor: Editor) => void,
+): void {
   const doc = visualDoc.content?.length
     ? editor.schema.nodeFromJSON(visualDoc)
     : editor.schema.topNodeType.createAndFill()
   if (!doc) throw new Error('Unable to create an editable document baseline')
   doc.check()
-  editor.view.updateState(EditorState.create({
-    schema: editor.schema,
-    doc,
-    plugins: editor.state.plugins,
-  }))
+  editor.view.updateState(
+    EditorState.create({
+      schema: editor.schema,
+      doc,
+      plugins: editor.state.plugins,
+    }),
+  )
   onInstalled?.(editor)
   editor.view.dispatch(editor.state.tr.setMeta('addToHistory', false).setMeta('uiOnly', true))
 }
@@ -207,7 +238,9 @@ export function completeSourceModeTransition(
   if (current.fallbackReason) return { ok: false, error: current.fallbackReason }
   if (current.source === before.source) {
     const entered = session.enterVisual()
-    return entered.ok ? { ok: true, changed: false, view: entered.view } : { ok: false, error: entered.error }
+    return entered.ok
+      ? { ok: true, changed: false, view: entered.view }
+      : { ok: false, error: entered.error }
   }
   replaceSourceModeVisualDocument(editor, current.visual.doc, before.source, current.source)
   const entered = session.enterVisual()
@@ -227,7 +260,8 @@ export function applyConfirmedSourcePatch(
   patch: SourcePatch,
   appMode: 'visual' | 'source' = 'visual',
 ): { ok: true } | { ok: false; error: string } {
-  if (appMode !== 'visual' || session.view().mode !== 'visual') return { ok: false, error: 'source-mode' }
+  if (appMode !== 'visual' || session.view().mode !== 'visual')
+    return { ok: false, error: 'source-mode' }
   const preview = session.previewConfirmedPatch(patch)
   if (!preview.ok) return { ok: false, error: preview.error }
   try {
@@ -240,14 +274,17 @@ export function applyConfirmedSourcePatch(
     authority.authorize(transaction)
     try {
       editor.view.dispatch(transaction)
-      if (!authority.accepts(transaction, beforeSource)) return { ok: false, error: 'Protected source patch was rejected' }
+      if (!authority.accepts(transaction, beforeSource))
+        return { ok: false, error: 'Protected source patch was rejected' }
       if (!finalizeProtectedSourceTransition(editor, transaction, session.serialize())) {
         return { ok: false, error: 'Protected source patch was rejected' }
       }
     } finally {
       authority.revoke(transaction)
     }
-    editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true))
+    editor.view.dispatch(
+      closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true),
+    )
     return { ok: true }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -262,7 +299,11 @@ export function restoreSourceHistoryTransaction(
 ): ReturnType<MarkdownDocumentSession['view']> | undefined {
   const source = sourceSnapshotFromTransaction(transaction)
   // onTransaction runs before session restoration, so this is the source history's actual endpoint.
-  if (source === undefined || !protectedSourceAuthority(editor).accepts(transaction, session.serialize())) return undefined
+  if (
+    source === undefined ||
+    !protectedSourceAuthority(editor).accepts(transaction, session.serialize())
+  )
+    return undefined
   const restored = session.restoreHistorySource(source)
   return restored.ok ? restored.view : undefined
 }
@@ -276,7 +317,7 @@ export async function requestSourceBackedSave(
   save: SaveInvoker,
   onFailure: () => void,
   suggestedName?: string,
-): Promise<{ ticket: SaveTicket, result: SaveMarkdownResult }> {
+): Promise<{ ticket: SaveTicket; result: SaveMarkdownResult }> {
   let ticket: SaveTicket
   try {
     ticket = session.beginSave()
@@ -288,7 +329,12 @@ export async function requestSourceBackedSave(
   try {
     return {
       ticket,
-      result: await save({ text: ticket.source, imageSources: imageSourcesFromEditor(editor), mode, suggestedName }),
+      result: await save({
+        text: ticket.source,
+        imageSources: imageSourcesFromEditor(editor),
+        mode,
+        suggestedName,
+      }),
     }
   } catch (error) {
     onFailure()
@@ -296,7 +342,7 @@ export async function requestSourceBackedSave(
   }
 }
 
-type SuccessfulMarkdownSave = Extract<SaveMarkdownResult, { ok: true, path: string }>
+type SuccessfulMarkdownSave = Extract<SaveMarkdownResult, { ok: true; path: string }>
 
 export function synchronizeSourceBackedSave(
   session: MarkdownDocumentSession,
@@ -358,7 +404,8 @@ export default function App() {
   const [editorMode, setEditorMode] = useState<'visual' | 'source'>('visual')
   const [sourceText, setSourceText] = useState('')
   const [sourceModeError, setSourceModeError] = useState<string | null>(null)
-  const [protectedChangeRequest, setProtectedChangeRequest] = useState<ProtectedChangeRequest | null>(null)
+  const [protectedChangeRequest, setProtectedChangeRequest] =
+    useState<ProtectedChangeRequest | null>(null)
   const [sourcePatch, setSourcePatch] = useState<SourcePatch | null>(null)
   const [sourcePatchError, setSourcePatchError] = useState<string | null>(null)
 
@@ -367,7 +414,7 @@ export default function App() {
   const savingRef = useRef(false)
   const envelopeRef = useRef<DocEnvelope>(EMPTY_ENVELOPE)
   const sessionRef = useRef<MarkdownDocumentSession | null>(null)
-  const provisionalDraftsRef = useRef(new Set<{ active: boolean, cleanup?: () => void }>())
+  const provisionalDraftsRef = useRef(new Set<{ active: boolean; cleanup?: () => void }>())
   const syncingProjectionRef = useRef(false)
   const editorModeRef = useRef<'visual' | 'source'>('visual')
   const sourceModeStartRef = useRef<SourceModeSnapshot | null>(null)
@@ -394,13 +441,16 @@ export default function App() {
     if (nextDirty) setSaveState('idle')
   }, [])
 
-  const synchronizeSessionChrome = useCallback((view: ReturnType<MarkdownDocumentSession['view']>) => {
-    const envelope = parseDocText(view.source)
-    envelopeRef.current = envelope
-    const inner = view.visual.frontmatterInner
-    setFmText(inner)
-    setFmOpen(inner.trim() !== '')
-  }, [])
+  const synchronizeSessionChrome = useCallback(
+    (view: ReturnType<MarkdownDocumentSession['view']>) => {
+      const envelope = parseDocText(view.source)
+      envelopeRef.current = envelope
+      const inner = view.visual.frontmatterInner
+      setFmText(inner)
+      setFmOpen(inner.trim() !== '')
+    },
+    [],
+  )
 
   const clearProvisionalDrafts = useCallback(() => {
     for (const draft of provisionalDraftsRef.current) {
@@ -412,50 +462,59 @@ export default function App() {
 
   useEffect(() => () => clearProvisionalDrafts(), [clearProvisionalDrafts])
 
-  const enterSourceMode = useCallback((fragmentId?: string) => {
-    const current = editorRef.current
-    const session = sessionRef.current
-    if (!current || !session) return
+  const enterSourceMode = useCallback(
+    (fragmentId?: string) => {
+      const current = editorRef.current
+      const session = sessionRef.current
+      if (!current || !session) return
 
-    clearProvisionalDrafts()
+      clearProvisionalDrafts()
 
-    const projected = session.applyVisual({
-      doc: current.getJSON(),
-      frontmatterInner: session.view().visual.frontmatterInner,
-    })
-    if (projected.ok) {
-      sourceModeStartRef.current = { source: projected.view.source, visual: projected.view.visual }
-    } else {
-      sourceModeStartRef.current = null
-    }
-    // Reparse fragments from the synchronized visual projection; NodeViews do not cache source ranges.
-    const entered = session.enterSource(fragmentId)
-    setEditorMode('source')
-    setSourceText(entered.view.source)
-    setSourceModeError(projected.ok ? (entered.ok ? null : entered.error) : projected.error)
-    mirrorSessionDirty(session)
-  }, [clearProvisionalDrafts, mirrorSessionDirty])
+      const projected = session.applyVisual({
+        doc: current.getJSON(),
+        frontmatterInner: session.view().visual.frontmatterInner,
+      })
+      if (projected.ok) {
+        sourceModeStartRef.current = {
+          source: projected.view.source,
+          visual: projected.view.visual,
+        }
+      } else {
+        sourceModeStartRef.current = null
+      }
+      // Reparse fragments from the synchronized visual projection; NodeViews do not cache source ranges.
+      const entered = session.enterSource(fragmentId)
+      setEditorMode('source')
+      setSourceText(entered.view.source)
+      setSourceModeError(projected.ok ? (entered.ok ? null : entered.error) : projected.error)
+      mirrorSessionDirty(session)
+    },
+    [clearProvisionalDrafts, mirrorSessionDirty],
+  )
 
   const publishSourcePatch = useCallback((patch: SourcePatch) => {
     setSourcePatchError(null)
     setSourcePatch(patch)
   }, [])
 
-  const protectedSourceOptions = useMemo(() => ({
-    onEditSource: (id: string) => enterSourceMode(id),
-    onConvert: (id: string) => {
-      const session = sessionRef.current
-      if (!session) return
-      try {
-        publishSourcePatch(session.proposeFragmentConversion(id))
-      } catch {
-        setSourcePatchError(t('sourcePatchConversionFailed'))
-      }
-    },
-    onConfirmChange: (request: ProtectedChangeRequest) => setProtectedChangeRequest(request),
-    conversionAvailable: true,
-    getCurrentSource: () => sessionRef.current?.serialize(),
-  }), [enterSourceMode, publishSourcePatch, t])
+  const protectedSourceOptions = useMemo(
+    () => ({
+      onEditSource: (id: string) => enterSourceMode(id),
+      onConvert: (id: string) => {
+        const session = sessionRef.current
+        if (!session) return
+        try {
+          publishSourcePatch(session.proposeFragmentConversion(id))
+        } catch {
+          setSourcePatchError(t('sourcePatchConversionFailed'))
+        }
+      },
+      onConfirmChange: (request: ProtectedChangeRequest) => setProtectedChangeRequest(request),
+      conversionAvailable: true,
+      getCurrentSource: () => sessionRef.current?.serialize(),
+    }),
+    [enterSourceMode, publishSourcePatch, t],
+  )
 
   const insertImage = useCallback(() => {
     void (async () => {
@@ -545,7 +604,9 @@ export default function App() {
           const session = createMarkdownDocumentSession(raw, createTiptapMarkdownCodec(editor))
           sessionRef.current = session
           syncingProjectionRef.current = true
-          replaceEditorBaseline(editor, session.view().visual.doc, (next) => setOutlineItems(collectOutline(next)))
+          replaceEditorBaseline(editor, session.view().visual.doc, (next) =>
+            setOutlineItems(collectOutline(next)),
+          )
           syncingProjectionRef.current = false
           mirrorSessionDirty(session)
           setEditorMode(session.view().mode)
@@ -558,7 +619,9 @@ export default function App() {
           const session = createMarkdownDocumentSession('', createTiptapMarkdownCodec(editor))
           sessionRef.current = session
           syncingProjectionRef.current = true
-          replaceEditorBaseline(editor, session.view().visual.doc, (next) => setOutlineItems(collectOutline(next)))
+          replaceEditorBaseline(editor, session.view().visual.doc, (next) =>
+            setOutlineItems(collectOutline(next)),
+          )
           syncingProjectionRef.current = false
           mirrorSessionDirty(session)
           setEditorMode(session.view().mode)
@@ -622,7 +685,9 @@ export default function App() {
         return
       }
       syncingProjectionRef.current = true
-      replaceEditorBaseline(current, entered.view.visual.doc, (next) => setOutlineItems(collectOutline(next)))
+      replaceEditorBaseline(current, entered.view.visual.doc, (next) =>
+        setOutlineItems(collectOutline(next)),
+      )
       applyProjectionProvenance(current, entered.view.visual.doc)
       syncingProjectionRef.current = false
       synchronizeSessionChrome(entered.view)
@@ -658,60 +723,66 @@ export default function App() {
     }
   }, [mirrorSessionDirty, synchronizeSessionChrome])
 
-  const onSourceChange = useCallback((next: string) => {
-    const session = sessionRef.current
-    if (!session) return
-    const update = session.applySource(next)
-    setEditorMode('source')
-    setSourceText(update.view.source)
-    setSourceModeError(update.ok ? null : update.error)
-    mirrorSessionDirty(session)
-  }, [mirrorSessionDirty])
+  const onSourceChange = useCallback(
+    (next: string) => {
+      const session = sessionRef.current
+      if (!session) return
+      const update = session.applySource(next)
+      setEditorMode('source')
+      setSourceText(update.view.source)
+      setSourceModeError(update.ok ? null : update.error)
+      mirrorSessionDirty(session)
+    },
+    [mirrorSessionDirty],
+  )
 
   /** Serialize and write to disk; false when canceled/failed (caller keeps the tab open) */
-  const doSave = useCallback(async (mode: SaveMode, suggestedName?: string): Promise<boolean> => {
-    const current = editorRef.current
-    if (!current || statusRef.current !== 'ready' || savingRef.current) return false
-    savingRef.current = true
-    setSaveState('saving')
-    try {
-      const session = sessionRef.current
-      if (!session) return false
-      let saveAttempt
+  const doSave = useCallback(
+    async (mode: SaveMode, suggestedName?: string): Promise<boolean> => {
+      const current = editorRef.current
+      if (!current || statusRef.current !== 'ready' || savingRef.current) return false
+      savingRef.current = true
+      setSaveState('saving')
       try {
-        // `beginSave` validates the projected source before any IPC can write it.
-        saveAttempt = await requestSourceBackedSave(
-          session,
-          current,
-          mode,
-          window.markdownApi.save,
-          () => setSaveState('failed'),
-          suggestedName,
-        )
-      } catch (err) {
-        console.error('[markdown] source-backed save consistency check failed:', err)
+        const session = sessionRef.current
+        if (!session) return false
+        let saveAttempt
+        try {
+          // `beginSave` validates the projected source before any IPC can write it.
+          saveAttempt = await requestSourceBackedSave(
+            session,
+            current,
+            mode,
+            window.markdownApi.save,
+            () => setSaveState('failed'),
+            suggestedName,
+          )
+        } catch (err) {
+          console.error('[markdown] source-backed save consistency check failed:', err)
+          return false
+        }
+        const { ticket, result } = saveAttempt
+        if (result.ok && 'path' in result) {
+          const saved = synchronizeSourceBackedSave(session, current, ticket, result)
+          setImageBaseDir(dirOf(result.path))
+          setFilePath(result.path)
+          setSourceText(saved.source)
+          mirrorSessionDirty(session)
+          setSaveState(saved.dirty ? 'idle' : 'saved')
+          return true
+        }
+        setSaveState(result.ok ? 'idle' : 'failed')
         return false
+      } catch (err) {
+        console.error('[markdown] save failed:', err)
+        setSaveState('failed')
+        return false
+      } finally {
+        savingRef.current = false
       }
-      const { ticket, result } = saveAttempt
-      if (result.ok && 'path' in result) {
-        const saved = synchronizeSourceBackedSave(session, current, ticket, result)
-        setImageBaseDir(dirOf(result.path))
-        setFilePath(result.path)
-        setSourceText(saved.source)
-        mirrorSessionDirty(session)
-        setSaveState(saved.dirty ? 'idle' : 'saved')
-        return true
-      }
-      setSaveState(result.ok ? 'idle' : 'failed')
-      return false
-    } catch (err) {
-      console.error('[markdown] save failed:', err)
-      setSaveState('failed')
-      return false
-    } finally {
-      savingRef.current = false
-    }
-  }, [mirrorSessionDirty])
+    },
+    [mirrorSessionDirty],
+  )
 
   /** `outPath` (headless export only) skips the save dialog; resolves true when a file was written. */
   const runExport = useCallback(async (format: ExportFormat, outPath?: string) => {
@@ -1018,7 +1089,8 @@ export default function App() {
     restoreSnapshot: (snapshot) => {
       const current = editorRef.current
       const session = sessionRef.current
-      if (!current || !session || snapshot.owner !== session || editorModeRef.current !== 'visual') return false
+      if (!current || !session || snapshot.owner !== session || editorModeRef.current !== 'visual')
+        return false
       return restoreAiSourceSnapshot(current, session, snapshot.source).ok
     },
     onRunDone: (mutated) => {
@@ -1032,8 +1104,11 @@ export default function App() {
       if (!session) return undefined
       return {
         mode: () => session.view().mode,
-        isCurrent: () => sessionRef.current === session && editorModeRef.current === 'visual'
-          && session.view().mode === 'visual' && !editorRef.current?.isDestroyed,
+        isCurrent: () =>
+          sessionRef.current === session &&
+          editorModeRef.current === 'visual' &&
+          session.view().mode === 'visual' &&
+          !editorRef.current?.isDestroyed,
         registerVisualOperation: (cleanup) => {
           const operation = { active: true, cleanup }
           provisionalDraftsRef.current.add(operation)
@@ -1048,14 +1123,23 @@ export default function App() {
         source: () => session.serialize(),
         sourceBlocks: () => session.sourceBlocks(),
         frontmatter: () => session.frontmatter(),
-        context: () => session.view().protectedFragments
-          .map((fragment) => `protected:${fragment.id}:${fragment.reason}\n${fragment.raw}`)
-          .join('\n\n'),
+        context: () =>
+          session
+            .view()
+            .protectedFragments.map(
+              (fragment) => `protected:${fragment.id}:${fragment.reason}\n${fragment.raw}`,
+            )
+            .join('\n\n'),
         protectedIdsForOps,
         propose: (fragmentId, expectedRaw, nextRaw) => {
-          const fragment = session.view().protectedFragments.find((candidate) => candidate.id === fragmentId)
+          const fragment = session
+            .view()
+            .protectedFragments.find((candidate) => candidate.id === fragmentId)
           if (!fragment) throw new Error(`Protected source fragment ${fragmentId} does not exist`)
-          if (fragment.raw !== expectedRaw) throw new Error('Protected source changed; refresh the document context before proposing a patch')
+          if (fragment.raw !== expectedRaw)
+            throw new Error(
+              'Protected source changed; refresh the document context before proposing a patch',
+            )
           return session.proposeFragmentReplacement(fragmentId, nextRaw, 'ai')
         },
         publish: publishSourcePatch,
@@ -1063,21 +1147,24 @@ export default function App() {
     },
   }
 
-  const confirmSourcePatch = useCallback((patch: SourcePatch): { ok: true } | { ok: false; error: string } => {
-    const current = editorRef.current
-    const session = sessionRef.current
-    if (!current || !session) return { ok: false, error: 'Document is not ready' }
-    const result = applyConfirmedSourcePatch(current, session, patch, editorModeRef.current)
-    if (!result.ok) return result
-    const view = session.view()
-    applyProjectionProvenance(current, view.visual.doc)
-    synchronizeSessionChrome(view)
-    setSourceText(view.source)
-    mirrorSessionDirty(session)
-    setSourcePatch(null)
-    setSourcePatchError(null)
-    return result
-  }, [mirrorSessionDirty, synchronizeSessionChrome])
+  const confirmSourcePatch = useCallback(
+    (patch: SourcePatch): { ok: true } | { ok: false; error: string } => {
+      const current = editorRef.current
+      const session = sessionRef.current
+      if (!current || !session) return { ok: false, error: 'Document is not ready' }
+      const result = applyConfirmedSourcePatch(current, session, patch, editorModeRef.current)
+      if (!result.ok) return result
+      const view = session.view()
+      applyProjectionProvenance(current, view.visual.doc)
+      synchronizeSessionChrome(view)
+      setSourceText(view.source)
+      mirrorSessionDirty(session)
+      setSourcePatch(null)
+      setSourcePatchError(null)
+      return result
+    },
+    [mirrorSessionDirty, synchronizeSessionChrome],
+  )
 
   const fileName = filePath ? filePath.replace(/^.*[/\\]/, '') : null
   const statusText =
@@ -1181,11 +1268,21 @@ export default function App() {
               focusRequest={findFocus}
             />
           )}
-          <div className={`editor-scroll${sourceMode ? ' source-mode-scroll' : ''}`} ref={scrollRef}>
-            <div className={`doc-page${sourceMode ? ' source-mode-page' : ''}`} style={{ zoom: zoom / 100 }}>
+          <div
+            className={`editor-scroll${sourceMode ? ' source-mode-scroll' : ''}`}
+            ref={scrollRef}
+          >
+            <div
+              className={`doc-page${sourceMode ? ' source-mode-page' : ''}`}
+              style={{ zoom: zoom / 100 }}
+            >
               {sourceMode ? (
                 <>
-                  {sourceModeError && <div className="source-mode-error" role="alert">{t('sourceModeError')}: {sourceModeError}</div>}
+                  {sourceModeError && (
+                    <div className="source-mode-error" role="alert">
+                      {t('sourceModeError')}: {sourceModeError}
+                    </div>
+                  )}
                   <SourceEditor
                     value={sourceText}
                     selection={sessionRef.current?.view().sourceSelection}
@@ -1195,7 +1292,11 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  {sourcePatchError && <div className="source-patch-error" role="alert">{sourcePatchError}</div>}
+                  {sourcePatchError && (
+                    <div className="source-patch-error" role="alert">
+                      {sourcePatchError}
+                    </div>
+                  )}
                   {fmOpen && <FrontmatterPanel value={fmText} onChange={onFrontmatterChange} />}
                   <EditorContent editor={editor} />
                 </>
@@ -1243,7 +1344,9 @@ export default function App() {
           </footer>
         </div>
       </div>
-      {!sourceMode && <SlashMenu ref={slashMenuRef} state={slashState} onDismiss={() => setSlashState(null)} />}
+      {!sourceMode && (
+        <SlashMenu ref={slashMenuRef} state={slashState} onDismiss={() => setSlashState(null)} />
+      )}
       <ToastHost />
       {!sourceMode && <TableMenu editor={editor} scrollRef={scrollRef} zoom={zoom} />}
       {!sourceMode && editor && status === 'ready' && (
