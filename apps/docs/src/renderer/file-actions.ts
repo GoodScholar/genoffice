@@ -71,7 +71,7 @@ import {
 import { t, getLang } from './i18n/locale'
 import { isBlankDocument, parseHtmlFragment, replaceBlockRange } from './ai/protocol'
 import { carryDocSeen } from './ai/tools'
-import { isDocDirty } from './doc-dirty'
+import { isDocDirty, resetCrossDocEditState } from './doc-dirty'
 import { createSaveSerializer } from './save-until-persisted'
 import { checkMissingFonts, collectDocFonts } from './font-check'
 import { setDocFontTable } from './line-metrics'
@@ -387,6 +387,7 @@ export async function loadFile(
     ctx.setFooterDirty(false)
     ctx.setHfVariants(hfVariantsFromParsed(parsed))
     ctx.setHfVariantsDirty([])
+    resetCrossDocEditState(ctx)
     ctx.setTitlePg(parsed.titlePg ?? false)
     ctx.setTitlePgDirty(false)
     ctx.setEvenOddHf(parsed.evenAndOddHeaders ?? false)
@@ -482,6 +483,9 @@ export async function newFile(ctx: FileActionContext): Promise<boolean | undefin
     ctx.setHeaderDirty(false)
     ctx.setFooter(null)
     ctx.setFooterDirty(false)
+    ctx.setHfVariants(hfVariantsFromParsed(parsed))
+    ctx.setHfVariantsDirty([])
+    resetCrossDocEditState(ctx)
     ctx.setShowComments(false)
     ctx.setComments([])
     ctx.setCommentsDirty(false)
@@ -763,6 +767,7 @@ export function save(
   saveAs: boolean,
   auto = false,
   newDocName?: string,
+  explicitTarget?: ExplicitSaveTarget,
 ): Promise<boolean> {
   // A save arriving mid-flight waits for the current one instead of failing.
   // Reuse the finished pass only when it left nothing behind — judged by the
@@ -771,9 +776,19 @@ export function save(
   // saveOnce resolves a stale pathless snapshot via pathlessDocSavedPath, so
   // the retry can no longer create a duplicate file.
   return runSerializedSave(
-    () => saveOnce(ctx, saveAs, auto, newDocName),
-    () => !saveAs && !ctx.saveIncompleteRef.current && !isDocDirty(ctx),
+    () => saveOnce(ctx, saveAs, auto, newDocName, explicitTarget),
+    // an explicit MCP target must always write, never reuse an earlier pass
+    () => !saveAs && !explicitTarget && !ctx.saveIncompleteRef.current && !isDocDirty(ctx),
   )
+}
+
+/** an MCP-driven explicit output target: write to this absolute path, no dialog */
+export interface ExplicitSaveTarget {
+  path: string
+  overwrite: boolean
+  /** called with the main process's failure reason, so a caller that reports
+   *  outside the UI (MCP) can relay it instead of a generic message */
+  onError?: (message: string) => void
 }
 
 /** the parsed fragment flags every node aiChanged (yellow highlight); a boot-time fill is not a reviewable AI edit */
@@ -839,6 +854,7 @@ async function saveOnce(
   saveAs: boolean,
   auto: boolean,
   newDocName?: string,
+  explicitTarget?: ExplicitSaveTarget,
 ): Promise<boolean> {
   const { doc, editor } = ctx
   if (!doc || !editor) return false
@@ -865,7 +881,22 @@ async function saveOnce(
     // already landed on disk — overwrite that file instead of creating another
     let savedPath = doc.filePath ?? pathlessDocSavedPath
     let passwordIntentPending = false
-    if (saveAs || !savedPath) {
+    if (explicitTarget) {
+      // MCP-driven explicit output: no dialog, no derived name — always write to
+      // the caller's path (overwrite policy is enforced in the main process).
+      const result = await window.desktop.saveDocxTo(
+        explicitTarget.path,
+        buffer,
+        explicitTarget.overwrite,
+      )
+      if (!result.ok) {
+        explicitTarget.onError?.(result.error ?? '')
+        ctx.setStatus(t('appSaveFailed', { error: result.error ?? '' }))
+        showToast(t('appSaveFailed', { error: result.error ?? '' }), 'error')
+        return false
+      }
+      savedPath = result.path!
+    } else if (saveAs || !savedPath) {
       // A never-saved document still called "Untitled" gets a name derived from its first heading
       const autoName =
         !doc.filePath && doc.fileName === t('appUntitledDocx') ? deriveAutoFileName(editor) : null
@@ -960,8 +991,6 @@ async function saveOnce(
     ctx.setSection(readSectionSettings(reparsed))
     ctx.setSections(readSections(reparsed))
     ctx.setSectionDirty(false)
-    ctx.setSectionsDirty([])
-    ctx.setTrailingStartType(null)
     ctx.setPageColor(readPageColor(reparsed))
     ctx.setPageColorDirty(false)
     ctx.setHeader(
@@ -985,11 +1014,7 @@ async function saveOnce(
     )
     ctx.setFooterDirty(false)
     ctx.setHfVariants(hfVariantsFromParsed(reparsed))
-    ctx.setSectionHfEdits({})
-    ctx.setPgNumEdit(null)
-    ctx.setPgNumDirtySections([])
-    ctx.setPendingNumbering({ newDefs: [], restartNums: [] })
-    ctx.setStyleUpserts({})
+    resetCrossDocEditState(ctx)
     ctx.setHfVariantsDirty([])
     ctx.setTitlePg(reparsed.titlePg ?? false)
     ctx.setTitlePgDirty(false)

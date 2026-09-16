@@ -466,6 +466,19 @@ export function extractMarkdownImageSources(markdown: string): string[] {
   return sharedExtractMarkdownImageSources(markdown)
 }
 
+/**
+ * True when a resolved image target lives inside a resolved document
+ * directory (the md-asset:// serve gate). Root-level directories ("/",
+ * "C:\") already end in a separator, so the prefix must not append a second
+ * one — `dir + sep` turns "/" into "//" and 403s every sibling image of a
+ * filesystem-root document.
+ */
+export function isInDocDir(target: string, dir: string, separator: string = sep): boolean {
+  if (target === dir) return false
+  const prefix = dir.endsWith(separator) ? dir : dir + separator
+  return target.startsWith(prefix)
+}
+
 export function rewriteMarkdownImageSources(
   markdown: string,
   rewrites: ReadonlyMap<string, string>,

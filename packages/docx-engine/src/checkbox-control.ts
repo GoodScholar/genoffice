@@ -22,13 +22,20 @@ const glyphOf = (hex: string | undefined, fallback: string): string => {
     : fallback
 }
 
-const isOn = (val: string | undefined): boolean =>
-  val === undefined || val === '1' || val === 'true' || val === 'on'
+/** Checkbox state values are case-insensitive in the wild (TRUE/ON/True):
+    an absent value means checked, mirroring the on/off falsy-list parity. */
+export const isOn = (val: string | undefined): boolean => {
+  if (val === undefined) return true
+  const lower = val.toLowerCase()
+  return lower === '1' || lower === 'true' || lower === 'on'
+}
 
 /** The checkbox glyph pair a w:sdtPr declares (defaults are Word's own). */
 export function sdtCheckboxGlyphs(sdtPrXml: string): CheckboxGlyphs {
-  const state = (name: string): string | undefined =>
-    new RegExp(`<w14:${name}\\b[^>]*\\bw14:val="([^"]*)"`).exec(sdtPrXml)?.[1]
+  const state = (name: string): string | undefined => {
+    const m = new RegExp(`<w14:${name}\\b[^>]*\\bw14:val=(?:"([^"]*)"|'([^']*)')`).exec(sdtPrXml)
+    return m?.[1] ?? m?.[2]
+  }
   return {
     checked: glyphOf(state('checkedState'), DEFAULT_GLYPHS.checked),
     unchecked: glyphOf(state('uncheckedState'), DEFAULT_GLYPHS.unchecked),

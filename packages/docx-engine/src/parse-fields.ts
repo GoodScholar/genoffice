@@ -33,11 +33,11 @@ function tocLeaderOf(pPr: string, style?: StyleInfo): TabStop['leader'] | undefi
   const tabsXml = /<w:tabs>[\s\S]*?<\/w:tabs>/.exec(pPr)?.[0]
   if (tabsXml) {
     const rights = Array.from(tabsXml.matchAll(/<w:tab\s[^>]*\/>/g), (m) => m[0]).filter((t) =>
-      /\sw:val="right"/.test(t),
+      /\sw:val=(?:"right"|'right')/.test(t),
     )
     const last = rights[rights.length - 1]
     if (last) {
-      const v = /\sw:leader="([^"]+)"/.exec(last)?.[1] ?? 'none'
+      const v = /\sw:leader=(?:"([^"]+)"|'([^']+)')/.exec(last)?.slice(1, 3).find(Boolean) ?? 'none'
       return (TAB_LEADERS as readonly string[]).includes(v) ? (v as TabStop['leader']) : 'none'
     }
   }
@@ -274,11 +274,12 @@ export function applyTocEntryNumbers(blocks: Block[], numbering: Map<string, Num
 /** Open fields after a paragraph's fldChars; an entry turns true past its separator. */
 export function fieldStackAfter(xml: string, stack: readonly boolean[]): boolean[] {
   const next = [...stack]
-  const re = /<w:fldChar[^>]*w:fldCharType="(begin|separate|end)"/g
+  const re = /<w:fldChar\b[^>]*\bw:fldCharType=(?:"(begin|separate|end)"|'(begin|separate|end)')/g
   let m: RegExpExecArray | null
   while ((m = re.exec(xml)) !== null) {
-    if (m[1] === 'begin') next.push(false)
-    else if (m[1] === 'separate') {
+    const kind = m[1] ?? m[2]
+    if (kind === 'begin') next.push(false)
+    else if (kind === 'separate') {
       if (next.length > 0) next[next.length - 1] = true
     } else next.pop()
   }
@@ -315,7 +316,9 @@ export function fieldLabel(xml: string): string {
   if (keyword) return `Field (${keyword})`
   // No field code in this paragraph: it only closes a field started earlier
   // (e.g. the paragraph holding the TOC's fldChar end + page break).
-  if (xml.includes('fldCharType="end"') && !xml.includes('fldCharType="begin"')) {
+  const hasEnd = xml.includes('fldCharType="end"') || xml.includes("fldCharType='end'")
+  const hasBegin = xml.includes('fldCharType="begin"') || xml.includes("fldCharType='begin'")
+  if (hasEnd && !hasBegin) {
     return xml.includes('w:type="page"') ? 'Field end marker + page break' : 'Field end marker'
   }
   return 'Field (TOC/page number/etc.)'

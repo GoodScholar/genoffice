@@ -34,11 +34,13 @@ import type {
   ThemeFonts,
 } from './types'
 import { resolveThemeColor } from './theme'
+import { isOn } from './checkbox-control'
 
 /** No run un-hides itself and nothing anchors here (bookmarks, comments, sectPr,
  *  drawings, numbering): safe to collapse a style-vanished paragraph entirely */
 export function staysVanished(xml: string): boolean {
-  if (/<w:vanish\s[^>]*w:val="(?:0|false|off)"/.test(xml)) return false
+  if (/<w:vanish\s[^>]*w:val=(?:"(?:0|false|none|off)"|'(?:0|false|none|off)')/i.test(xml))
+    return false
   return !/<w:(?:drawing|pict|object|sectPr|bookmarkStart|commentRangeStart|commentRangeEnd|numPr)[\s/>]/.test(
     xml,
   )
@@ -417,7 +419,7 @@ export function checkboxStateOf(beginRun: XNode | null): { checked: boolean } | 
   const state = findChild(box, 'w:checked') ?? findChild(box, 'w:default')
   if (!state) return { checked: false }
   const val = attrsOf(state)['w:val']
-  return { checked: val === undefined || val === '1' || val === 'true' || val === 'on' }
+  return { checked: isOn(val) }
 }
 
 /**
@@ -849,7 +851,7 @@ export function themedRFonts(
  *  w:document/w:hdr instead of per element; Word honors the inheritance) */
 export function partXmlSpacePreserve(partXml: string, rootTag: string): boolean {
   const open = new RegExp(`<${rootTag}(\\s[^>]*)?>`).exec(partXml)?.[1] ?? ''
-  return /\sxml:space="preserve"/.test(open)
+  return /\sxml:space=(?:"preserve"|'preserve')/.test(open)
 }
 
 export function mergeRuns(runs: Run[]): Run[] {

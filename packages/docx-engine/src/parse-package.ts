@@ -123,13 +123,19 @@ export async function parseProtection(zip: JSZip): Promise<DocProtection | null>
   const xml = await file.async('string')
   const tag = /<w:documentProtection\b[^>]*?(?:\/>|>)/.exec(xml)?.[0]
   if (!tag) return null
-  const edit = /w:edit="([^"]+)"/.exec(tag)?.[1]
+  const editMatch = /w:edit=(?:"([^"]+)"|'([^']+)')/.exec(tag)
+  const edit = editMatch?.[1] ?? editMatch?.[2]
   if (!edit || edit === 'none') return null
-  const enforcement = /w:enforcement="([^"]+)"/.exec(tag)?.[1]
-  const hash = /w:hash="([^"]+)"/.exec(tag)?.[1]
-  const salt = /w:salt="([^"]+)"/.exec(tag)?.[1]
-  const spin = /w:cryptSpinCount="(\d+)"/.exec(tag)?.[1]
-  const sid = /w:cryptAlgorithmSid="(\d+)"/.exec(tag)?.[1]
+  const enforcementMatch = /w:enforcement=(?:"([^"]+)"|'([^']+)')/.exec(tag)
+  const enforcement = enforcementMatch?.[1] ?? enforcementMatch?.[2]
+  const hashMatch = /w:hash=(?:"([^"]+)"|'([^']+)')/.exec(tag)
+  const hash = hashMatch?.[1] ?? hashMatch?.[2]
+  const saltMatch = /w:salt=(?:"([^"]+)"|'([^']+)')/.exec(tag)
+  const salt = saltMatch?.[1] ?? saltMatch?.[2]
+  const spinMatch = /w:cryptSpinCount=(?:"(\d+)"|'(\d+)')/.exec(tag)
+  const spin = spinMatch?.[1] ?? spinMatch?.[2]
+  const sidMatch = /w:cryptAlgorithmSid=(?:"(\d+)"|'(\d+)')/.exec(tag)
+  const sid = sidMatch?.[1] ?? sidMatch?.[2]
   return {
     edit,
     enforced: enforcement === '1' || enforcement === 'true' || enforcement === 'on',
@@ -146,11 +152,15 @@ export async function parseWriteProtection(zip: JSZip): Promise<WriteProtection 
   if (!file) return null
   const tag = /<w:writeProtection\b[^>]*?(?:\/>|>)/.exec(await file.async('string'))?.[0]
   if (!tag) return null
-  const recommended = /w:recommended="(?:1|true|on)"/.test(tag)
-  const hash = /w:hash="([^"]+)"/.exec(tag)?.[1]
-  const salt = /w:salt="([^"]+)"/.exec(tag)?.[1]
-  const spin = /w:cryptSpinCount="(\d+)"/.exec(tag)?.[1]
-  const sid = /w:cryptAlgorithmSid="(\d+)"/.exec(tag)?.[1]
+  const recommended = /w:recommended=(?:"(?:1|true|on)"|'(?:1|true|on)')/.test(tag)
+  const hashMatch = /w:hash=(?:"([^"]+)"|'([^']+)')/.exec(tag)
+  const hash = hashMatch?.[1] ?? hashMatch?.[2]
+  const saltMatch = /w:salt=(?:"([^"]+)"|'([^']+)')/.exec(tag)
+  const salt = saltMatch?.[1] ?? saltMatch?.[2]
+  const spinMatch = /w:cryptSpinCount=(?:"(\d+)"|'(\d+)')/.exec(tag)
+  const spin = spinMatch?.[1] ?? spinMatch?.[2]
+  const sidMatch = /w:cryptAlgorithmSid=(?:"(\d+)"|'(\d+)')/.exec(tag)
+  const sid = sidMatch?.[1] ?? sidMatch?.[2]
   if (!recommended && !hash) return null
   return {
     ...(recommended ? { recommended } : {}),

@@ -1,6 +1,7 @@
 import JSZip from 'jszip'
 import { describe, expect, it } from 'vitest'
 import { generateParagraphXml, generateTocFieldXml, parseDocx, saveDocx } from '../src/index'
+import { sdtCheckboxGlyphs } from '../src/checkbox-control'
 import type { Block, GenerateContext, GeneratedBlock } from '../src/index'
 import { buildDocx } from './helpers/build-docx'
 
@@ -124,6 +125,15 @@ describe('field paragraph display model', () => {
     // direct stop wins; a direct right stop without w:leader is a bare tab;
     // no direct right stop falls back to the style; nothing known stays undefined
     expect(leaders).toEqual(['hyphen', 'none', 'dot', undefined, 'underscore'])
+  })
+
+  it('a TOC entry reads single-quoted tab stop values and leaders', async () => {
+    const body =
+      '<w:p><w:pPr><w:pStyle w:val="TOC1"/>' +
+      "<w:tabs><w:tab w:val='right' w:leader='dot' w:pos='9350'/></w:tabs></w:pPr>" +
+      '<w:r><w:t>Title</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>3</w:t></w:r></w:p>'
+    const doc = await parseDocx(await buildDocx({ bodyXml: body }))
+    expect(doc.blocks[0].fieldDisplay).toMatchObject({ kind: 'tocLine', leader: 'dot' })
   })
 
   it('a TOC entry carries the leading result run face and weight (Word draws the entry with its runs)', async () => {
@@ -460,6 +470,18 @@ describe('field code spanning paragraphs', () => {
     expect(doc.blocks[1].type).toBe('paragraph')
   })
 
+  it('single-quoted fldChar runs fold like double-quoted ones', async () => {
+    const xml = SPLIT_CODE_PARAGRAPHS.replaceAll(
+      /w:fldCharType="(begin|separate|end)"/g,
+      "w:fldCharType='$1'",
+    )
+    const doc = await parseDocx(await buildDocx({ bodyXml: xml }))
+    expect(shownMarkers(doc.blocks)).toEqual([true, true, false, false])
+    const tail = doc.blocks[2]
+    expect(tail.fieldDisplay?.kind).toBe('text')
+    expect(tail.fieldDisplay?.left).toBe('Left {It’s not')
+  })
+
   it('paragraph marks inside a field result (TOC entries) stay visible', async () => {
     const doc = await parseDocx(
       await buildDocx({ bodyXml: TOC_ENTRY_PARAGRAPH + FIELD_END_PAGEBREAK_PARAGRAPH }),
@@ -616,6 +638,13 @@ describe('FORMCHECKBOX form fields', () => {
   it('checked state comes from w:checked (wins over w:default)', async () => {
     const doc = await parseDocx(
       await buildDocx({ bodyXml: checkboxParagraph('<w:default w:val="0"/><w:checked/>') }),
+    )
+    expect(doc.blocks[0].runs?.[1]).toMatchObject({ text: '☒', instrField: 'FORMCHECKBOX' })
+  })
+
+  it('reads uppercase checked values (TRUE/ON) like Word does', async () => {
+    const doc = await parseDocx(
+      await buildDocx({ bodyXml: checkboxParagraph('<w:checked w:val="ON"/>') }),
     )
     expect(doc.blocks[0].runs?.[1]).toMatchObject({ text: '☒', instrField: 'FORMCHECKBOX' })
   })
@@ -863,10 +892,23 @@ describe('w14:checkbox content controls', () => {
   })
 
   it('drops the control when the glyph was typed over', async () => {
-    const doc = await parseDocx(await buildDocx({ bodyXml: sdtCheckboxParagraph('1', '\u2612') }))
+    const doc = await parseDocx(await buildDocx({ bodyXml: sdtCheckboxParagraph('1', '☒') }))
     const runs = doc.blocks[0].runs!.map((r) => (r.sdtCheckboxXml ? { ...r, text: 'yes' } : r))
     const xml = generateParagraphXml({ type: 'paragraph', runs }, ctx)
     expect(xml).not.toContain('<w:sdt>')
     expect(xml).toContain('yes')
+  })
+
+  it('reads uppercase checked values (TRUE) as checked', async () => {
+    const xml = sdtCheckboxParagraph('1', '☐').replace('w14:val="1"', 'w14:val="TRUE"')
+    const doc = await parseDocx(await buildDocx({ bodyXml: xml }))
+    expect(doc.blocks[0].runs?.[1].text).toBe('☒')
+  })
+
+  it('reads single-quoted checkbox glyph values', () => {
+    const glyphs = sdtCheckboxGlyphs(
+      "<w:sdtPr><w14:checkbox><w14:checkedState w14:val='2611'/><w14:uncheckedState w14:val='2610'/></w14:checkbox></w:sdtPr>",
+    )
+    expect(glyphs).toEqual({ checked: '☑', unchecked: '☐' })
   })
 })

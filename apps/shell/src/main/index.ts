@@ -132,6 +132,22 @@ import {
 import { blankXlsxBuffer } from '@genoffice/xlsx-gateway/gateway/csv-import'
 import { blankPdfBuffer } from '../../../pdf/src/main/blank-pdf'
 import {
+  applyMcpSettings,
+  clearMcpLogs,
+  configureMcpRuntime,
+  getMcpRecentLogs,
+  mcpLogFilePath,
+  mcpStatus,
+  revealMcpLogFile,
+  startMcpFromSettings,
+  stopMcpSync,
+  type McpSettings,
+} from './mcp/app-mcp'
+import { createCliRunner } from './mcp/cli-runner'
+import { DEFAULT_MCP_PORT } from './mcp/mcp-server'
+import { createDocsControl, installDocsBridge } from './mcp/docs-bridge'
+import { createSlidesControl } from './mcp/slides-bridge'
+import {
   configureSheetsRuntime,
   exportSheetsPdfHeadless,
   hasActiveQueuedWorkbook,
@@ -222,8 +238,13 @@ import {
 import type { TabKind } from '../shared/tabs-api'
 import { TABS_CHANNELS } from '../shared/tabs-api'
 import { showErrorDialog } from './error-dialog'
-import { normalizeRecentQuery, pageRecentPaths, statPathEntries } from './recent-files'
-import { isSameFile, isValidRenameName } from './rename-validation'
+import {
+  matchesExtFamily,
+  normalizeRecentQuery,
+  pageRecentPaths,
+  statPathEntries,
+} from './recent-files'
+import { isSameFile, isValidRawRenameName } from './rename-validation'
 import { runHeadlessExport, type HeadlessExporters } from './headless-export'
 import { TabManager } from './tab-manager'
 import { applyUpdateChannel, initAutoUpdater } from './updater'
@@ -404,8 +425,22 @@ function currentAutoSaveDefault(): AutoSaveDefault {
   return cachedAutoSaveDefault
 }
 
-let cachedAiPanelPrefs: AiPanelPrefs | null = null
+/** MCP server settings (persisted in userData/app-settings.json; default off). */
+function currentMcpSettings(): McpSettings {
+  const saved = readAppSettings(APP_SETTINGS_PATH())
+  const port = saved.mcpPort
+  return {
+    enabled: saved.mcpEnabled === true,
+    port:
+      typeof port === 'number' && Number.isInteger(port) && port > 0 && port < 65536
+        ? port
+        : DEFAULT_MCP_PORT,
+    background: saved.mcpBackground === true,
+    logging: saved.mcpLogging === true,
+  }
+}
 
+let cachedAiPanelPrefs: AiPanelPrefs | null = null
 function currentAiPanelPrefs(): AiPanelPrefs {
   if (cachedAiPanelPrefs) return cachedAiPanelPrefs
   const saved = readAppSettings(APP_SETTINGS_PATH())
@@ -2834,6 +2869,28 @@ function newDocTab(): void {
   }
 }
 
+/** MCP: open a blank docs tab and return its webContents id, for the visible-editor bridge */
+function openBlankDocsTabForMcp(): number {
+  if (!tabManager) throw new Error('GenOffice is not ready')
+  const tabId = tabManager.openDocsTab(undefined, { newBlank: true })
+  const view = tabManager.docsTabs().find((t) => t.id === tabId)
+  if (!view) throw new Error('the new document tab could not be opened')
+  recordStarPromptDocOpen()
+  analytics.track('file_new', { kind: 'docx' })
+  return view.webContents.id
+}
+
+/** MCP: open a blank slides tab and return its webContents id, for the visible-deck bridge */
+function openBlankSlidesTabForMcp(): number {
+  if (!tabManager) throw new Error('GenOffice is not ready')
+  const tabId = tabManager.openSlidesTab()
+  const view = tabManager.slidesTabs().find((t) => t.id === tabId)
+  if (!view) throw new Error('the new presentation tab could not be opened')
+  recordStarPromptDocOpen()
+  analytics.track('file_new', { kind: 'pptx' })
+  return view.webContents.id
+}
+
 function newSlideTab(): void {
   try {
     tabManager?.openSlidesTab()
@@ -2981,7 +3038,7 @@ function registerHomeIpc(): void {
   ipcMain.handle(HOME_CHANNELS.starred, (_event, query: unknown): RecentPage => {
     const { offset, limit, ext } = normalizeRecentQuery(query)
     const all = statEntries(readStarredFiles()).sort((a, b) => b.mtimeMs - a.mtimeMs)
-    const filtered = ext ? all.filter((entry) => entry.ext === ext) : all
+    const filtered = ext ? all.filter((entry) => matchesExtFamily(entry.ext, ext)) : all
     return {
       entries: limit === 0 ? [] : filtered.slice(offset, offset + limit),
       total: filtered.length,
@@ -3079,8 +3136,13 @@ function registerHomeIpc(): void {
     (_event, path: unknown, newName: unknown): RenameResult => {
       if (typeof path !== 'string' || typeof newName !== 'string')
         return { ok: false, error: tm('errBadArgs') }
+      // Validate the raw name before trimming: trimming first would
+      // silently turn "report " into "report" and make the
+      // trailing-space gate in isValidRenameName unreachable. Reject
+      // with the localized gate instead of renaming to a different
+      // name than requested.
+      if (!isValidRawRenameName(newName)) return { ok: false, error: tm('errBadName') }
       const name = newName.trim()
-      if (!isValidRenameName(name)) return { ok: false, error: tm('errBadName') }
       if (!existsSync(path)) return { ok: false, error: tm('errMissing') }
       const target = join(dirname(path), name)
       if (target === path) return { ok: true, path }
@@ -3212,6 +3274,54 @@ function registerHomeIpc(): void {
       autoSaveDefaultUpdatedAt: next.updatedAt,
     })
     for (const wc of webContents.getAllWebContents()) wc.send('app:auto-save-default-changed', next)
+  })
+
+  ipcMain.handle(HOME_CHANNELS.getMcpStatus, () => mcpStatus())
+
+  ipcMain.handle(HOME_CHANNELS.setMcpSettings, async (_event, patch: unknown) => {
+    if (!patch || typeof patch !== 'object') return mcpStatus()
+    const request = patch as {
+      enabled?: unknown
+      port?: unknown
+      background?: unknown
+      logging?: unknown
+    }
+    const current = currentMcpSettings()
+    const enabled = typeof request.enabled === 'boolean' ? request.enabled : current.enabled
+    const port =
+      typeof request.port === 'number' &&
+      Number.isInteger(request.port) &&
+      request.port > 0 &&
+      request.port < 65536
+        ? request.port
+        : current.port
+    const background =
+      typeof request.background === 'boolean' ? request.background : current.background
+    const logging = typeof request.logging === 'boolean' ? request.logging : current.logging
+    writeAppSettings(APP_SETTINGS_PATH(), {
+      mcpEnabled: enabled,
+      mcpPort: port,
+      mcpBackground: background,
+      mcpLogging: logging,
+    })
+    try {
+      return await applyMcpSettings({ enabled, port, background, logging })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { ...mcpStatus(), error: message }
+    }
+  })
+
+  ipcMain.handle(HOME_CHANNELS.getMcpLogs, () => getMcpRecentLogs())
+
+  ipcMain.handle(HOME_CHANNELS.clearMcpLogs, () => {
+    clearMcpLogs()
+  })
+
+  ipcMain.handle(HOME_CHANNELS.openMcpLogFile, () => {
+    revealMcpLogFile()
+    const logPath = mcpLogFilePath()
+    if (logPath) shell.showItemInFolder(logPath)
   })
 
   ipcMain.handle(HOME_CHANNELS.getAnalyticsEnabled, (): boolean => analyticsEnabled())
@@ -4469,6 +4579,31 @@ app.whenReady().then(async () => {
   initAnalytics()
   analytics.track('app_launch')
   startSheetsCaptureServer()
+  // Register the docs renderer bridge listeners before the MCP server can take
+  // a visible-editing request.
+  installDocsBridge()
+  // MCP server: localhost-only, docx generation for external agents. Deps are
+  // injected so the mcp module never imports this file back.
+  configureMcpRuntime({
+    version: app.getVersion(),
+    defaultSaveDir: () => defaultSaveDir(),
+    openPath: (filePath) => routeDocumentPath(filePath),
+    docsControl: createDocsControl({ openBlankTab: () => openBlankDocsTabForMcp() }),
+    slidesControl: createSlidesControl({ openBlankTab: () => openBlankSlidesTabForMcp() }),
+    // the headless create_*/read_* tools delegate to the bundled genoffice CLI
+    // (the same engines, no second implementation); it runs on the app's own
+    // Node runtime via ELECTRON_RUN_AS_NODE
+    cliRunner: createCliRunner({
+      executable: process.execPath,
+      entry: app.isPackaged
+        ? join(process.resourcesPath, 'cli', 'genoffice.cjs')
+        : join(APPS_ROOT, '..', 'packages', 'cli', 'dist', 'genoffice.cjs'),
+    }),
+    logFilePath: join(app.getPath('userData'), 'mcp-log.txt'),
+  })
+  void startMcpFromSettings(currentMcpSettings()).catch((error) => {
+    console.error('[mcp] failed to start on boot:', error)
+  })
   createShellWindow()
   // deferred to ready: labels need currentLang(), which reads app.getLocale()
   installBackToHomeItems()
@@ -4494,6 +4629,9 @@ app.on('before-quit', () => {
   // No close prompt may fall through to "Save" during shutdown
   markSheetsShuttingDown()
   stopSheetsSidecar()
+  // release the MCP port synchronously (macOS keeps the process alive after
+  // the last window closes, so window-all-closed is not enough)
+  stopMcpSync()
 })
 
 // after every window has closed, so the shell window's own 'closed' republish cannot revive the file
