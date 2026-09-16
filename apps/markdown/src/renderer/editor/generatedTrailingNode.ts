@@ -66,15 +66,22 @@ export const UserTrailingEmptyParagraph = Extension.create({
           const previousTail = oldState.doc.lastChild
           const last = state.doc.lastChild
           if (
-            previousTail?.attrs.sourceId === USER_TRAILING_EMPTY_PARAGRAPH_SOURCE_ID
-            && last?.attrs.sourceId === null
+            previousTail?.attrs.sourceId === USER_TRAILING_EMPTY_PARAGRAPH_SOURCE_ID &&
+            last?.attrs.sourceId === null
           )
             return
-          const inheritedSourceId = previousTail !== null
-            && last !== null
-            && state.doc.childCount === oldState.doc.childCount + 1
-            && last.attrs.sourceId === previousTail.attrs.sourceId
-            && !last.eq(previousTail)
+          const previousTailStart = previousTail
+            ? oldState.doc.content.size - previousTail.nodeSize
+            : -1
+          const inheritedSourceId =
+            previousTail !== null &&
+            last !== null &&
+            state.doc.childCount === oldState.doc.childCount + 1 &&
+            last.attrs.sourceId === previousTail.attrs.sourceId &&
+            previousTailStart <= state.doc.content.size &&
+            state.doc.content
+              .cut(0, previousTailStart)
+              .eq(oldState.doc.content.cut(0, previousTailStart))
           if (
             !last ||
             last.type.name !== 'paragraph' ||

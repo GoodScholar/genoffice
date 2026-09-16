@@ -102,11 +102,18 @@ export interface RunOpsResult {
 function protectedIdsInNode(node: PmNode): string[] {
   const ids: string[] = []
   node.descendants((child) => {
-    if ((child.type.name === 'protectedSourceBlock' || child.type.name === 'protectedSourceInline') && typeof child.attrs.id === 'string') {
+    if (
+      (child.type.name === 'protectedSourceBlock' || child.type.name === 'protectedSourceInline') &&
+      typeof child.attrs.id === 'string'
+    ) {
       ids.push(child.attrs.id)
     }
   })
-  if ((node.type.name === 'protectedSourceBlock' || node.type.name === 'protectedSourceInline') && typeof node.attrs.id === 'string') ids.push(node.attrs.id)
+  if (
+    (node.type.name === 'protectedSourceBlock' || node.type.name === 'protectedSourceInline') &&
+    typeof node.attrs.id === 'string'
+  )
+    ids.push(node.attrs.id)
   return ids
 }
 
@@ -116,20 +123,34 @@ function protectedIdsInNode(node: PmNode): string[] {
  * content exists, so callers can reject before any earlier op mutates state.
  */
 export function protectedIdsForOps(editor: Editor, ops: MdOp[]): string[] {
-  const byBlock = Array.from({ length: editor.state.doc.childCount }, (_, index) => protectedIdsInNode(editor.state.doc.child(index)))
+  const byBlock = Array.from({ length: editor.state.doc.childCount }, (_, index) =>
+    protectedIdsInNode(editor.state.doc.child(index)),
+  )
   const all = [...new Set(byBlock.flat())]
   if (all.length === 0) return []
-  const selected = blockIndexRange(editor.state.doc, editor.state.selection.from, editor.state.selection.to)
+  const selected = blockIndexRange(
+    editor.state.doc,
+    editor.state.selection.from,
+    editor.state.selection.to,
+  )
   const idsForTarget = (target: BlockTarget): string[] => {
     const start = target === 'selection' ? selected.startIndex : target.start
-    const end = target === 'selection' ? selected.endIndex : target.end ?? target.start
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end >= byBlock.length || start > end) return all
+    const end = target === 'selection' ? selected.endIndex : (target.end ?? target.start)
+    if (
+      !Number.isInteger(start) ||
+      !Number.isInteger(end) ||
+      start < 0 ||
+      end >= byBlock.length ||
+      start > end
+    )
+      return all
     if (start !== end) return all
     return byBlock[start] ?? []
   }
   let earlierOpMayChangeDocOrSelection = false
   for (const op of ops) {
-    const hasDynamicTarget = ('target' in op && op.target === 'selection') || ('after' in op && op.after === 'selection')
+    const hasDynamicTarget =
+      ('target' in op && op.target === 'selection') || ('after' in op && op.after === 'selection')
     // Targets based on the live selection cannot be proven stable after any
     // earlier structural/editor op in the same batch.  Reject before runOps
     // rather than resolving them against a partially-mutated document.
@@ -139,7 +160,8 @@ export function protectedIdsForOps(editor: Editor, ops: MdOp[]): string[] {
       const ids = idsForTarget(op.target)
       if (ids.length) return ids
     }
-    if ('after' in op && op.after === 'selection' && selected.startIndex !== selected.endIndex) return all
+    if ('after' in op && op.after === 'selection' && selected.startIndex !== selected.endIndex)
+      return all
     if (op.op !== 'setFrontmatter') earlierOpMayChangeDocOrSelection = true
   }
   return []

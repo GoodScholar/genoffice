@@ -1,302 +1,206 @@
-# Markdown 无损编辑基础设计
+# Markdown Lossless Editing Foundation Design
 
-日期：2026-09-14
-状态：分节设计已批准，正式规格待用户审阅
+**Date:** 2026-09-14
 
-## 背景
+## Background
 
-GenOffice Markdown 当前使用 TipTap 作为可视化编辑器，并通过 `@tiptap/markdown` 在 Markdown 与 ProseMirror 文档之间转换。打开文件时，`App.tsx` 把正文整篇交给 `setContent(..., { contentType: 'markdown' })`；保存时，整篇调用 `editor.getMarkdown()` 后写回磁盘。
+The previous Markdown path could preserve the document envelope—frontmatter, LF or CRLF style, UTF-8 BOM, and final-newline state—but the body did not have an equivalent source-preservation model. Whole-document TipTap serialization could silently remove or normalize raw HTML, comments, image dimensions, custom fenced blocks, list indentation, and whitespace that the visual editor did not understand.
 
-现有 `DocEnvelope` 已能保留 frontmatter、统一的 LF/CRLF 风格、UTF-8 BOM 和末尾换行状态，但正文没有同等级别的源码保真机制。当前测试还明确接受原始 HTML 降级，例如删除 `<span style>`、段落对齐、图片尺寸、`<u>` 和 `<mark>` 标签。用户只要打开并保存含这些内容的文件，就可能发生静默信息丢失。
+This design introduces a lossless editing foundation. It is not a Typora clone and does not attempt to add every Markdown feature in one release.
 
-本设计建立 Markdown 的无损编辑基础。它不是 Typora 克隆，也不在一个版本中补齐搜索、导出、主题、图片和表格等全部差距。
+## Goals
 
-## 目标
+1. Opening and saving an untouched file writes exactly the original bytes.
+2. Visual edits normalize only the safe source region the user changed.
+3. Recognizable content outside the editable core remains visible as preserved source instead of degrading silently.
+4. The application provides one full-document source mode.
+5. AI can understand preserved fragments but cannot modify them without an explicit, confirmed source patch.
+6. Existing TipTap editing, AI operations, atomic save behavior, and image lifecycle remain in use.
 
-1. 未编辑文件执行打开→保存时，写回内容与原文件逐字节一致。
-2. 可视化编辑只允许规范化用户实际修改的安全源码区域；其他区域逐字保留。
-3. 可编辑核心之外的可识别内容以保留片段存在，不再静默降级。
-4. 提供整篇文档源码模式，作为唯一源码编辑入口。
-5. AI 可以理解保留片段，但默认不能修改；明确修改也必须经过源码差异确认。
-6. 继续复用现有 TipTap 编辑能力、AI 操作、原子保存和图片资源生命周期。
+## Non-goals
 
-## 非目标
+- Reproducing Typora or supporting every Markdown dialect.
+- Inferring arbitrary third-party extension semantics.
+- Crash recovery, external file-change detection, or conflict merging.
+- Workspace-wide search and folder management.
+- User CSS, a theme marketplace, focus mode, typewriter mode, or advanced source-editor IDE features.
+- Image resizing/upload configuration or advanced table-width editing.
+- Replacing TipTap or rebuilding the current AI editing system.
 
-- 完整复制 Typora 或支持所有 Markdown 方言。
-- 自动理解任意第三方自定义语法。
-- 草稿崩溃恢复、外部文件变化检测或冲突合并。
-- 文件夹级搜索与工作区管理。
-- 代码高亮、行号、用户 CSS、主题市场、专注模式或打字机模式。
-- 图片缩放、上传、根目录配置，或表格列宽、对齐和重排增强。
-- 新的导出格式或导出样式配置。
-- 替换 TipTap 或重写现有 AI 编辑体系。
+## Product contract
 
-## 产品契约
+### Editable core
 
-### 可编辑核心
+The first editable core includes supported GFM blocks and inline syntax, task lists, tables, `$` and `$$` mathematics, Mermaid fenced code blocks, and frontmatter.
 
-首期可编辑核心包括当前已经支持的 GFM 内容、任务列表、表格、`$`/`$$` 数学公式、Mermaid fenced code block 和 frontmatter。
+When a user changes a safe unit, the current serializer may normalize that unit—for example, list indentation may become four spaces. Unchanged units must retain their original source.
 
-可编辑核心可以在用户修改的安全区域内按当前序列化规则规范化。例如，修改列表项后，该列表的缩进可统一为四个空格；未修改的其他块不能因此被重写。
+### Lossless compatibility
 
-### 无损兼容
+Lossless compatibility is a source-preservation contract, not a promise of universal visual rendering:
 
-无损兼容是源码保留契约，不等同于全量可视化支持：
+- untouched source is reused exactly;
+- normalization is limited to the safe rewrite window;
+- preserved fragments change only after an explicit edit, deletion, replacement, or confirmed conversion;
+- Save As may rewrite known image destinations as an explicit file-operation side effect.
 
-- 未被用户编辑的源码保持原样。
-- 可编辑核心只在用户修改的安全重写窗口内规范化。
-- 保留片段只有在用户明确编辑、删除、替换或确认转换时才允许改变。
-- 用户明确执行 Save As 时，图片资源迁移可以改写对应图片引用；这是文件操作的显式副作用。
+### Preserved fragments
 
-### 保留片段
+The first phase protects:
 
-首期自动识别并保护：
+- block and inline raw HTML;
+- HTML comments;
+- legacy `:::` fenced divs;
+- source whose parse or rewrite boundary cannot be proven safe.
 
-- 块级与内联原始 HTML；
-- HTML 注释；
-- 旧版 `:::` fenced div；
-- 解析失败或无法确定安全编辑范围的源码。
+Precisely bounded inline HTML protects only the inline range. Incomplete tags, ambiguous nesting, or unreliable alignment expand protection to the containing Markdown unit. If no safe projection can be built, the whole document remains intact and opens in source mode.
 
-边界明确的内联 HTML 只保护该片段。标签不完整、嵌套有歧义或无法可靠定位时，保护范围扩大到所在 Markdown 块。若无法建立任何安全块范围，文档默认进入源码模式。
+Strict Markdown treats some extensions as ordinary text, so there is no reliable universal detector for unknown syntax. The system preserves untouched source bytes without claiming to understand every extension.
 
-严格 Markdown 会把某些第三方扩展当成普通文本，因此不存在可靠的通用“未知语法探测器”。这类内容首期按源码文字显示；其未触碰源码仍由原始切片逐字保留，但产品不承诺理解其扩展语义。
+## Considered approaches
 
-## 已考虑的方案
+### A. Source-backed document session — selected
 
-### 方案 A：源码支撑的编辑会话（采用）
+The complete source is authoritative. A session maps ordered source units to visual nodes, reuses unchanged raw slices, and serializes only changed safe units. TipTap, source mode, AI, and save operations share this session.
 
-原始源码是事实来源。编辑会话维护源码片段与可视化节点之间的来源关系，未变化片段复用原文，只有变化片段重新序列化。TipTap、源码编辑器、AI 和保存都通过同一模块协作。
+### B. Diff after whole-document serialization — rejected
 
-该方案保留当前编辑器投资，同时能真正满足区域级无损。
+Serializer formatting changes create many false differences, and a merge cannot be proven safe around unknown syntax or structural edits.
 
-### 方案 B：保存时差异合并（拒绝）
+### C. New source-position-aware editing engine — rejected for this phase
 
-先整篇序列化，再把结果与原文做差异合并。序列化器自身会改变表格空格、列表缩进和其他格式，产生大量伪差异；复杂结构和未知语法下无法证明合并安全。
+A CST-first engine could provide stronger long-term guarantees, but replacing TipTap would also require rebuilding editing, history, AI operations, and exports.
 
-### 方案 C：新建源码位置感知编辑内核（拒绝）
+## Architecture
 
-使用新的 CST/源码优先编辑内核替换 TipTap，可以获得更强的长期保真能力，但需要重写编辑、AI 操作、撤销和导出衔接，超出首期范围。
+### Core seam
 
-## 架构
+`MarkdownDocumentSession` owns source segmentation, provenance, projection validation, safe rewriting, editor mode, dirty state, and the save baseline. Callers do not assemble source fragments themselves.
 
-### 核心 seam
-
-新增深模块 `MarkdownDocumentSession`。它集中处理源码分段、来源映射、变化检测、安全重写、模式切换、dirty 判断和最终序列化。调用方不需要理解片段拼接算法。
-
-概念接口如下；具体 TypeScript 命名可在不改变语义的前提下调整：
+Conceptually, the interface provides:
 
 ```ts
 interface MarkdownDocumentSession {
   view(): SessionView
   applyVisual(next: VisualProjection): SessionUpdate
   applySource(next: string): SessionUpdate
+  enterSource(fragmentId?: string): SessionUpdate
+  enterVisual(): SessionUpdate
+  beginSave(): SaveTicket
+  markSaved(actualText: string, ticket: SaveTicket): SessionView
   serialize(): string
-  markSaved(sourceActuallyWritten: string): SessionView
 }
 ```
 
-接口约束：
+Key constraints:
 
-- `view()` 返回当前可视化投影、源码编辑文本、保留片段范围和 dirty 状态。
-- `applyVisual()` 接受完整可视化投影，但只重写被识别为变化的安全窗口。
-- `applySource()` 以用户编辑后的全文建立新的事实来源并重新解析。
-- `serialize()` 必须是纯读取，不得在保存时才修改文档。
-- `markSaved()` 只在磁盘写入成功后更新保存基线；参数始终是主进程实际写入的完整源码。
-- Markdown codec 作为依赖传入模块，模块内部可以有测试用 adapter；调用方和测试使用相同 seam。
+- `view()` returns the current source, visual projection, protected ranges, mode, revision, and dirty state.
+- `applyVisual()` accepts a complete visual projection but rewrites only proven safe source groups.
+- `applySource()` establishes the edited full source as the new authority and rebuilds the projection.
+- `serialize()` is a pure read; save must not perform a late whole-document conversion.
+- `markSaved()` receives the exact text written by the main process and rebases newer edits safely.
+- The Markdown codec is injected so production and tests exercise the same seam.
 
-### 源码文档与片段
+### Source units and provenance
 
-编辑会话保存完整源码及其有序片段。片段至少包含：
+The scanner consumes lexer `raw` values monotonically against the original body. Each source unit records its raw source, trailing separator bytes, range, stable session-local id, projection fingerprint, and protected fragments.
 
-```ts
-type SourceSegment =
-  | {
-      kind: 'editable'
-      id: string
-      raw: string
-      sourceRange: SourceRange
-      visualFingerprint: string
-    }
-  | {
-      kind: 'protected'
-      id: string
-      raw: string
-      sourceRange: SourceRange
-      display: 'inline' | 'block'
-      reason: ProtectedReason
-    }
-```
+Editable nodes carry a non-rendered `sourceId`. Protected nodes also carry their exact `raw` source and protection reason. Fingerprints recursively ignore provenance attributes while retaining semantic structure.
 
-这些类型是模块内部模型，不暴露拼接细节。`sourceRange` 在每次源码提交后重新计算，不能被调用方长期缓存。`id` 用于一次编辑会话内关联可视化节点和源码片段，不写入用户文件。
+On a visual update:
 
-可编辑片段的初始 ProseMirror JSON 生成 fingerprint。可视化更新后：
+- an unchanged group reuses its original `raw` and separator bytes;
+- a changed editable group is serialized through the codec;
+- a new group receives a canonical local boundary;
+- deleted groups are omitted;
+- moved unchanged groups move their original bytes;
+- ambiguous structural changes fail closed instead of rewriting a wider document silently.
 
-- fingerprint 未变化的片段直接复用 `raw`；
-- 新建片段使用 Markdown codec 序列化；
-- 删除片段从有序序列中移除；
-- 整体移动片段时移动其原始源码，不重写内容；
-- 拆分、合并、嵌套层级或相邻语法发生变化时，扩大为包含相关片段和必要分隔符的安全重写窗口；窗口以外的字节必须保持不变。
+Whitespace and separators are source data. They enter a rewrite window only when the structural edit requires it.
 
-空行和结构分隔符属于相邻源码片段之间的保真数据。只有当结构变化使原分隔符失效时，才允许把它纳入安全重写窗口。
+### Adapters
 
-### Adapter
+Four adapters share the session:
 
-四个 adapter 使用同一会话：
+1. The visual adapter projects editable units into TipTap and preserved fragments into protected atoms.
+2. The source adapter edits the complete source and can select a preserved fragment's exact range.
+3. The AI adapter reads complete context, preflights ordinary operations, and uses confirmed source patches for preserved fragments.
+4. The save adapter sends `session.beginSave().source` through the existing atomic IPC path and rebases the returned text.
 
-1. **可视化编辑 adapter**：把可编辑片段投影为 TipTap 节点，把保留片段投影为只读 atom 节点，并把 transaction 结果提交给会话。
-2. **源码编辑 adapter**：编辑整篇源码；从保留片段进入时按会话提供的范围定位和选中。
-3. **AI adapter**：读取会话上下文；普通结构化操作只能作用于可编辑片段，保留片段修改走待确认源码差异。
-4. **保存 adapter**：继续使用现有 IPC、原子写入和资源处理，但保存文本来自 `session.serialize()`，不再直接来自整篇 `editor.getMarkdown()`。
+## Mode and data flow
 
-## 编辑模式与数据流
+### Open
 
-### 打开
+1. The main process reads the exact UTF-8 text.
+2. The session parses the envelope, scans source units, and identifies protection ranges.
+3. The visual adapter creates a TipTap projection without adding an undo event or dirtying the file.
+4. If projection cannot be proven safe, the exact input opens in source mode.
 
-1. 主进程读取 UTF-8 文件并把完整文本交给 renderer。
-2. `MarkdownDocumentSession` 解析 envelope、扫描保留语法、建立有序片段和源码映射。
-3. 可视化 adapter 建立 TipTap 文档。初始装载不进入撤销历史，也不标记 dirty。
-4. 若无法建立安全投影，保留完整源码并直接进入源码模式。
+### Visual editing
 
-现有 `stripLegacyFencedDivs()` 的破坏性单向迁移停止用于打开文件；旧 fenced div 改为保留片段。
+1. A TipTap transaction updates the visual document.
+2. The adapter submits the full projection to `applyVisual()`.
+3. The session validates protected bytes and rewrites only changed safe groups.
+4. Dirty state is based on serialized session source versus the last successful save baseline.
 
-### 可视化编辑
+Generated trailing paragraphs have reserved provenance. The session may temporarily retain an empty structural node while source remains unchanged, but typed content must immediately become ordinary source-backed content.
 
-1. TipTap transaction 更新可视化投影。
-2. adapter 把投影提交给 `applyVisual()`。
-3. 会话识别变化范围，只重写安全窗口，并更新完整源码。
-4. dirty 根据当前序列化源码与最近成功保存基线比较。
+### Source mode
 
-现有 UI 和 AI op 仍可以通过 TipTap transaction 工作，但不得绕过会话直接形成保存文本。
+Entering source mode first synchronizes the current visual projection. The editor shows the complete source, including frontmatter and protected fragments. Entering from a fragment selects its range.
 
-### 进入源码模式
+Returning to visual mode reparses the source. A no-op switch preserves history and dirty state. A source edit becomes one visual-editor undo step. Internal projection failure leaves the user in source mode with all input intact.
 
-1. 先把尚未同步的 TipTap 投影提交给会话。
-2. 源码编辑器读取会话中的整篇源码，包括 frontmatter 和正文。
-3. 从保留片段的“编辑源码”进入时，自动选中对应范围。
-4. 格式化 Ribbon、表格菜单和依赖可视化节点的写操作在源码模式中禁用。
+### Save and Save As
 
-首期源码编辑器只要求可靠的纯文本编辑、选区定位和本地撤销；代码高亮、行号和高级源码编辑体验不在本规格内。
+The renderer begins a save with a revision-bearing ticket. The main process performs its existing authorization, image handling, and atomic write, then returns the exact written text. The session updates its baseline only for the matching ticket and preserves newer in-flight edits. Save As may rebase known image destination changes without overwriting concurrent content edits.
 
-### 返回可视化模式
+## Protected-fragment interaction
 
-1. 若源码没有变化，继续复用原会话，不产生 dirty 或历史记录。
-2. 若源码已变化，调用 `applySource()` 并重新分段、解析和投影。
-3. 无法安全解析的局部内容成为保留片段。
-4. 本次源码模式修改在可视化历史中成为一个整体撤销步骤；源码编辑器内部仍保留逐步撤销。
-5. 若发生内部错误且无法生成安全投影，停留在源码模式并保留全部输入。
+Protected blocks show escaped original source with a clear protected state. They provide explicit actions to edit source or propose conversion. The caret cannot enter the fragment, and ordinary deletion, replacement, cutting, or structural operations require confirmation.
 
-### 保存与 Save As
+Moving a protected block may change its position but not its raw bytes. Failed conversion changes nothing and offers source mode as the fallback.
 
-1. renderer 获取 `session.serialize()` 和完整源码中的图片引用。
-2. 主进程继续进行路径授权、图片准备和原子写入。
-3. 普通保存成功后调用 `markSaved(result.text)`。
-4. 保存结果新增 `text` 字段，始终返回主进程实际写入的完整源码。Save As 若迁移图片并改写引用，renderer 先用该字段同步会话，再调用 `markSaved(result.text)`。
-5. 保存过程中出现的新编辑与已写入基线不同，必须继续保持 dirty。
+## AI protection
 
-## 保留片段交互
+AI context may include protected source with stable fragment identifiers and read-only instructions. Ordinary index-based operations preflight their complete range and reject the entire batch if it touches protected content.
 
-### 默认呈现
+An explicit request to modify a preserved fragment may create a source patch containing the fragment id, expected old source, proposed source, origin, and revision. The UI displays a diff. Confirmation applies the patch only if the id, revision, and expected source remain current; stale patches fail without changing the document.
 
-保留片段直接显示原始源码并带明确的受保护状态，不猜测渲染结果。块级内容使用受保护源码块，内联内容使用不可直接编辑的内联 atom。
+## Error handling
 
-每个片段提供：
+- Scanner coverage gaps, lexer exceptions, or unsafe projection fall back to source mode while preserving the exact input.
+- A protected-fragment mismatch rejects the visual update and does not alter session state.
+- Source-mode parse failure retains the edited source and reports why visual mode is unavailable.
+- Save failure keeps the document dirty and does not move the baseline.
+- A stale save result may update only proven external rewrites, such as known image destinations; conflicts remain dirty.
 
-- **编辑源码**：切换整篇源码模式并定位片段；
-- **尝试转换**：生成可编辑 Markdown 和源码差异，确认后替换。
+## Export behavior
 
-### 直接操作
+PDF, print HTML, and DOCX exports render protected source as escaped text and remove editor-only controls. Exports never execute raw HTML or silently convert unsupported syntax.
 
-- 光标不能进入片段内部。
-- 复制片段得到原始源码。
-- 整体拖动只改变位置，不改变片段内容。
-- 删除、剪切或替换片段必须确认；确认后的操作进入撤销历史。
-- 转换失败时不修改文档，并引导用户进入源码模式。
+## Test and acceptance strategy
 
-## AI 保护
+The lossless corpus covers core GFM, frontmatter, CRLF, BOM, no-final-newline input, mathematics, Mermaid, raw HTML, comments, legacy fenced divs, malformed markup, image attributes, and mixed safe/protected content.
 
-AI 可以读取保留片段的源码，以便理解完整文档。保留片段在 AI 上下文中带稳定片段标识和只读说明。
+Required automated assertions include:
 
-现有基于块索引的 `apply_ops` 必须把保留片段视为不可写范围：任何普通操作只要跨越或命中保留片段，就整体拒绝，不允许部分成功后静默跳过。
+- untouched open/save is byte-identical;
+- editing one safe unit leaves all other units unchanged;
+- protected content cannot change without confirmation;
+- source mode selects fragment ranges and preserves failed input;
+- undo and redo work across visual/source transitions;
+- AI operations fail atomically around protected content;
+- save tickets preserve concurrent edits and exact main-process rewrites;
+- generated trailing nodes, list transitions, and slash commands remain in visual mode;
+- print and DOCX exports present protected source safely.
 
-只有用户明确选中或点名保留片段，并发出直接修改指令时，AI 才能提出源码 patch。该 patch 必须包含原片段标识、期望旧源码和新源码，并显示差异供用户确认。确认前：
+Unit tests cover scanning, projection, sessions, history, AI patches, and saves. Renderer tests cover mode switching and confirmation UI. Electron E2E covers real opening, editing, slash commands, saving, layout, and argv file handling.
 
-- 不修改 TipTap 文档；
-- 不修改编辑会话源码；
-- 不触发自动保存。
+## Migration and rollout
 
-确认时若片段标识或旧源码已变化，patch 视为过期并拒绝应用。应用成功后重新建立会话投影，并作为一个可撤销步骤。
+The source-backed path replaces the lossy whole-document save path. Development assertions compare projected state and serialized source, while production behavior fails closed. Feature completion requires removing destructive legacy stripping and every save fallback to `editor.getMarkdown()`.
 
-源码模式中首期只允许 AI 读取当前源码；依赖 TipTap 块索引的写操作禁用。保留片段 patch 仍从可视化模式的显式片段操作进入。
+## Follow-up specifications
 
-## 错误处理
-
-- **局部解析失败**：扩大保护范围，保留原始源码。
-- **整篇投影失败**：打开源码模式，不丢弃或替换原始文本。
-- **返回可视化失败**：停留在源码模式，保留未保存输入并显示具体错误。
-- **序列化或一致性校验失败**：在 IPC 写盘前终止保存，保持 dirty。
-- **磁盘写入失败**：依赖现有原子写入保证原文件不被截断，保持 dirty。
-- **模式切换并发**：AI 流式写入、待应用 AI 修改或保存同步尚未稳定时，要求先完成、取消或拒绝相关操作。
-- **过期 AI patch**：拒绝应用并要求重新生成，不尝试自动合并未知源码。
-
-任何错误路径都不得用旧的 TipTap 序列化结果覆盖更新后的源码。
-
-## 导出行为
-
-PDF、DOCX 和“在 Docs 中打开”继续使用当前可视化投影。保留片段按界面中的原始源码文字导出，并进行转义；首期不执行或渲染用户原始 HTML，以避免安全风险和误导性结果。
-
-这不是导出功能增强，但必须确保包含保留片段的文档可以导出，且导出流程不会修改源文件。
-
-## 测试与验收
-
-### 无损语料库
-
-建立真实 Markdown 夹具，至少覆盖：
-
-- LF、CRLF、UTF-8 BOM、有/无末尾换行；
-- frontmatter 及其后空行；
-- GFM 标题、段落、引用、嵌套列表、任务列表、表格、代码块和链接；
-- 数学公式与 Mermaid；
-- 块级和内联 HTML、HTML 注释、`<details>`、样式属性、图片尺寸、`<u>`、`<mark>`；
-- 旧版 `:::` fenced div；
-- 标签不完整、嵌套有歧义和局部解析异常；
-- 真实 Typora 或第三方工具生成的组合文档。
-
-### 必须自动化的断言
-
-1. 每个未编辑夹具打开→保存后逐字节相等。
-2. 修改一个可编辑块时，差异只位于对应安全重写窗口。
-3. 保留片段在未明确操作时逐字不变。
-4. 可视化→源码→可视化且无编辑时，内容、dirty 和历史均不变化。
-5. 源码修改后可以建立正确投影；失败时源码仍完整可保存。
-6. 删除、替换、转换和 AI 修改在确认前均不改变会话。
-7. 普通 AI op 命中保留片段时整体失败；显式 patch 过期时拒绝应用。
-8. 保存期间继续编辑时仍保持 dirty。
-9. Save As 图片重写后，会话源码与磁盘实际内容一致。
-10. 原子写入失败时，原文件不变。
-11. 现有 Markdown 测试与类型检查通过，GFM、数学公式、Mermaid、导出和现有 AI 操作不退化。
-
-### 测试层次
-
-- 以 `MarkdownDocumentSession` 接口为主要单元测试 surface，覆盖分段、重写、dirty 和失败结果。
-- 用真实 TipTap adapter 做集成测试，覆盖节点来源标识、transaction、撤销和保留 atom。
-- 用 renderer 测试覆盖模式切换、选区定位、确认交互和 AI patch 卡片。
-- 用主进程测试覆盖保存、Save As 实际写入源码和图片资源迁移。
-- 保留现有端到端路径；只为关键模式切换与保存路径增加最少必要的 E2E 用例。
-
-## 迁移与发布
-
-- 不批量迁移磁盘上的现有文档。
-- 第一次由新版本打开时，旧 `:::` 内容不再自动去除，而是作为保留片段显示。
-- 先以无损语料库和隐藏开发开关验证，再替换默认保存来源。
-- 切换默认行为前必须证明：零编辑保存逐字节一致、区域级差异受限、现有 Markdown 测试与类型检查通过。
-- 若会话模块无法建立安全状态，产品始终退回源码模式，不回退到旧的整篇有损序列化路径。
-
-## 后续独立规格
-
-完成本规格后，按风险和用户价值分别规划：
-
-1. 草稿恢复与外部文件冲突检测；
-2. 文件夹与全局搜索工作流；
-3. 代码块高亮和长文档体验；
-4. 导出与主题定制；
-5. 图片和表格高级编辑。
+Separate work may cover richer source-editor features, external change/conflict handling, workspace search, Typora-style themes, image manipulation, advanced table editing, and additional export controls.

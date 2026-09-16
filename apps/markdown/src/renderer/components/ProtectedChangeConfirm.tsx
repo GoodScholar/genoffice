@@ -18,24 +18,45 @@ function changeLabel(kind: ProtectedChangeRequest['kind']): string {
 }
 
 /** Confirmation boundary for destructive atom operations; rebuild steps from current editor state. */
-export function ProtectedChangeConfirm({ editor, request, session, onDismiss }: ProtectedChangeConfirmProps) {
+export function ProtectedChangeConfirm({
+  editor,
+  request,
+  session,
+  onDismiss,
+}: ProtectedChangeConfirmProps) {
   const [error, setError] = useState<string | null>(null)
   const confirm = () => {
     const result = applyProtectedChange(editor, request, session)
     if (result.ok) onDismiss()
-    else setError(result.error === 'Protected change is stale' ? t('protectedChangeStale') : result.error)
+    else
+      setError(
+        result.error === 'Protected change is stale' ? t('protectedChangeStale') : result.error,
+      )
   }
 
   return (
     <div className="protected-change-backdrop" role="presentation">
-      <section className="protected-change-confirm" role="dialog" aria-modal="true" aria-labelledby="protected-change-title">
+      <section
+        className="protected-change-confirm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="protected-change-title"
+      >
         <h2 id="protected-change-title">{t('protectedChangeTitle')}</h2>
         <p>{t('protectedChangeBody', { count: request.ids.length })}</p>
         <p className="protected-change-kind">{changeLabel(request.kind)}</p>
-        {error && <p className="protected-change-error" role="alert">{error}</p>}
+        {error && (
+          <p className="protected-change-error" role="alert">
+            {error}
+          </p>
+        )}
         <div className="protected-change-buttons">
-          <button type="button" data-protected-change-cancel onClick={onDismiss}>{t('protectedChangeCancel')}</button>
-          <button type="button" className="protected-change-approve" onClick={confirm}>{t('protectedChangeConfirm')}</button>
+          <button type="button" data-protected-change-cancel onClick={onDismiss}>
+            {t('protectedChangeCancel')}
+          </button>
+          <button type="button" className="protected-change-approve" onClick={confirm}>
+            {t('protectedChangeConfirm')}
+          </button>
         </div>
       </section>
     </div>

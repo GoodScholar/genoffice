@@ -4,11 +4,7 @@ export interface SourceRange {
 }
 
 export type ProtectedReason =
-  | 'raw-html'
-  | 'html-comment'
-  | 'legacy-fenced-div'
-  | 'ambiguous-inline-html'
-  | 'parse-failure'
+  'raw-html' | 'html-comment' | 'legacy-fenced-div' | 'ambiguous-inline-html' | 'parse-failure'
 
 export interface SourceToken {
   type: string
@@ -39,7 +35,22 @@ const closingFenceLine = /^(?: {0,3})(`{3,}|~{3,})[ \t]*\r?$/
 const legacyOpenLine = /^(?: {0,3}):::(?:callout|toggle)\b.*\r?$/
 const legacyCloseLine = /^(?: {0,3}):::\s*\r?$/
 const blankLines = /^(?:[ \t]*\r?\n)+/
-const voidHtmlTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
+const voidHtmlTags = new Set([
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr',
+])
 
 function intersects(a: SourceRange, b: SourceRange): boolean {
   return a.from < b.to && b.from < a.to
@@ -47,7 +58,7 @@ function intersects(a: SourceRange, b: SourceRange): boolean {
 
 function fencedRanges(source: string): SourceRange[] {
   const ranges: SourceRange[] = []
-  let opening: { marker: string, from: number } | null = null
+  let opening: { marker: string; from: number } | null = null
   let offset = 0
   for (const line of source.split(/(?<=\n)/)) {
     const normalized = line.replace(/\n$/, '')
@@ -55,7 +66,12 @@ function fencedRanges(source: string): SourceRange[] {
     const closingMatch = closingFenceLine.exec(normalized)
     if (!opening && openingMatch) {
       opening = { marker: openingMatch[1] ?? openingMatch[2], from: offset }
-    } else if (opening && closingMatch && closingMatch[1][0] === opening.marker[0] && closingMatch[1].length >= opening.marker.length) {
+    } else if (
+      opening &&
+      closingMatch &&
+      closingMatch[1][0] === opening.marker[0] &&
+      closingMatch[1].length >= opening.marker.length
+    ) {
       ranges.push({ from: opening.from, to: offset + line.length })
       opening = null
     }
@@ -116,7 +132,7 @@ function containsHtml(tokens: SourceToken[] | undefined): boolean {
   return Boolean(tokens?.some((token) => token.type === 'html' || containsHtml(token.tokens)))
 }
 
-function wrappedInlineRaw(token: SourceToken): { raw: string, offset: number } | null {
+function wrappedInlineRaw(token: SourceToken): { raw: string; offset: number } | null {
   const patterns: Record<string, RegExp> = {
     strong: /^(\*\*|__)([\s\S]*)\1$/,
     em: /^(\*|_)([\s\S]*)\1$/,
@@ -140,10 +156,16 @@ function collectHtmlFragments(
   for (const token of tokens) {
     if (!raw.startsWith(token.raw, cursor)) return false
     if (token.type === 'html') {
-      fragments.push({ raw: token.raw, range: { from: from + cursor, to: from + cursor + token.raw.length } })
+      fragments.push({
+        raw: token.raw,
+        range: { from: from + cursor, to: from + cursor + token.raw.length },
+      })
     } else if (containsHtml(token.tokens)) {
       const wrapped = wrappedInlineRaw(token)
-      if (!wrapped || !collectHtmlFragments(token.tokens!, wrapped.raw, from + cursor + wrapped.offset, fragments)) {
+      if (
+        !wrapped ||
+        !collectHtmlFragments(token.tokens!, wrapped.raw, from + cursor + wrapped.offset, fragments)
+      ) {
         return false
       }
     }
@@ -153,10 +175,10 @@ function collectHtmlFragments(
 }
 
 type HtmlPart =
-  | { kind: 'comment', reason: ProtectedReason }
-  | { kind: 'open', name: string }
-  | { kind: 'close', name: string }
-  | { kind: 'complete', reason: ProtectedReason }
+  | { kind: 'comment'; reason: ProtectedReason }
+  | { kind: 'open'; name: string }
+  | { kind: 'close'; name: string }
+  | { kind: 'complete'; reason: ProtectedReason }
   | { kind: 'invalid' }
 
 function htmlPart(raw: string): HtmlPart {
@@ -182,7 +204,7 @@ function inlineProtection(unit: SourceToken, range: SourceRange): ScannedUnit['p
   if (!collectHtmlFragments(unit.tokens, unit.raw, range.from, fragments)) return ambiguous(range)
   if (fragments.length === 0) return null
 
-  const open: Array<{ name: string, from: number }> = []
+  const open: Array<{ name: string; from: number }> = []
   const ranges: SourceRange[] = []
   const reasons: ProtectedReason[] = []
   for (const fragment of fragments) {
@@ -210,7 +232,8 @@ function inlineProtection(unit: SourceToken, range: SourceRange): ScannedUnit['p
 
 function topLevelHtmlProtection(raw: string, range: SourceRange): ScannedUnit['protection'] {
   const part = htmlPart(raw.trim())
-  if (part.kind === 'invalid' || part.kind === 'open' || part.kind === 'close') return ambiguous(range)
+  if (part.kind === 'invalid' || part.kind === 'open' || part.kind === 'close')
+    return ambiguous(range)
   return { display: 'block', reason: part.reason, ranges: [range] }
 }
 
@@ -265,7 +288,11 @@ export function scanMarkdownSource(
         return failed('Lexer space token cannot be assigned to a preceding unit')
       }
       if (units.length === 0) {
-        if (!tokens.slice(index).every((remaining) => remaining.type === 'space' && /^[ \t\r\n]+$/.test(remaining.raw))) {
+        if (
+          !tokens
+            .slice(index)
+            .every((remaining) => remaining.type === 'space' && /^[ \t\r\n]+$/.test(remaining.raw))
+        ) {
           return failed('Lexer space token cannot be assigned to a preceding unit')
         }
         cursor += raw.length
@@ -277,18 +304,21 @@ export function scanMarkdownSource(
       continue
     }
     const range = { from: cursor, to: cursor + raw.length }
+    const leadingBlank = /^(?:[ \t]*\r?\n)+/.exec(raw)?.[0].length ?? 0
+    const contentRange = { from: range.from + leadingBlank, to: range.to }
     cursor = range.to
     const next = tokens[index + 1]
     // Some real codec tokens (for example task lists) own their leading blank
     // lines. Do not consume those bytes twice as the preceding unit's suffix.
-    const blank = next?.type === 'space' || /^(?:[ \t]*\r?\n)/.test(next?.raw ?? '')
-      ? ''
-      : blankLines.exec(bodyRaw.slice(cursor))?.[0] ?? ''
+    const blank =
+      next?.type === 'space' || /^(?:[ \t]*\r?\n)/.test(next?.raw ?? '')
+        ? ''
+        : (blankLines.exec(bodyRaw.slice(cursor))?.[0] ?? '')
     cursor += blank.length
 
     let protection: ScannedUnit['protection'] = null
-    if (!codeRanges.some((fence) => intersects(range, fence))) {
-      if (legacyRanges.some((legacy) => intersects(range, legacy))) {
+    if (!codeRanges.some((fence) => intersects(contentRange, fence))) {
+      if (legacyRanges.some((legacy) => intersects(contentRange, legacy))) {
         protection = { display: 'block', reason: 'legacy-fenced-div', ranges: [range] }
       } else if (token.type === 'html') {
         protection = topLevelHtmlProtection(raw, range)
@@ -299,6 +329,7 @@ export function scanMarkdownSource(
     units.push({ id: `${idPrefix}-b${units.length}`, raw, range, trailingRaw: blank, protection })
   }
 
-  if (cursor !== bodyRaw.length) return failed('Lexer token raw does not completely cover the source')
+  if (cursor !== bodyRaw.length)
+    return failed('Lexer token raw does not completely cover the source')
   return { units, fallbackToSource: false }
 }

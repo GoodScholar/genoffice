@@ -13,8 +13,7 @@ export interface SourcePatch {
 }
 
 export type PatchValidation =
-  | { ok: true }
-  | { ok: false; error: 'fragment-missing' | 'raw-changed' | 'revision-changed' }
+  { ok: true } | { ok: false; error: 'fragment-missing' | 'raw-changed' | 'revision-changed' }
 
 export interface SourcePatchTarget {
   id: string
@@ -23,7 +22,7 @@ export interface SourcePatchTarget {
 
 export interface SourceReadBlock {
   raw: string
-  protected: ReadonlyArray<{ id: string, reason: string, raw: string }>
+  protected: ReadonlyArray<{ id: string; reason: string; raw: string }>
 }
 
 /** One async visual mutation's lifetime, revoked permanently by a mode/session transition. */

@@ -1,36 +1,36 @@
 # GenOffice
 
-GenOffice 是一套以 AI 辅助为差异化能力的办公应用。本上下文统一描述 Markdown 产品边界与文档兼容性语言。
+GenOffice is an office suite differentiated by AI-assisted authoring. This context defines the product boundaries and compatibility vocabulary for Markdown work.
 
 ## Language
 
-**AI 优先 Markdown 编辑器**：
-以 AI 辅助创作和编辑为核心差异，同时提供可靠的 Markdown 文档体验；目标不是完整复制某个现有编辑器。
-_Avoid_: Typora 克隆、全面 Typora 对齐
+**AI-first Markdown editor**:
+AI-assisted writing and editing are the primary differentiators, backed by a dependable Markdown editing experience. The goal is not to reproduce another editor in full.
+_Avoid_: Typora clone, complete Typora parity
 
-**可编辑核心**：
-可由可视化编辑器直接理解、呈现和修改的 Markdown 内容；第一阶段以 GFM 为核心。
-_Avoid_: 全部 Markdown、所有 Typora 语法
+**Editable core**:
+Markdown that the visual editor can understand, render, and modify directly. The first phase focuses on GFM.
+_Avoid_: every Markdown dialect, every Typora extension
 
-**无损兼容**：
-未被用户编辑的内容保持原样；可编辑核心只允许在用户修改的区域内规范化，其他内容不得静默降级。
-_Avoid_: 全量可视化支持、语义近似、全文规范化
+**Lossless compatibility**:
+Untouched content remains byte-for-byte unchanged. The editable core may be normalized only inside source regions that the user actually edits; other content must never degrade silently.
+_Avoid_: universal visual support, approximate semantics, whole-document normalization
 
-**保留片段**：
-可编辑核心之外、必须逐字保留的文档内容；只有用户明确编辑或确认转换时才允许改变。
-_Avoid_: 不支持内容、可丢弃内容
+**Preserved fragment**:
+Content outside the editable core that must be retained exactly. It may change only when the user explicitly edits it or confirms a conversion.
+_Avoid_: unsupported content, disposable content
 
-**受保护源码呈现**：
-保留片段在可视化编辑器中的默认形态；直接显示原始源码并阻止普通富文本编辑，同时提供明确的源码编辑或转换入口。
-_Avoid_: 猜测性渲染、静默转换、整篇文档回退源码模式
+**Protected source presentation**:
+The default visual representation of a preserved fragment. It displays the original source, blocks ordinary rich-text edits, and provides explicit source-editing or conversion actions.
+_Avoid_: speculative rendering, silent conversion, forcing the entire document into source mode
 
-**源码模式**：
-整篇文档唯一的源码编辑入口；从保留片段进入时自动定位并选中对应源码，返回可视化模式后重新识别可编辑核心与保留片段。
-_Avoid_: 片段专用源码编辑器、多套源码编辑逻辑
+**Source mode**:
+The single full-document source editor. Entering it from a preserved fragment selects that fragment's source range; returning to visual mode re-identifies the editable core and preserved fragments.
+_Avoid_: fragment-specific source editors, multiple source-editing implementations
 
-**AI 保护边界**：
-AI 可以读取保留片段以理解文档，但默认不得修改；只有用户明确选中或点名片段时，AI 才能生成源码差异，并在用户确认后应用。
-_Avoid_: AI 自主改写未知语法、对保留片段静默应用修改、完全隐藏片段上下文
+**AI protection boundary**:
+AI may read preserved fragments to understand the document, but cannot modify them by default. Only an explicit user selection or reference may produce a source diff, and applying that diff requires user confirmation.
+_Avoid_: autonomous rewrites of unknown syntax, silent AI edits to preserved fragments, hiding fragment context from AI completely
 
 ## Markdown source authority
 

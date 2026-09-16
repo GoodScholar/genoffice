@@ -1,9 +1,20 @@
 import type { JSONContent } from '@tiptap/core'
 import { frontmatterInner, parseRawDocEnvelope, type RawDocEnvelope } from './docText'
-import { projectScan, serializeProjectedGroup, type MarkdownCodec, type ProjectedFragment, type VisualProjection } from './sourceProjection'
+import {
+  projectScan,
+  serializeProjectedGroup,
+  type MarkdownCodec,
+  type ProjectedFragment,
+  type VisualProjection,
+} from './sourceProjection'
 import { scanMarkdownSource, type SourceRange } from './sourceScanner'
 import { rewriteMarkdownImageSources } from '../../shared/markdown-image-sources'
-import { createSourcePatch, validateSourcePatch, type SourcePatch, type SourceReadBlock } from './sourcePatch'
+import {
+  createSourcePatch,
+  validateSourcePatch,
+  type SourcePatch,
+  type SourceReadBlock,
+} from './sourcePatch'
 import {
   isGeneratedTrailingParagraph,
   isUserTrailingEmptyParagraph,
@@ -38,8 +49,15 @@ export interface MarkdownDocumentSession {
   frontmatter(): string
   applyVisual(next: VisualProjection): SessionUpdate
   previewApprovedVisual(next: VisualProjection, protectedIds: readonly string[]): SessionUpdate
-  applyVisualWithApprovedFragments(next: VisualProjection, protectedIds: readonly string[]): SessionUpdate
-  proposeFragmentReplacement(fragmentId: string, nextRaw: string, origin?: SourcePatch['origin']): SourcePatch
+  applyVisualWithApprovedFragments(
+    next: VisualProjection,
+    protectedIds: readonly string[],
+  ): SessionUpdate
+  proposeFragmentReplacement(
+    fragmentId: string,
+    nextRaw: string,
+    origin?: SourcePatch['origin'],
+  ): SourcePatch
   proposeFragmentConversion(fragmentId: string): SourcePatch
   previewConfirmedPatch(patch: SourcePatch): SessionUpdate
   applyConfirmedPatch(patch: SourcePatch): SessionUpdate
@@ -52,7 +70,7 @@ export interface MarkdownDocumentSession {
   markSaved(
     sourceActuallyWritten: string,
     ticket: SaveTicket,
-    imageRewrites?: ReadonlyArray<{ from: string, to: string }>,
+    imageRewrites?: ReadonlyArray<{ from: string; to: string }>,
   ): SessionView
 }
 
@@ -90,12 +108,23 @@ function clone<T>(value: T): T {
 }
 
 /** TipTap omits `content: []` only for source-bound top-level empty paragraphs. */
-function normaliseSourceBoundEmptyParagraph(record: Record<string, unknown>, result: Record<string, unknown>, topLevel: boolean): void {
-  const sourceId = record.attrs && typeof record.attrs === 'object'
-    ? (record.attrs as Record<string, unknown>).sourceId
-    : undefined
-  if (topLevel && result.type === 'paragraph' && sourceId != null
-    && Array.isArray(result.content) && result.content.length === 0) delete result.content
+function normaliseSourceBoundEmptyParagraph(
+  record: Record<string, unknown>,
+  result: Record<string, unknown>,
+  topLevel: boolean,
+): void {
+  const sourceId =
+    record.attrs && typeof record.attrs === 'object'
+      ? (record.attrs as Record<string, unknown>).sourceId
+      : undefined
+  if (
+    topLevel &&
+    result.type === 'paragraph' &&
+    sourceId != null &&
+    Array.isArray(result.content) &&
+    result.content.length === 0
+  )
+    delete result.content
 }
 
 function fingerprint(nodes: JSONContent[]): string {
@@ -124,12 +153,26 @@ function projectionFingerprint(nodes: JSONContent[]): string {
         .filter(([key]) => key !== 'sourceId')
         .map(([key, child]) => [key, comparable(child)]),
     ) as Record<string, unknown>
-    if (typeof record.type === 'string' && record.type.startsWith('protectedSource') && result.attrs && typeof result.attrs === 'object') {
-      delete (result.attrs as Record<string, unknown>).id
+    if (
+      typeof record.type === 'string' &&
+      record.type.startsWith('protectedSource') &&
+      result.attrs &&
+      typeof result.attrs === 'object'
+    ) {
+      const attrs = result.attrs as Record<string, unknown>
+      delete attrs.id
+      if (record.type === 'protectedSourceBlock' && typeof attrs.raw === 'string') {
+        attrs.raw = attrs.raw.replace(/(?:\r\n|\n|\r)$/, '')
+      }
     }
     // Do not generalise this to nested table/list nodes: there emptiness is structural.
     normaliseSourceBoundEmptyParagraph(record, result, topLevel)
-    if (result.attrs && typeof result.attrs === 'object' && Object.keys(result.attrs as Record<string, unknown>).length === 0) delete result.attrs
+    if (
+      result.attrs &&
+      typeof result.attrs === 'object' &&
+      Object.keys(result.attrs as Record<string, unknown>).length === 0
+    )
+      delete result.attrs
     return result
   }
   return JSON.stringify(nodes.map((node) => comparable(node, true)))
@@ -138,7 +181,9 @@ function projectionFingerprint(nodes: JSONContent[]): string {
 function withoutEmptyParagraphs(nodes: JSONContent[]): JSONContent[] {
   return nodes
     .filter((node) => node.type !== 'paragraph' || (node.content?.length ?? 0) > 0)
-    .map((node) => node.content ? { ...node, content: withoutEmptyParagraphs(node.content) } : node)
+    .map((node) =>
+      node.content ? { ...node, content: withoutEmptyParagraphs(node.content) } : node,
+    )
 }
 
 function withoutTopLevelEmptyParagraphs(nodes: JSONContent[]): JSONContent[] {
@@ -146,7 +191,8 @@ function withoutTopLevelEmptyParagraphs(nodes: JSONContent[]): JSONContent[] {
 }
 
 function topLevelEmptyParagraphCount(nodes: JSONContent[]): number {
-  return nodes.filter((node) => node.type === 'paragraph' && (node.content?.length ?? 0) === 0).length
+  return nodes.filter((node) => node.type === 'paragraph' && (node.content?.length ?? 0) === 0)
+    .length
 }
 
 function withoutGeneratedTrailingParagraph(nodes: JSONContent[]): JSONContent[] {
@@ -154,9 +200,9 @@ function withoutGeneratedTrailingParagraph(nodes: JSONContent[]): JSONContent[] 
 }
 
 function isSchemaBaselineParagraph(node: JSONContent | undefined): boolean {
-  return node?.type === 'paragraph'
-    && node.attrs?.sourceId === null
-    && (node.content?.length ?? 0) === 0
+  return (
+    node?.type === 'paragraph' && node.attrs?.sourceId === null && (node.content?.length ?? 0) === 0
+  )
 }
 
 function isTransientEmptyTextBlock(node: JSONContent): boolean {
@@ -168,16 +214,22 @@ function isTransientEmptyTextBlock(node: JSONContent): boolean {
 
 function isTransientEmptyNode(node: JSONContent): boolean {
   if (isTransientEmptyTextBlock(node)) return true
-  return node.type === 'listItem'
-    && node.content?.length === 1
-    && node.content[0]?.type === 'paragraph'
-    && (node.content[0].content?.length ?? 0) === 0
+  return (
+    node.type === 'listItem' &&
+    node.content?.length === 1 &&
+    node.content[0]?.type === 'paragraph' &&
+    (node.content[0].content?.length ?? 0) === 0
+  )
 }
 
 function isSingleTransientEmptyInsertion(nodes: JSONContent[], previous: JSONContent[]): boolean {
   if (nodes.length === previous.length + 1) {
-    return nodes.some((node, index) => isTransientEmptyNode(node)
-      && projectionFingerprint([...nodes.slice(0, index), ...nodes.slice(index + 1)]) === projectionFingerprint(previous))
+    return nodes.some(
+      (node, index) =>
+        isTransientEmptyNode(node) &&
+        projectionFingerprint([...nodes.slice(0, index), ...nodes.slice(index + 1)]) ===
+          projectionFingerprint(previous),
+    )
   }
   if (nodes.length !== previous.length) return false
   return nodes.some((node, index) => {
@@ -185,26 +237,34 @@ function isSingleTransientEmptyInsertion(nodes: JSONContent[], previous: JSONCon
     if (!prior || node.type !== prior.type) return false
     if (!node.content || !prior.content) return false
     if (!isSingleTransientEmptyInsertion(node.content, prior.content)) return false
-    return projectionFingerprint([...nodes.slice(0, index), prior, ...nodes.slice(index + 1)])
-      === projectionFingerprint(previous)
+    return (
+      projectionFingerprint([...nodes.slice(0, index), prior, ...nodes.slice(index + 1)]) ===
+      projectionFingerprint(previous)
+    )
   })
 }
 
 function isSingleTransientEmptyReplacement(nodes: JSONContent[], previous: JSONContent[]): boolean {
   if (nodes.length !== previous.length) return false
-  return nodes.some((node, index) => isTransientEmptyTextBlock(node)
-    && isTransientEmptyTextBlock(previous[index]!)
-    && projectionFingerprint([...nodes.slice(0, index), ...nodes.slice(index + 1)])
-      === projectionFingerprint([...previous.slice(0, index), ...previous.slice(index + 1)]))
+  return nodes.some(
+    (node, index) =>
+      isTransientEmptyTextBlock(node) &&
+      isTransientEmptyTextBlock(previous[index]!) &&
+      projectionFingerprint([...nodes.slice(0, index), ...nodes.slice(index + 1)]) ===
+        projectionFingerprint([...previous.slice(0, index), ...previous.slice(index + 1)]),
+  )
 }
 
-function withoutFirstTransientEmptyNode(nodes: JSONContent[]): JSONContent[] | undefined {
-  for (let index = 0; index < nodes.length; index += 1) {
+function withoutLastTransientEmptyNode(nodes: JSONContent[]): JSONContent[] | undefined {
+  for (let index = nodes.length - 1; index >= 0; index -= 1) {
     const node = nodes[index]!
     if (isTransientEmptyNode(node)) return [...nodes.slice(0, index), ...nodes.slice(index + 1)]
     if (!node.content) continue
-    const content = withoutFirstTransientEmptyNode(node.content)
-    if (content) return nodes.map((candidate, candidateIndex) => candidateIndex === index ? { ...candidate, content } : candidate)
+    const content = withoutLastTransientEmptyNode(node.content)
+    if (content)
+      return nodes.map((candidate, candidateIndex) =>
+        candidateIndex === index ? { ...candidate, content } : candidate,
+      )
   }
   return undefined
 }
@@ -225,7 +285,10 @@ function sourcePrefix(envelope: RawDocEnvelope): string {
 }
 
 function localFragment(fragment: ProjectedFragment, bodyOffset: number): ProjectedFragment {
-  return { ...fragment, range: { from: fragment.range.from + bodyOffset, to: fragment.range.to + bodyOffset } }
+  return {
+    ...fragment,
+    range: { from: fragment.range.from + bodyOffset, to: fragment.range.to + bodyOffset },
+  }
 }
 
 function visualFrontmatter(raw: string): string {
@@ -233,7 +296,7 @@ function visualFrontmatter(raw: string): string {
 }
 
 function envelopeFrontmatterInner(raw: string): string {
-  const lineAt = (from: number): { text: string, next: number } => {
+  const lineAt = (from: number): { text: string; next: number } => {
     const ending = /\r\n|\n|\r/.exec(raw.slice(from))
     if (!ending) return { text: raw.slice(from), next: raw.length }
     const end = from + ending.index
@@ -259,8 +322,8 @@ function editedFrontmatterRaw(inner: string, envelope: RawDocEnvelope): string {
   return `---${envelope.eol}${value}${envelope.eol}---${envelope.eol}${envelope.eol}`
 }
 
-function collectProtected(nodes: JSONContent[]): Map<string, { raw: string, count: number }> {
-  const found = new Map<string, { raw: string, count: number }>()
+function collectProtected(nodes: JSONContent[]): Map<string, { raw: string; count: number }> {
+  const found = new Map<string, { raw: string; count: number }>()
   const visit = (node: JSONContent): void => {
     if (node.type === 'protectedSourceInline' || node.type === 'protectedSourceBlock') {
       const id = typeof node.attrs?.id === 'string' ? node.attrs.id : ''
@@ -276,8 +339,10 @@ function collectProtected(nodes: JSONContent[]): Map<string, { raw: string, coun
   return found
 }
 
-function completeProjectedGroups(visual: VisualProjection): Array<{ sourceId?: string, nodes: JSONContent[] }> {
-  const groups: Array<{ sourceId?: string, nodes: JSONContent[] }> = []
+function completeProjectedGroups(
+  visual: VisualProjection,
+): Array<{ sourceId?: string; nodes: JSONContent[] }> {
+  const groups: Array<{ sourceId?: string; nodes: JSONContent[] }> = []
   for (const node of visual.doc.content ?? []) {
     const sourceId = typeof node.attrs?.sourceId === 'string' ? node.attrs.sourceId : undefined
     const previous = groups[groups.length - 1]
@@ -287,7 +352,10 @@ function completeProjectedGroups(visual: VisualProjection): Array<{ sourceId?: s
   return groups
 }
 
-function rewriteKnownImageSources(raw: string, rewrites: ReadonlyArray<{ from: string, to: string }>): string {
+function rewriteKnownImageSources(
+  raw: string,
+  rewrites: ReadonlyArray<{ from: string; to: string }>,
+): string {
   return rewriteMarkdownImageSources(raw, new Map(rewrites.map(({ from, to }) => [from, to])))
 }
 
@@ -295,7 +363,7 @@ function rebaseKnownImageSources(
   current: SourceUnitState,
   original: SourceUnitState,
   actual: SourceUnitState,
-  rewrites: ReadonlyArray<{ from: string, to: string }> | undefined,
+  rewrites: ReadonlyArray<{ from: string; to: string }> | undefined,
 ): SourceUnitState | undefined {
   if (!rewrites?.length || original.trailingRaw !== actual.trailingRaw) return undefined
   if (rewriteKnownImageSources(original.raw, rewrites) !== actual.raw) return undefined
@@ -304,7 +372,10 @@ function rebaseKnownImageSources(
 }
 
 function withFreshRanges(state: DocumentState): DocumentState {
-  const visual = { ...state.visual, frontmatterInner: visualFrontmatter(state.envelope.frontmatterRaw) }
+  const visual = {
+    ...state.visual,
+    frontmatterInner: visualFrontmatter(state.envelope.frontmatterRaw),
+  }
   return { ...state, visual }
 }
 
@@ -337,8 +408,14 @@ function createState(source: string, codec: MarkdownCodec): DocumentState {
     raw: unit.raw,
     trailingRaw: unit.trailingRaw,
     range: unit.range,
-    fingerprint: projection.fingerprints.get(unit.id) ?? fingerprint((projection.visual.doc.content ?? []).filter((node) => node.attrs?.sourceId === unit.id)),
-    protectedFragments: projection.fragments.filter((fragment) => fragment.id === unit.id || fragment.id.startsWith(`${unit.id}-i`)),
+    fingerprint:
+      projection.fingerprints.get(unit.id) ??
+      fingerprint(
+        (projection.visual.doc.content ?? []).filter((node) => node.attrs?.sourceId === unit.id),
+      ),
+    protectedFragments: projection.fragments.filter(
+      (fragment) => fragment.id === unit.id || fragment.id.startsWith(`${unit.id}-i`),
+    ),
   }))
   return withFreshRanges({ source, envelope, units, visual: projection.visual })
 }
@@ -349,7 +426,8 @@ function unitText(unit: SourceUnitState): string {
 
 function validateState(state: DocumentState): void {
   if (state.units.length === 0) {
-    if (state.source !== sourcePrefix(state.envelope) + state.envelope.bodyRaw) throw new Error('Document session source envelope is inconsistent')
+    if (state.source !== sourcePrefix(state.envelope) + state.envelope.bodyRaw)
+      throw new Error('Document session source envelope is inconsistent')
     return
   }
   let cursor = 0
@@ -371,26 +449,38 @@ function changedRange(source: string): SourceRange {
 }
 
 function snapshotUnits(units: SourceUnitState[]): SourceUnitState[] {
-  return units.map((unit) => ({ ...unit, range: { ...unit.range }, protectedFragments: clone(unit.protectedFragments) }))
+  return units.map((unit) => ({
+    ...unit,
+    range: { ...unit.range },
+    protectedFragments: clone(unit.protectedFragments),
+  }))
 }
 
-function alignUnits(snapshot: SourceUnitState[], target: SourceUnitState[]): Array<SourceUnitState | undefined> {
-  const score = Array.from({ length: snapshot.length + 1 }, () => Array<number>(target.length + 1).fill(0))
+function alignUnits(
+  snapshot: SourceUnitState[],
+  target: SourceUnitState[],
+): Array<SourceUnitState | undefined> {
+  const score = Array.from({ length: snapshot.length + 1 }, () =>
+    Array<number>(target.length + 1).fill(0),
+  )
   for (let sourceIndex = snapshot.length - 1; sourceIndex >= 0; sourceIndex -= 1) {
     for (let targetIndex = target.length - 1; targetIndex >= 0; targetIndex -= 1) {
-      score[sourceIndex]![targetIndex] = unitText(snapshot[sourceIndex]!) === unitText(target[targetIndex]!)
-        ? 1 + score[sourceIndex + 1]![targetIndex + 1]!
-        : Math.max(score[sourceIndex + 1]![targetIndex]!, score[sourceIndex]![targetIndex + 1]!)
+      score[sourceIndex]![targetIndex] =
+        unitText(snapshot[sourceIndex]!) === unitText(target[targetIndex]!)
+          ? 1 + score[sourceIndex + 1]![targetIndex + 1]!
+          : Math.max(score[sourceIndex + 1]![targetIndex]!, score[sourceIndex]![targetIndex + 1]!)
     }
   }
 
   const aligned: Array<SourceUnitState | undefined> = Array(snapshot.length)
-  const anchors: Array<{ sourceIndex: number, targetIndex: number }> = []
+  const anchors: Array<{ sourceIndex: number; targetIndex: number }> = []
   let sourceIndex = 0
   let targetIndex = 0
   while (sourceIndex < snapshot.length && targetIndex < target.length) {
-    if (unitText(snapshot[sourceIndex]!) === unitText(target[targetIndex]!)
-      && score[sourceIndex]![targetIndex] === 1 + score[sourceIndex + 1]![targetIndex + 1]!) {
+    if (
+      unitText(snapshot[sourceIndex]!) === unitText(target[targetIndex]!) &&
+      score[sourceIndex]![targetIndex] === 1 + score[sourceIndex + 1]![targetIndex + 1]!
+    ) {
       aligned[sourceIndex] = target[targetIndex]
       anchors.push({ sourceIndex, targetIndex })
       sourceIndex += 1
@@ -402,7 +492,11 @@ function alignUnits(snapshot: SourceUnitState[], target: SourceUnitState[]): Arr
     }
   }
 
-  const boundaries = [{ sourceIndex: -1, targetIndex: -1 }, ...anchors, { sourceIndex: snapshot.length, targetIndex: target.length }]
+  const boundaries = [
+    { sourceIndex: -1, targetIndex: -1 },
+    ...anchors,
+    { sourceIndex: snapshot.length, targetIndex: target.length },
+  ]
   for (let boundaryIndex = 0; boundaryIndex < boundaries.length - 1; boundaryIndex += 1) {
     const left = boundaries[boundaryIndex]!
     const right = boundaries[boundaryIndex + 1]!
@@ -416,15 +510,23 @@ function alignUnits(snapshot: SourceUnitState[], target: SourceUnitState[]): Arr
   return aligned
 }
 
-function hasAmbiguousDuplicateDeletion(snapshot: SourceUnitState[], target: SourceUnitState[]): boolean {
+function hasAmbiguousDuplicateDeletion(
+  snapshot: SourceUnitState[],
+  target: SourceUnitState[],
+): boolean {
   const snapshotCounts = new Map<string, number>()
   const targetCounts = new Map<string, number>()
   snapshot.forEach((unit) => snapshotCounts.set(unit.raw, (snapshotCounts.get(unit.raw) ?? 0) + 1))
   target.forEach((unit) => targetCounts.set(unit.raw, (targetCounts.get(unit.raw) ?? 0) + 1))
-  return [...snapshotCounts].some(([raw, count]) => count > 1 && (targetCounts.get(raw) ?? 0) < count)
+  return [...snapshotCounts].some(
+    ([raw, count]) => count > 1 && (targetCounts.get(raw) ?? 0) < count,
+  )
 }
 
-export function createMarkdownDocumentSession(source: string, codec: MarkdownCodec): MarkdownDocumentSession {
+export function createMarkdownDocumentSession(
+  source: string,
+  codec: MarkdownCodec,
+): MarkdownDocumentSession {
   let state = createState(source, codec)
   let baseline = source
   let revision = 0
@@ -437,26 +539,45 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
   const currentView = (): SessionView => ({
     source: state.source,
     visual: clone(state.visual),
-    protectedFragments: state.units.flatMap((unit) => unit.protectedFragments.map((fragment) => localFragment(fragment, state.envelope.bodyOffset))),
+    protectedFragments: state.units.flatMap((unit) =>
+      unit.protectedFragments.map((fragment) => localFragment(fragment, state.envelope.bodyOffset)),
+    ),
     dirty: state.source !== baseline,
     revision,
     mode,
     ...(selection ? { sourceSelection: { ...selection } } : {}),
-    ...((conflictReason ?? state.fallbackReason) ? { fallbackReason: conflictReason ?? state.fallbackReason } : {}),
+    ...((conflictReason ?? state.fallbackReason)
+      ? { fallbackReason: conflictReason ?? state.fallbackReason }
+      : {}),
   })
 
-  const sourceBlocks = (): readonly SourceReadBlock[] => state.units.length > 0
-    ? state.units.map((unit) => ({
-      raw: unitText(unit),
-      protected: unit.protectedFragments.map((fragment) => ({ id: fragment.id, reason: fragment.reason, raw: fragment.raw })),
-    }))
-    : state.envelope.bodyRaw === '' ? [] : [{ raw: state.envelope.bodyRaw, protected: [] }]
+  const sourceBlocks = (): readonly SourceReadBlock[] =>
+    state.units.length > 0
+      ? state.units.map((unit) => ({
+          raw: unitText(unit),
+          protected: unit.protectedFragments.map((fragment) => ({
+            id: fragment.id,
+            reason: fragment.reason,
+            raw: fragment.raw,
+          })),
+        }))
+      : state.envelope.bodyRaw === ''
+        ? []
+        : [{ raw: state.envelope.bodyRaw, protected: [] }]
 
   const currentFrontmatter = (): string => envelopeFrontmatterInner(state.envelope.frontmatterRaw)
 
-  const success = (range?: SourceRange): SessionUpdate => ({ ok: true, view: currentView(), ...(range ? { changedRange: range } : {}) })
+  const success = (range?: SourceRange): SessionUpdate => ({
+    ok: true,
+    view: currentView(),
+    ...(range ? { changedRange: range } : {}),
+  })
 
-  const retainUserTrailingEmpty = (next: DocumentState, marker: JSONContent, base: DocumentState): boolean => {
+  const retainUserTrailingEmpty = (
+    next: DocumentState,
+    marker: JSONContent,
+    base: DocumentState,
+  ): boolean => {
     if (!next.source.startsWith(base.source)) return false
     const delta = next.source.slice(base.source.length)
     if (!delta || delta.split(next.envelope.eol).join('') !== '') return false
@@ -471,7 +592,10 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     return true
   }
 
-  const baseFromUserTrailingEmptyDelta = (next: DocumentState, delta: string): DocumentState | undefined => {
+  const baseFromUserTrailingEmptyDelta = (
+    next: DocumentState,
+    delta: string,
+  ): DocumentState | undefined => {
     if (!delta || !next.source.endsWith(delta)) return undefined
     const base = createState(next.source.slice(0, -delta.length), codec)
     return base.fallbackReason ? undefined : base
@@ -481,20 +605,27 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     if (state.fallbackReason) return { ok: false, view: currentView(), error: state.fallbackReason }
     const frontmatterChanged = next.frontmatterInner !== state.visual.frontmatterInner
     const incomingNodes = withoutGeneratedTrailingParagraph(next.doc.content ?? [])
-    const markedUserTrailingEmpty = isUserTrailingEmptyParagraph(incomingNodes[incomingNodes.length - 1])
-    const schemaBaseline = (state.visual.doc.content?.length ?? 0) === 0
-      || (userTrailingEmpty !== undefined && (userTrailingEmpty.base.visual.doc.content?.length ?? 0) === 0)
-    const candidateNodes = schemaBaseline
-      && isSchemaBaselineParagraph(incomingNodes[0])
-      && ((markedUserTrailingEmpty && incomingNodes.length === 2)
-        || (userTrailingEmpty && incomingNodes.length === 1))
-      ? incomingNodes.slice(1)
-      : incomingNodes
-    const hasUserTrailingEmpty = isUserTrailingEmptyParagraph(candidateNodes[candidateNodes.length - 1])
+    const markedUserTrailingEmpty = isUserTrailingEmptyParagraph(
+      incomingNodes[incomingNodes.length - 1],
+    )
+    const schemaBaseline =
+      (state.visual.doc.content?.length ?? 0) === 0 ||
+      (userTrailingEmpty !== undefined &&
+        (userTrailingEmpty.base.visual.doc.content?.length ?? 0) === 0)
+    const candidateNodes =
+      schemaBaseline &&
+      isSchemaBaselineParagraph(incomingNodes[0]) &&
+      ((markedUserTrailingEmpty && incomingNodes.length === 2) ||
+        (userTrailingEmpty && incomingNodes.length === 1))
+        ? incomingNodes.slice(1)
+        : incomingNodes
+    const hasUserTrailingEmpty = isUserTrailingEmptyParagraph(
+      candidateNodes[candidateNodes.length - 1],
+    )
     let restoreTransient: (() => void) | undefined
     const retryWithoutTransientEmpty = (): SessionUpdate | undefined => {
       if (hasUserTrailingEmpty && !userTrailingEmpty) return undefined
-      const content = withoutFirstTransientEmptyNode(candidateNodes)
+      const content = withoutLastTransientEmptyNode(candidateNodes)
       if (!content) return undefined
       const retried = applyVisual({ ...next, doc: { ...next.doc, content } }, approvedIds)
       if (!retried.ok) return undefined
@@ -504,22 +635,35 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       }
       return success(retried.changedRange)
     }
-    const expected = new Map(state.units.flatMap((unit) => unit.protectedFragments.map((fragment) => [fragment.id, fragment.raw] as const)))
+    const expected = new Map(
+      state.units.flatMap((unit) =>
+        unit.protectedFragments.map((fragment) => [fragment.id, fragment.raw] as const),
+      ),
+    )
     const found = collectProtected(candidateNodes)
     for (const [id, raw] of expected) {
       const candidate = found.get(id)
       if (!candidate || candidate.count !== 1 || candidate.raw !== raw) {
         if (approvedIds.has(id)) continue
-        return { ok: false, view: currentView(), error: `Protected source fragment ${id} requires confirmation` }
+        return {
+          ok: false,
+          view: currentView(),
+          error: `Protected source fragment ${id} requires confirmation`,
+        }
       }
     }
     for (const id of found.keys()) {
-      if (!expected.has(id)) return { ok: false, view: currentView(), error: `Unknown protected source fragment ${id}` }
+      if (!expected.has(id))
+        return { ok: false, view: currentView(), error: `Unknown protected source fragment ${id}` }
     }
 
     const previousNodes = withoutGeneratedTrailingParagraph(state.visual.doc.content ?? [])
-    if (!userTrailingEmpty && !frontmatterChanged && (isSingleTransientEmptyInsertion(candidateNodes, previousNodes)
-      || isSingleTransientEmptyReplacement(candidateNodes, previousNodes))) {
+    if (
+      !userTrailingEmpty &&
+      !frontmatterChanged &&
+      (isSingleTransientEmptyInsertion(candidateNodes, previousNodes) ||
+        isSingleTransientEmptyReplacement(candidateNodes, previousNodes))
+    ) {
       state = {
         ...state,
         visual: { ...state.visual, doc: { ...next.doc, content: clone(candidateNodes) } },
@@ -530,7 +674,11 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     if (userTrailingEmpty && !hasUserTrailingEmpty) {
       const relation = userTrailingEmpty
       const base = relation.base
-      if (!frontmatterChanged && projectionFingerprint(candidateNodes) === projectionFingerprint(base.visual.doc.content ?? [])) {
+      if (
+        !frontmatterChanged &&
+        projectionFingerprint(candidateNodes) ===
+          projectionFingerprint(base.visual.doc.content ?? [])
+      ) {
         state = base
         userTrailingEmpty = undefined
         revision += 1
@@ -547,8 +695,13 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       }
     }
 
-    if (userTrailingEmpty && hasUserTrailingEmpty && !frontmatterChanged
-      && projectionFingerprint(candidateNodes) === projectionFingerprint(state.visual.doc.content ?? [])) {
+    if (
+      userTrailingEmpty &&
+      hasUserTrailingEmpty &&
+      !frontmatterChanged &&
+      projectionFingerprint(candidateNodes) ===
+        projectionFingerprint(state.visual.doc.content ?? [])
+    ) {
       return success()
     }
 
@@ -567,21 +720,28 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       .flatMap((unit) => unit.protectedFragments.map((fragment) => ({ unit, fragment })))
       .flatMap(({ unit, fragment }) => {
         const candidate = found.get(fragment.id)
-        return fragment.display === 'block' && approvedIds.has(fragment.id) && candidate?.count === 1 && candidate.raw !== fragment.raw
+        return fragment.display === 'block' &&
+          approvedIds.has(fragment.id) &&
+          candidate?.count === 1 &&
+          candidate.raw !== fragment.raw
           ? [{ unit, fragment, raw: candidate.raw }]
           : []
       })
     if (blockReplacements.length > 0) {
       let nextSource = state.source
-      for (const replacement of [...blockReplacements].sort((left, right) => right.unit.range.from - left.unit.range.from)) {
+      for (const replacement of [...blockReplacements].sort(
+        (left, right) => right.unit.range.from - left.unit.range.from,
+      )) {
         const from = state.envelope.bodyOffset + replacement.unit.range.from
         const to = from + replacement.fragment.raw.length
         nextSource = `${nextSource.slice(0, from)}${replacement.raw}${nextSource.slice(to)}`
       }
       const projected = createState(nextSource, codec)
       const projectedNodes = projected.visual.doc.content ?? []
-      const sameProjection = projectionFingerprint(candidateNodes) === projectionFingerprint(projectedNodes)
-        || projectionFingerprint(withoutEmptyParagraphs(candidateNodes)) === projectionFingerprint(withoutEmptyParagraphs(projectedNodes))
+      const sameProjection =
+        projectionFingerprint(candidateNodes) === projectionFingerprint(projectedNodes) ||
+        projectionFingerprint(withoutEmptyParagraphs(candidateNodes)) ===
+          projectionFingerprint(withoutEmptyParagraphs(projectedNodes))
       if (!projected.fallbackReason && sameProjection) {
         state = projected
         userTrailingEmpty = undefined
@@ -595,7 +755,10 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
 
     const previousById = new Map(state.units.map((unit) => [unit.sourceId, unit]))
     const originalIndex = new Map(state.units.map((unit, index) => [unit.sourceId, index]))
-    const groups = completeProjectedGroups({ ...next, doc: { ...next.doc, content: candidateNodes } })
+    const groups = completeProjectedGroups({
+      ...next,
+      doc: { ...next.doc, content: candidateNodes },
+    })
     const used = new Set<string>()
     const pieces: string[] = []
     let logicalPieces: string[] | undefined
@@ -613,7 +776,10 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
             pieces[last] = ensureCanonicalBoundary(pieces[last]!, state.envelope)
           }
         }
-        const canReuse = !!previous && !used.has(previous.sourceId) && previous.fingerprint === fingerprint(group.nodes)
+        const canReuse =
+          !!previous &&
+          !used.has(previous.sourceId) &&
+          previous.fingerprint === fingerprint(group.nodes)
         if (canReuse) {
           used.add(previous!.sourceId)
           pieces.push(unitText(previous!))
@@ -625,18 +791,28 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
           serialized = state.envelope.eol + state.envelope.eol
         }
         if (previous) {
-          if (previous.raw.endsWith('\n') && !serialized.endsWith('\n')) serialized += state.envelope.eol
+          const leadingBoundary = /^(?:[ \t]*(?:\r\n|\n|\r))+/.exec(previous.raw)?.[0] ?? ''
+          if (leadingBoundary && !/^[ \t]*(?:\r\n|\n|\r)/.test(serialized)) {
+            serialized = leadingBoundary + serialized
+          }
+          if (previous.raw.endsWith('\n') && !serialized.endsWith('\n'))
+            serialized += state.envelope.eol
           if (!previous.raw.endsWith('\n')) serialized = serialized.replace(/(?:\r?\n)+$/, '')
           serialized += previous.trailingRaw
         }
-        if (!previous && index < groups.length - 1) serialized = ensureCanonicalBoundary(serialized, state.envelope)
+        if (!previous && index < groups.length - 1)
+          serialized = ensureCanonicalBoundary(serialized, state.envelope)
         pieces.push(serialized)
       }
     } catch (error) {
       restoreTransient?.()
       const retried = retryWithoutTransientEmpty()
       if (retried) return retried
-      return { ok: false, view: currentView(), error: error instanceof Error ? error.message : String(error) }
+      return {
+        ok: false,
+        view: currentView(),
+        error: error instanceof Error ? error.message : String(error),
+      }
     }
 
     const completeBody = (value: string, retainTrailingEmpty: boolean): string => {
@@ -645,57 +821,94 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       }
       return retainTrailingEmpty ? value : value.replace(/(?:\r?\n)+$/, '')
     }
-    const markerOnlyEmptyDocument = hasUserTrailingEmpty
-      && logicalPieces?.length === 0
-      && (state.visual.doc.content?.length ?? 0) === 0
+    const markerOnlyEmptyDocument =
+      hasUserTrailingEmpty &&
+      logicalPieces?.length === 0 &&
+      (state.visual.doc.content?.length ?? 0) === 0
     const logicalEmptyBody = markerOnlyEmptyDocument ? state.envelope.bodyRaw : undefined
-    const body = logicalEmptyBody === undefined
-      ? completeBody(pieces.join(''), hasUserTrailingEmpty)
-      : logicalEmptyBody + state.envelope.eol + state.envelope.eol
+    const body =
+      logicalEmptyBody === undefined
+        ? completeBody(pieces.join(''), hasUserTrailingEmpty)
+        : logicalEmptyBody + state.envelope.eol + state.envelope.eol
     const envelope = frontmatterChanged
-      ? { ...state.envelope, frontmatterRaw: editedFrontmatterRaw(next.frontmatterInner, state.envelope) }
+      ? {
+          ...state.envelope,
+          frontmatterRaw: editedFrontmatterRaw(next.frontmatterInner, state.envelope),
+        }
       : state.envelope
     const nextSource = sourcePrefix(envelope) + body
-    const logicalSource = logicalEmptyBody === undefined && logicalPieces === undefined
-      ? undefined
-      : sourcePrefix(envelope) + (logicalEmptyBody ?? completeBody(logicalPieces!.join(''), false))
+    const logicalSource =
+      logicalEmptyBody === undefined && logicalPieces === undefined
+        ? undefined
+        : sourcePrefix(envelope) +
+          (logicalEmptyBody ?? completeBody(logicalPieces!.join(''), false))
     if (nextSource === state.source) {
-      if (projectionFingerprint(candidateNodes) === projectionFingerprint(state.visual.doc.content ?? [])) return success()
+      if (
+        projectionFingerprint(candidateNodes) ===
+        projectionFingerprint(state.visual.doc.content ?? [])
+      )
+        return success()
       restoreTransient?.()
       const retried = retryWithoutTransientEmpty()
       if (retried) return retried
-      return { ok: false, view: currentView(), error: 'Visual projection cannot be represented by a safe source rewrite' }
+      return {
+        ok: false,
+        view: currentView(),
+        error: 'Visual projection cannot be represented by a safe source rewrite',
+      }
     }
     const projected = createState(nextSource, codec)
     const projectedNodes = projected.visual.doc.content ?? []
-    const editableEmptyBaseline = candidateNodes.length === 1
-      && isTransientEmptyTextBlock(candidateNodes[0]!)
-      && projectedNodes.length === 0
-    const sameProjection = projectionFingerprint(candidateNodes) === projectionFingerprint(projectedNodes)
-      || editableEmptyBaseline
-      || (topLevelEmptyParagraphCount(candidateNodes) < topLevelEmptyParagraphCount(state.visual.doc.content ?? [])
-        && projectionFingerprint(withoutTopLevelEmptyParagraphs(candidateNodes))
-          === projectionFingerprint(withoutTopLevelEmptyParagraphs(projectedNodes)))
-      || (approvedIds.size > 0 && projectionFingerprint(withoutEmptyParagraphs(candidateNodes)) === projectionFingerprint(withoutEmptyParagraphs(projectedNodes)))
-    const projectedWithoutUserEmpty = hasUserTrailingEmpty ? candidateNodes.slice(0, -1) : candidateNodes
-    const userEmptyProjection = hasUserTrailingEmpty
-      && projectionFingerprint(projectedWithoutUserEmpty) === projectionFingerprint(projectedNodes)
+    const editableEmptyBaseline =
+      candidateNodes.length === 1 &&
+      isTransientEmptyTextBlock(candidateNodes[0]!) &&
+      projectedNodes.length === 0
+    const sameProjection =
+      projectionFingerprint(candidateNodes) === projectionFingerprint(projectedNodes) ||
+      editableEmptyBaseline ||
+      (topLevelEmptyParagraphCount(candidateNodes) <
+        topLevelEmptyParagraphCount(state.visual.doc.content ?? []) &&
+        projectionFingerprint(withoutTopLevelEmptyParagraphs(candidateNodes)) ===
+          projectionFingerprint(withoutTopLevelEmptyParagraphs(projectedNodes))) ||
+      (approvedIds.size > 0 &&
+        projectionFingerprint(withoutEmptyParagraphs(candidateNodes)) ===
+          projectionFingerprint(withoutEmptyParagraphs(projectedNodes)))
+    const projectedWithoutUserEmpty = hasUserTrailingEmpty
+      ? candidateNodes.slice(0, -1)
+      : candidateNodes
+    const userEmptyProjection =
+      hasUserTrailingEmpty &&
+      projectionFingerprint(projectedWithoutUserEmpty) === projectionFingerprint(projectedNodes)
     if (projected.fallbackReason || (!sameProjection && !userEmptyProjection)) {
       restoreTransient?.()
       const retried = retryWithoutTransientEmpty()
       if (retried) return retried
-      return { ok: false, view: currentView(), error: 'Visual projection cannot be represented by a safe source rewrite' }
+      return {
+        ok: false,
+        view: currentView(),
+        error: 'Visual projection cannot be represented by a safe source rewrite',
+      }
     }
     if (hasUserTrailingEmpty) {
       const marker = candidateNodes[candidateNodes.length - 1]!
       const nodesWithoutMarker = candidateNodes.slice(0, -1)
       const base = logicalSource === undefined ? undefined : createState(logicalSource, codec)
-      const logicalBase = !frontmatterChanged
-        && projectionFingerprint(nodesWithoutMarker) === projectionFingerprint(state.visual.doc.content ?? [])
-        ? state
-        : base
-      if (!logicalBase || logicalBase.fallbackReason || !retainUserTrailingEmpty(projected, marker, logicalBase)) {
-        return { ok: false, view: currentView(), error: 'Visual projection cannot retain a user trailing empty paragraph' }
+      const logicalBase =
+        !frontmatterChanged &&
+        projectionFingerprint(nodesWithoutMarker) ===
+          projectionFingerprint(state.visual.doc.content ?? [])
+          ? state
+          : base
+      if (
+        !logicalBase ||
+        logicalBase.fallbackReason ||
+        !retainUserTrailingEmpty(projected, marker, logicalBase)
+      ) {
+        return {
+          ok: false,
+          view: currentView(),
+          error: 'Visual projection cannot retain a user trailing empty paragraph',
+        }
       }
     } else {
       state = projected
@@ -708,12 +921,18 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     return success(changedRange(nextSource))
   }
 
-  const previewApprovedVisual = (next: VisualProjection, protectedIds: readonly string[]): SessionUpdate => {
+  const previewApprovedVisual = (
+    next: VisualProjection,
+    protectedIds: readonly string[],
+  ): SessionUpdate => {
     const preview = createMarkdownDocumentSession(state.source, codec)
     return preview.applyVisualWithApprovedFragments(next, protectedIds)
   }
 
-  const applyVisualWithApprovedFragments = (next: VisualProjection, protectedIds: readonly string[]): SessionUpdate => {
+  const applyVisualWithApprovedFragments = (
+    next: VisualProjection,
+    protectedIds: readonly string[],
+  ): SessionUpdate => {
     return applyVisual(next, new Set(protectedIds))
   }
 
@@ -722,21 +941,29 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     nextRaw: string,
     origin: SourcePatch['origin'] = 'ai',
   ): SourcePatch => {
-    const fragment = currentView().protectedFragments.find((candidate) => candidate.id === fragmentId)
+    const fragment = currentView().protectedFragments.find(
+      (candidate) => candidate.id === fragmentId,
+    )
     if (!fragment) throw new Error(`Protected source fragment ${fragmentId} does not exist`)
     return createSourcePatch(origin, fragmentId, fragment.raw, nextRaw, revision)
   }
 
   const proposeFragmentConversion = (fragmentId: string): SourcePatch => {
-    const fragment = currentView().protectedFragments.find((candidate) => candidate.id === fragmentId)
+    const fragment = currentView().protectedFragments.find(
+      (candidate) => candidate.id === fragmentId,
+    )
     if (!fragment) throw new Error(`Protected source fragment ${fragmentId} does not exist`)
     let nextRaw: string
     try {
       nextRaw = codec.serialize(codec.parse(fragment.raw))
     } catch (error) {
-      throw new Error(`Unable to convert protected source: ${error instanceof Error ? error.message : String(error)}`, { cause: error })
+      throw new Error(
+        `Unable to convert protected source: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      )
     }
-    if (!nextRaw || nextRaw === fragment.raw) throw new Error('Unable to convert protected source safely')
+    if (!nextRaw || nextRaw === fragment.raw)
+      throw new Error('Unable to convert protected source safely')
     return createSourcePatch('conversion', fragmentId, fragment.raw, nextRaw, revision)
   }
 
@@ -745,7 +972,10 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     const validation = validateSourcePatch(patch, revision, view.protectedFragments)
     if (!validation.ok) return { ok: false, view, error: validation.error }
     const fragment = view.protectedFragments.find((candidate) => candidate.id === patch.fragmentId)
-    if (!fragment || state.source.slice(fragment.range.from, fragment.range.to) !== patch.expectedRaw) {
+    if (
+      !fragment ||
+      state.source.slice(fragment.range.from, fragment.range.to) !== patch.expectedRaw
+    ) {
       return { ok: false, view, error: 'raw-changed' }
     }
     const nextSource = `${state.source.slice(0, fragment.range.from)}${patch.nextRaw}${state.source.slice(fragment.range.to)}`
@@ -762,7 +992,10 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     const validation = validateSourcePatch(patch, revision, view.protectedFragments)
     if (!validation.ok) return { ok: false, view, error: validation.error }
     const fragment = view.protectedFragments.find((candidate) => candidate.id === patch.fragmentId)
-    if (!fragment || state.source.slice(fragment.range.from, fragment.range.to) !== patch.expectedRaw) {
+    if (
+      !fragment ||
+      state.source.slice(fragment.range.from, fragment.range.to) !== patch.expectedRaw
+    ) {
       return { ok: false, view: currentView(), error: 'raw-changed' }
     }
     const nextSource = `${state.source.slice(0, fragment.range.from)}${patch.nextRaw}${state.source.slice(fragment.range.to)}`
@@ -771,7 +1004,11 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       next = createState(nextSource, codec)
       validateState(next)
     } catch (error) {
-      return { ok: false, view: currentView(), error: error instanceof Error ? error.message : String(error) }
+      return {
+        ok: false,
+        view: currentView(),
+        error: error instanceof Error ? error.message : String(error),
+      }
     }
     state = next
     userTrailingEmpty = undefined
@@ -828,17 +1065,23 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
 
   const beginSave = (): SaveTicket => {
     const ticket = { revision, source: serialize() }
-    tickets.set(ticket, { revision, source: ticket.source, units: snapshotUnits(state.units), envelope: { ...state.envelope } })
+    tickets.set(ticket, {
+      revision,
+      source: ticket.source,
+      units: snapshotUnits(state.units),
+      envelope: { ...state.envelope },
+    })
     return ticket
   }
 
   const markSaved = (
     sourceActuallyWritten: string,
     ticket: SaveTicket,
-    imageRewrites?: ReadonlyArray<{ from: string, to: string }>,
+    imageRewrites?: ReadonlyArray<{ from: string; to: string }>,
   ): SessionView => {
     const saved = tickets.get(ticket)
-    if (!saved || saved.revision !== ticket.revision || saved.source !== ticket.source) throw new Error('Invalid save ticket')
+    if (!saved || saved.revision !== ticket.revision || saved.source !== ticket.source)
+      throw new Error('Invalid save ticket')
     tickets.delete(ticket)
     const trailingRelation = userTrailingEmpty
     const trailingMarker = trailingRelation
@@ -848,10 +1091,12 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
       if (sourceActuallyWritten !== state.source || !userTrailingEmpty) {
         state = createState(sourceActuallyWritten, codec)
         userTrailingEmpty = undefined
-        const base = trailingMarker && trailingRelation
-          ? baseFromUserTrailingEmptyDelta(state, trailingRelation.delta)
-          : undefined
-        if (trailingMarker && base && !retainUserTrailingEmpty(state, trailingMarker, base)) userTrailingEmpty = undefined
+        const base =
+          trailingMarker && trailingRelation
+            ? baseFromUserTrailingEmptyDelta(state, trailingRelation.delta)
+            : undefined
+        if (trailingMarker && base && !retainUserTrailingEmpty(state, trailingMarker, base))
+          userTrailingEmpty = undefined
       }
       baseline = sourceActuallyWritten
       mode = state.fallbackReason ? 'source' : mode
@@ -876,12 +1121,20 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     const movedDescendants = new Set<SourceUnitState>()
     const rawCounts = new Map<string, number>()
     saved.units.forEach((unit) => rawCounts.set(unit.raw, (rawCounts.get(unit.raw) ?? 0) + 1))
-    const occupied = new Set(currentAligned.filter((unit): unit is SourceUnitState => unit !== undefined))
+    const occupied = new Set(
+      currentAligned.filter((unit): unit is SourceUnitState => unit !== undefined),
+    )
     for (let ticketIndex = 0; ticketIndex < saved.units.length; ticketIndex += 1) {
       const original = saved.units[ticketIndex]!
       const actual = writtenAligned[ticketIndex]
-      if (currentAligned[ticketIndex] || !actual || unitText(actual) === unitText(original)) continue
-      const candidates = state.units.filter((unit) => !occupied.has(unit) && unit.raw === original.raw && unit.fingerprint === original.fingerprint)
+      if (currentAligned[ticketIndex] || !actual || unitText(actual) === unitText(original))
+        continue
+      const candidates = state.units.filter(
+        (unit) =>
+          !occupied.has(unit) &&
+          unit.raw === original.raw &&
+          unit.fingerprint === original.fingerprint,
+      )
       if ((rawCounts.get(original.raw) ?? 0) > 1 || candidates.length !== 1) {
         hasConflict = true
         continue
@@ -915,24 +1168,35 @@ export function createMarkdownDocumentSession(source: string, codec: MarkdownCod
     const body = rebased.map(unitText).join('')
     const userChangedEnvelope = sourcePrefix(state.envelope) !== sourcePrefix(saved.envelope)
     const mainChangedEnvelope = sourcePrefix(written.envelope) !== sourcePrefix(saved.envelope)
-    if (userChangedEnvelope && mainChangedEnvelope && sourcePrefix(state.envelope) !== sourcePrefix(written.envelope)) hasConflict = true
+    if (
+      userChangedEnvelope &&
+      mainChangedEnvelope &&
+      sourcePrefix(state.envelope) !== sourcePrefix(written.envelope)
+    )
+      hasConflict = true
     const envelope = userChangedEnvelope ? state.envelope : written.envelope
-    const savePreservesTrailingRelation = trailingRelation
-      && (sourceActuallyWritten === ticket.source
-        || sourceActuallyWritten === trailingRelation.base.source + trailingRelation.delta)
-    const rebasedSource = trailingRelation && state.units.length === 0 && written.units.length === 0
-      ? savePreservesTrailingRelation
-        ? state.source
-        : sourcePrefix(envelope) + trailingRelation.base.envelope.bodyRaw + trailingRelation.delta
-      : sourcePrefix(envelope) + body
+    const savePreservesTrailingRelation =
+      trailingRelation &&
+      (sourceActuallyWritten === ticket.source ||
+        sourceActuallyWritten === trailingRelation.base.source + trailingRelation.delta)
+    const rebasedSource =
+      trailingRelation && state.units.length === 0 && written.units.length === 0
+        ? savePreservesTrailingRelation
+          ? state.source
+          : sourcePrefix(envelope) + trailingRelation.base.envelope.bodyRaw + trailingRelation.delta
+        : sourcePrefix(envelope) + body
     state = createState(rebasedSource, codec)
     userTrailingEmpty = undefined
-    const base = trailingMarker && trailingRelation
-      ? baseFromUserTrailingEmptyDelta(state, trailingRelation.delta)
-      : undefined
-    if (trailingMarker && base && !retainUserTrailingEmpty(state, trailingMarker, base)) userTrailingEmpty = undefined
+    const base =
+      trailingMarker && trailingRelation
+        ? baseFromUserTrailingEmptyDelta(state, trailingRelation.delta)
+        : undefined
+    if (trailingMarker && base && !retainUserTrailingEmpty(state, trailingMarker, base))
+      userTrailingEmpty = undefined
     baseline = sourceActuallyWritten
-    conflictReason = hasConflict ? 'rebase conflict: user and save result changed the same source unit' : undefined
+    conflictReason = hasConflict
+      ? 'rebase conflict: user and save result changed the same source unit'
+      : undefined
     return currentView()
   }
 

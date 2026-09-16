@@ -189,23 +189,28 @@ describe('protected source export', () => {
     const inlineHtml = '<mark data-tone="warning">literal</mark>'
     const htmlComment = '<!-- preserve this comment -->'
     const legacyFencedDiv = '::: warning\nlegacy fenced content\n:::'
-    const mapping = await mapDocToSaveBlocks({
-      type: 'doc',
-      content: [
-        { type: 'protectedSourceBlock', attrs: { raw: blockHtml } },
-        {
-          type: 'paragraph',
-          content: [
-            { type: 'text', text: 'before ' },
-            { type: 'protectedSourceInline', attrs: { raw: inlineHtml } },
-            { type: 'text', text: ' after' },
-          ],
-        },
-        { type: 'protectedSourceBlock', attrs: { raw: htmlComment } },
-        { type: 'protectedSourceBlock', attrs: { raw: legacyFencedDiv } },
-      ],
-    }, noImages)
-    const paragraphs = mapping.blocks.flatMap((block) => block.kind === 'generated' ? [block.block] : [])
+    const mapping = await mapDocToSaveBlocks(
+      {
+        type: 'doc',
+        content: [
+          { type: 'protectedSourceBlock', attrs: { raw: blockHtml } },
+          {
+            type: 'paragraph',
+            content: [
+              { type: 'text', text: 'before ' },
+              { type: 'protectedSourceInline', attrs: { raw: inlineHtml } },
+              { type: 'text', text: ' after' },
+            ],
+          },
+          { type: 'protectedSourceBlock', attrs: { raw: htmlComment } },
+          { type: 'protectedSourceBlock', attrs: { raw: legacyFencedDiv } },
+        ],
+      },
+      noImages,
+    )
+    const paragraphs = mapping.blocks.flatMap((block) =>
+      block.kind === 'generated' ? [block.block] : [],
+    )
 
     expect(paragraphs.map((paragraph) => paragraph.runs?.map((run) => run.text).join(''))).toEqual([
       blockHtml,
@@ -214,8 +219,10 @@ describe('protected source export', () => {
       legacyFencedDiv,
     ])
     for (const raw of [blockHtml, inlineHtml, htmlComment, legacyFencedDiv]) {
-      expect(paragraphs.flatMap((paragraph) => paragraph.runs ?? [])
-        .find((run) => run.text === raw)?.font).toBe('Consolas')
+      expect(
+        paragraphs.flatMap((paragraph) => paragraph.runs ?? []).find((run) => run.text === raw)
+          ?.font,
+      ).toBe('Consolas')
     }
   })
 })

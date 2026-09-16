@@ -4,7 +4,10 @@ import type { Transaction } from '@tiptap/pm/state'
 
 /** A history-only source snapshot. It deliberately leaves the ProseMirror doc unchanged. */
 class SourceSnapshotStepImpl extends Step {
-  constructor(readonly beforeSource: string, readonly source: string) {
+  constructor(
+    readonly beforeSource: string,
+    readonly source: string,
+  ) {
     super()
   }
 
@@ -25,20 +28,30 @@ class SourceSnapshotStepImpl extends Step {
   }
 
   toJSON(): object {
-    return { stepType: 'genofficeSourceSnapshot', beforeSource: this.beforeSource, source: this.source }
+    return {
+      stepType: 'genofficeSourceSnapshot',
+      beforeSource: this.beforeSource,
+      source: this.source,
+    }
   }
 
-  static fromJSON(_schema: Schema, json: { beforeSource: string, source: string }): SourceSnapshotStepImpl {
+  static fromJSON(
+    _schema: Schema,
+    json: { beforeSource: string; source: string },
+  ): SourceSnapshotStepImpl {
     return new SourceSnapshotStepImpl(json.beforeSource, json.source)
   }
 }
 
 type SourceSnapshotStepConstructor = typeof SourceSnapshotStepImpl
 const sourceSnapshotStepKey = Symbol.for('genoffice.markdown.SourceSnapshotStep')
-const sourceHistoryGlobal = globalThis as typeof globalThis & { [sourceSnapshotStepKey]?: SourceSnapshotStepConstructor }
+const sourceHistoryGlobal = globalThis as typeof globalThis & {
+  [sourceSnapshotStepKey]?: SourceSnapshotStepConstructor
+}
 
-export const SourceSnapshotStep: SourceSnapshotStepConstructor = sourceHistoryGlobal[sourceSnapshotStepKey]
-  ?? (() => {
+export const SourceSnapshotStep: SourceSnapshotStepConstructor =
+  sourceHistoryGlobal[sourceSnapshotStepKey] ??
+  (() => {
     Step.jsonID('genofficeSourceSnapshot', SourceSnapshotStepImpl)
     sourceHistoryGlobal[sourceSnapshotStepKey] = SourceSnapshotStepImpl
     return SourceSnapshotStepImpl
@@ -49,7 +62,9 @@ export function sourceSnapshotFromTransaction(transaction: Transaction): string 
 }
 
 /** Return both source snapshot endpoints for exact protected history transition checks. */
-export function sourceSnapshotPairFromTransaction(transaction: Transaction): { beforeSource: string, source: string } | undefined {
+export function sourceSnapshotPairFromTransaction(
+  transaction: Transaction,
+): { beforeSource: string; source: string } | undefined {
   let beforeSource: string | undefined
   let source: string | undefined
   for (const step of transaction.steps) {

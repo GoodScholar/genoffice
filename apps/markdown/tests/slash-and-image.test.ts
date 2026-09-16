@@ -253,11 +253,17 @@ describe('BlockDragHandle', () => {
     const block = editor.view.nodeDOM(0) as HTMLElement
     const handle = wrapper.querySelector<HTMLElement>('.md-block-gutter')!
     Object.defineProperty(container, 'offsetWidth', { configurable: true, value: 640 })
-    vi.spyOn(container, 'getBoundingClientRect').mockReturnValue(DOMRect.fromRect({ x: 100, y: 40, width: 640, height: 400 }))
-    vi.spyOn(block, 'getBoundingClientRect').mockReturnValue(DOMRect.fromRect({ x: 100, y: 60, width: 640, height: 28 }))
+    vi.spyOn(container, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 100, y: 40, width: 640, height: 400 }),
+    )
+    vi.spyOn(block, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 100, y: 60, width: 640, height: 28 }),
+    )
     vi.spyOn(editor.view, 'posAtCoords').mockReturnValue({ pos: 1, inside: 0 })
 
-    editor.view.dom.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 110, clientY: 70 }))
+    editor.view.dom.dispatchEvent(
+      new MouseEvent('mousemove', { bubbles: true, clientX: 110, clientY: 70 }),
+    )
 
     expect(handle.style.display).toBe('flex')
     expect(handle.style.left).toBe('-52px')

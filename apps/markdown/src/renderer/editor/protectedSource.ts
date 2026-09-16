@@ -62,8 +62,13 @@ interface TransitionEvent {
 const MAX_PROTECTED_TRANSITIONS = 128
 
 const protectedSourceGuardKey = new PluginKey<ProtectedSourceGuardState>('protectedSourceGuard')
-interface ProtectedSourceFinalization { root: Transaction, source: string }
-const protectedSourceFinalizeKey = new PluginKey<ProtectedSourceFinalization>('protectedSourceFinalize')
+interface ProtectedSourceFinalization {
+  root: Transaction
+  source: string
+}
+const protectedSourceFinalizeKey = new PluginKey<ProtectedSourceFinalization>(
+  'protectedSourceFinalize',
+)
 
 function transitionKey(signature: ProtectedSourceSignature): string {
   return `${JSON.stringify(signature.beforeDoc)}\u0000${JSON.stringify(signature.afterDoc)}\u0000${signature.beforeSource ?? ''}\u0000${signature.afterSource ?? ''}`
@@ -82,13 +87,20 @@ function sameSignature(left: ProtectedSourceSignature, right: ProtectedSourceSig
   return transitionKey(left) === transitionKey(right)
 }
 
-function registerTransition(transitions: TransitionEvent[], event: TransitionEvent): TransitionEvent[] {
+function registerTransition(
+  transitions: TransitionEvent[],
+  event: TransitionEvent,
+): TransitionEvent[] {
   const next = [...transitions.filter((candidate) => candidate.root !== event.root), event]
   return next.slice(-MAX_PROTECTED_TRANSITIONS)
 }
 
-function updateTransition(transitions: TransitionEvent[], root: Transaction, finalAfter: ProtectedSourceSignature): TransitionEvent[] {
-  return transitions.map((event) => event.root === root ? { ...event, finalAfter } : event)
+function updateTransition(
+  transitions: TransitionEvent[],
+  root: Transaction,
+  finalAfter: ProtectedSourceSignature,
+): TransitionEvent[] {
+  return transitions.map((event) => (event.root === root ? { ...event, finalAfter } : event))
 }
 
 function guardState(state: EditorState): ProtectedSourceGuardState {
@@ -97,50 +109,94 @@ function guardState(state: EditorState): ProtectedSourceGuardState {
   return value
 }
 
-function matchesHistoryEvent(event: TransitionEvent, actual: ProtectedSourceSignature, currentSource?: string): boolean {
-  const sourceAware = event.before.beforeSource !== undefined
-    || event.rootAfter.afterSource !== undefined
-    || event.finalAfter.afterSource !== undefined
+function matchesHistoryEvent(
+  event: TransitionEvent,
+  actual: ProtectedSourceSignature,
+  currentSource?: string,
+): boolean {
+  const sourceAware =
+    event.before.beforeSource !== undefined ||
+    event.rootAfter.afterSource !== undefined ||
+    event.finalAfter.afterSource !== undefined
   // A source-aware event is never a document-only capability.  Its history
   // step must carry the checked source endpoints as well.
-  if (sourceAware && (actual.beforeSource === undefined || actual.afterSource === undefined)) return false
+  if (sourceAware && (actual.beforeSource === undefined || actual.afterSource === undefined))
+    return false
   if (actual.beforeSource === undefined && actual.afterSource === undefined) {
-    return sameSignature({ ...event.before, afterDoc: event.rootAfter.afterDoc }, actual)
-      || sameSignature({
-        beforeDoc: event.finalAfter.afterDoc,
-        afterDoc: event.before.beforeDoc,
-      }, actual)
+    return (
+      sameSignature({ ...event.before, afterDoc: event.rootAfter.afterDoc }, actual) ||
+      sameSignature(
+        {
+          beforeDoc: event.finalAfter.afterDoc,
+          afterDoc: event.before.beforeDoc,
+        },
+        actual,
+      )
+    )
   }
-  if (currentSource === undefined || actual.beforeSource === undefined || actual.afterSource === undefined) return false
+  if (
+    currentSource === undefined ||
+    actual.beforeSource === undefined ||
+    actual.afterSource === undefined
+  )
+    return false
   // Redo carries the root snapshot in its natural direction.  Undo carries
   // its inverse snapshot (root-after -> before), while the live source is the
   // final endpoint after appendTransaction.  Check both independently.
-  const redo = currentSource === event.before.beforeSource
-    && actual.beforeSource === event.before.beforeSource
-    && actual.afterSource === event.rootAfter.afterSource
-    && (sameSignature({ ...event.before, afterDoc: event.rootAfter.afterDoc, afterSource: event.rootAfter.afterSource }, actual)
-      || sameSignature({ ...event.before, afterDoc: event.finalAfter.afterDoc, afterSource: event.rootAfter.afterSource }, actual))
-  const undo = currentSource === event.finalAfter.afterSource
-    && sameSignature({
-      beforeDoc: event.finalAfter.afterDoc,
-      afterDoc: event.before.beforeDoc,
-      beforeSource: event.rootAfter.afterSource,
-      afterSource: event.before.beforeSource,
-    }, actual)
+  const redo =
+    currentSource === event.before.beforeSource &&
+    actual.beforeSource === event.before.beforeSource &&
+    actual.afterSource === event.rootAfter.afterSource &&
+    (sameSignature(
+      {
+        ...event.before,
+        afterDoc: event.rootAfter.afterDoc,
+        afterSource: event.rootAfter.afterSource,
+      },
+      actual,
+    ) ||
+      sameSignature(
+        {
+          ...event.before,
+          afterDoc: event.finalAfter.afterDoc,
+          afterSource: event.rootAfter.afterSource,
+        },
+        actual,
+      ))
+  const undo =
+    currentSource === event.finalAfter.afterSource &&
+    sameSignature(
+      {
+        beforeDoc: event.finalAfter.afterDoc,
+        afterDoc: event.before.beforeDoc,
+        beforeSource: event.rootAfter.afterSource,
+        afterSource: event.before.beforeSource,
+      },
+      actual,
+    )
   return redo || undo
 }
 
 function trustedAppend(state: ProtectedSourceGuardState, transaction: Transaction): boolean {
-  return state.accepted !== undefined && transaction.getMeta('appendedTransaction') === state.accepted
+  return (
+    state.accepted !== undefined && transaction.getMeta('appendedTransaction') === state.accepted
+  )
 }
 
-function allows(state: ProtectedSourceGuardState, transaction: Transaction, editorState: EditorState, currentSource?: string): boolean {
+function allows(
+  state: ProtectedSourceGuardState,
+  transaction: Transaction,
+  editorState: EditorState,
+  currentSource?: string,
+): boolean {
   const actual = transactionSignature(transaction)
   actual.beforeDoc = editorState.doc.toJSON()
   const pending = state.pending.get(transaction)
   if (pending && sameSignature(pending, actual)) return true
   if (actual.beforeSource !== undefined && currentSource === undefined) return false
-  return state.transitions.some((transition) => matchesHistoryEvent(transition, actual, currentSource))
+  return state.transitions.some((transition) =>
+    matchesHistoryEvent(transition, actual, currentSource),
+  )
 }
 
 /** Each EditorState owns a private, non-forgeable authorization record. */
@@ -159,26 +215,37 @@ export function protectedSourceAuthority(editor: Editor): ProtectedSourceAuthori
       const state = guardState(editor.state)
       if (state.accepted === transaction) return true
       const actual = transactionSignature(transaction)
-      return state.transitions.some((transition) => matchesHistoryEvent(transition, actual, currentSource))
+      return state.transitions.some((transition) =>
+        matchesHistoryEvent(transition, actual, currentSource),
+      )
     },
   }
 }
 
 /** Record the actual post-dispatch source endpoint for a trusted protected edit.
  * This is intentionally private-authority adjacent; callers never set its meta. */
-export function finalizeProtectedSourceTransition(editor: Editor, root: Transaction, source: string | undefined): boolean {
+export function finalizeProtectedSourceTransition(
+  editor: Editor,
+  root: Transaction,
+  source: string | undefined,
+): boolean {
   if (source === undefined || guardState(editor.state).accepted !== root) return false
-  editor.view.dispatch(editor.state.tr
-    .setMeta(protectedSourceFinalizeKey, { root, source })
-    .setMeta('addToHistory', false)
-    .setMeta('uiOnly', true))
+  editor.view.dispatch(
+    editor.state.tr
+      .setMeta(protectedSourceFinalizeKey, { root, source })
+      .setMeta('addToHistory', false)
+      .setMeta('uiOnly', true),
+  )
   const event = guardState(editor.state).transitions.find((candidate) => candidate.root === root)
-  return Boolean(event && sameSignature(event.finalAfter, {
-    beforeDoc: event.before.beforeDoc,
-    afterDoc: editor.state.doc.toJSON(),
-    beforeSource: event.before.beforeSource,
-    afterSource: source,
-  }))
+  return Boolean(
+    event &&
+    sameSignature(event.finalAfter, {
+      beforeDoc: event.before.beforeDoc,
+      afterDoc: editor.state.doc.toJSON(),
+      beforeSource: event.before.beforeSource,
+      afterSource: source,
+    }),
+  )
 }
 
 const sourceAttr = {
@@ -216,10 +283,15 @@ function protectedSourceDOM(attrs: Record<string, unknown>, display: 'inline' | 
 
 type ProtectedRawMultiset = Map<string, Map<string, number>>
 
-function protectedRawMultiset(doc: { descendants(visitor: (node: { type: { name: string }, attrs: Record<string, unknown> }) => void): void }): ProtectedRawMultiset {
+function protectedRawMultiset(doc: {
+  descendants(
+    visitor: (node: { type: { name: string }; attrs: Record<string, unknown> }) => void,
+  ): void
+}): ProtectedRawMultiset {
   const found: ProtectedRawMultiset = new Map()
   doc.descendants((node) => {
-    if (node.type.name !== 'protectedSourceBlock' && node.type.name !== 'protectedSourceInline') return
+    if (node.type.name !== 'protectedSourceBlock' && node.type.name !== 'protectedSourceInline')
+      return
     const id = String(node.attrs.id ?? '')
     const raw = String(node.attrs.raw ?? '')
     if (!id) return
@@ -230,7 +302,10 @@ function protectedRawMultiset(doc: { descendants(visitor: (node: { type: { name:
   return found
 }
 
-function sameProtectedRawMultiset(before: ProtectedRawMultiset, after: ProtectedRawMultiset): boolean {
+function sameProtectedRawMultiset(
+  before: ProtectedRawMultiset,
+  after: ProtectedRawMultiset,
+): boolean {
   if (before.size !== after.size) return false
   for (const [id, raws] of before) {
     const candidate = after.get(id)
@@ -241,15 +316,17 @@ function sameProtectedRawMultiset(before: ProtectedRawMultiset, after: Protected
 }
 
 function changedProtectedIds(before: ProtectedRawMultiset, after: ProtectedRawMultiset): string[] {
-  return [...new Set([...before.keys(), ...after.keys()])]
-    .filter((id) => !sameProtectedRawMultiset(
-      new Map([[id, before.get(id) ?? new Map()]]),
-      new Map([[id, after.get(id) ?? new Map()]]),
-    ))
+  return [...new Set([...before.keys(), ...after.keys()])].filter(
+    (id) =>
+      !sameProtectedRawMultiset(
+        new Map([[id, before.get(id) ?? new Map()]]),
+        new Map([[id, after.get(id) ?? new Map()]]),
+      ),
+  )
 }
 
 function protectedChangeKind(
-  transaction: { getMeta(name: string): unknown, steps: ReadonlyArray<{ toJSON(): unknown }> },
+  transaction: { getMeta(name: string): unknown; steps: ReadonlyArray<{ toJSON(): unknown }> },
   before: ProtectedRawMultiset,
   after: ProtectedRawMultiset,
 ): ProtectedChangeRequest['kind'] {
@@ -291,22 +368,28 @@ export function applyProtectedChange(
   editor: Editor,
   request: ProtectedChangeRequest,
   session?: MarkdownDocumentSession,
-): { ok: true } | { ok: false, error: string } {
+): { ok: true } | { ok: false; error: string } {
   if (JSON.stringify(editor.state.doc.toJSON()) !== JSON.stringify(request.baseDoc)) {
     return { ok: false, error: 'Protected change is stale' }
   }
   let authority: ProtectedSourceAuthority | undefined
   let signed: Transaction | undefined
   try {
-    editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true))
+    editor.view.dispatch(
+      closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true),
+    )
     let transaction = editor.state.tr
-    for (const step of request.steps) transaction = transaction.step(Step.fromJSON(editor.schema, step as Record<string, unknown>))
+    for (const step of request.steps)
+      transaction = transaction.step(Step.fromJSON(editor.schema, step as Record<string, unknown>))
     if (session) {
       const beforeSource = session.view().source
-      const preview = session.previewApprovedVisual({
-        doc: transaction.doc.toJSON(),
-        frontmatterInner: session.view().visual.frontmatterInner,
-      }, request.ids)
+      const preview = session.previewApprovedVisual(
+        {
+          doc: transaction.doc.toJSON(),
+          frontmatterInner: session.view().visual.frontmatterInner,
+        },
+        request.ids,
+      )
       if (!preview.ok) return { ok: false, error: preview.error }
       const canonical = editor.schema.nodeFromJSON(preview.view.visual.doc)
       if (!transaction.doc.eq(canonical)) {
@@ -314,7 +397,9 @@ export function applyProtectedChange(
       }
       transaction = transaction.step(new SourceSnapshotStep(beforeSource, preview.view.source))
     }
-    transaction = closeHistory(transaction.setMeta(APPROVED_PROTECTED_CHANGE, true).setMeta('addToHistory', true))
+    transaction = closeHistory(
+      transaction.setMeta(APPROVED_PROTECTED_CHANGE, true).setMeta('addToHistory', true),
+    )
     authority = protectedSourceAuthority(editor)
     authority.authorize(transaction)
     signed = transaction
@@ -323,10 +408,15 @@ export function applyProtectedChange(
     if (!authority.accepts(transaction)) {
       return { ok: false, error: 'Protected change was rejected' }
     }
-    if (expectedSource !== undefined && !finalizeProtectedSourceTransition(editor, transaction, session?.serialize())) {
+    if (
+      expectedSource !== undefined &&
+      !finalizeProtectedSourceTransition(editor, transaction, session?.serialize())
+    ) {
       return { ok: false, error: 'Protected change was rejected' }
     }
-    editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true))
+    editor.view.dispatch(
+      closeHistory(editor.state.tr).setMeta('addToHistory', false).setMeta('uiOnly', true),
+    )
     return { ok: true }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -346,113 +436,133 @@ export const ProtectedSourceGuard = Extension.create<ProtectedSourceOptions>({
 
   addProseMirrorPlugins() {
     const options = this.options
-    return [new Plugin({
-      key: protectedSourceGuardKey,
-      state: {
-        init(): ProtectedSourceGuardState {
-          return {
-            pending: new WeakMap<Transaction, ProtectedSourceSignature>(),
-            transitions: [],
-          }
-        },
-        apply(transaction, value, oldState) {
-          const finalization = transaction.getMeta(protectedSourceFinalizeKey)
-          if (finalization && finalization.root === value.accepted) {
-            const event = value.transitions.find((candidate) => candidate.root === finalization.root)
-            if (!event) return { ...value, accepted: undefined }
+    return [
+      new Plugin({
+        key: protectedSourceGuardKey,
+        state: {
+          init(): ProtectedSourceGuardState {
             return {
-              ...value,
-              transitions: updateTransition(value.transitions, finalization.root, {
-                ...event.rootAfter,
-                afterDoc: transaction.doc.toJSON(),
-                afterSource: finalization.source,
-              }),
+              pending: new WeakMap<Transaction, ProtectedSourceSignature>(),
+              transitions: [],
             }
-          }
-          if (trustedAppend(value, transaction)) {
-            const event = value.transitions.find((candidate) => candidate.root === value.accepted)
-            return event && value.accepted
-              ? { ...value, transitions: updateTransition(value.transitions, value.accepted, { ...event.finalAfter, afterDoc: transaction.doc.toJSON() }) }
-              : { ...value, accepted: undefined }
-          }
-          if (!allows(value, transaction, oldState)) {
-            return { ...value, accepted: undefined }
-          }
-          const signature = value.pending.get(transaction)
-          const transitions = signature
-            ? registerTransition(value.transitions, { root: transaction, before: signature, rootAfter: signature, finalAfter: signature })
-            : value.transitions
-          return { ...value, accepted: signature ? transaction : undefined, transitions }
-        },
-      },
-      props: {
-        clipboardTextSerializer(slice) {
-          return slice.content.textBetween(0, slice.content.size, '\n\n', (node) => {
-            if (node.type.name === 'protectedSourceBlock' || node.type.name === 'protectedSourceInline') {
-              return String(node.attrs.raw ?? '')
+          },
+          apply(transaction, value, oldState) {
+            const finalization = transaction.getMeta(protectedSourceFinalizeKey)
+            if (finalization && finalization.root === value.accepted) {
+              const event = value.transitions.find(
+                (candidate) => candidate.root === finalization.root,
+              )
+              if (!event) return { ...value, accepted: undefined }
+              return {
+                ...value,
+                transitions: updateTransition(value.transitions, finalization.root, {
+                  ...event.rootAfter,
+                  afterDoc: transaction.doc.toJSON(),
+                  afterSource: finalization.source,
+                }),
+              }
             }
-            if (node.type.name === 'hardBreak') return '\n'
-            return node.type.spec.leafText?.(node) ?? ''
-          })
+            if (trustedAppend(value, transaction)) {
+              const event = value.transitions.find((candidate) => candidate.root === value.accepted)
+              return event && value.accepted
+                ? {
+                    ...value,
+                    transitions: updateTransition(value.transitions, value.accepted, {
+                      ...event.finalAfter,
+                      afterDoc: transaction.doc.toJSON(),
+                    }),
+                  }
+                : { ...value, accepted: undefined }
+            }
+            if (!allows(value, transaction, oldState)) {
+              return { ...value, accepted: undefined }
+            }
+            const signature = value.pending.get(transaction)
+            const transitions = signature
+              ? registerTransition(value.transitions, {
+                  root: transaction,
+                  before: signature,
+                  rootAfter: signature,
+                  finalAfter: signature,
+                })
+              : value.transitions
+            return { ...value, accepted: signature ? transaction : undefined, transitions }
+          },
         },
-      },
-      appendTransaction(transactions, _oldState, state) {
-        const authority = guardState(state)
-        for (const transaction of transactions) {
-          const root = transaction.getMeta('appendedTransaction')
-          if (!root || authority.accepted !== root) continue
-          const rootBefore = protectedRawMultiset(root.doc)
-          const appendedAfter = protectedRawMultiset(transaction.doc)
-          if (sameProtectedRawMultiset(rootBefore, appendedAfter)) continue
-          options.onConfirmChange({
-            ids: changedProtectedIds(rootBefore, appendedAfter),
-            kind: protectedChangeKind(transaction, rootBefore, appendedAfter),
-            baseDoc: root.doc.toJSON(),
-            steps: transaction.steps.map((step) => step.toJSON()),
-          })
-          throw new Error('Protected append exceeds the approved change')
-        }
-        return null
-      },
-      filterTransaction(transaction, state) {
-        const snapshot = sourceSnapshotPairFromTransaction(transaction)
-        const authority = guardState(state)
-        if (snapshot && !allows(authority, transaction, state, options.getCurrentSource?.())) return false
-        if (trustedAppend(authority, transaction)) {
+        props: {
+          clipboardTextSerializer(slice) {
+            return slice.content.textBetween(0, slice.content.size, '\n\n', (node) => {
+              if (
+                node.type.name === 'protectedSourceBlock' ||
+                node.type.name === 'protectedSourceInline'
+              ) {
+                return String(node.attrs.raw ?? '')
+              }
+              if (node.type.name === 'hardBreak') return '\n'
+              return node.type.spec.leafText?.(node) ?? ''
+            })
+          },
+        },
+        appendTransaction(transactions, _oldState, state) {
+          const authority = guardState(state)
+          for (const transaction of transactions) {
+            const root = transaction.getMeta('appendedTransaction')
+            if (!root || authority.accepted !== root) continue
+            const rootBefore = protectedRawMultiset(root.doc)
+            const appendedAfter = protectedRawMultiset(transaction.doc)
+            if (sameProtectedRawMultiset(rootBefore, appendedAfter)) continue
+            options.onConfirmChange({
+              ids: changedProtectedIds(rootBefore, appendedAfter),
+              kind: protectedChangeKind(transaction, rootBefore, appendedAfter),
+              baseDoc: root.doc.toJSON(),
+              steps: transaction.steps.map((step) => step.toJSON()),
+            })
+            throw new Error('Protected append exceeds the approved change')
+          }
+          return null
+        },
+        filterTransaction(transaction, state) {
+          const snapshot = sourceSnapshotPairFromTransaction(transaction)
+          const authority = guardState(state)
+          if (snapshot && !allows(authority, transaction, state, options.getCurrentSource?.()))
+            return false
+          if (trustedAppend(authority, transaction)) {
+            const before = protectedRawMultiset(state.doc)
+            const after = protectedRawMultiset(transaction.doc)
+            if (sameProtectedRawMultiset(before, after)) return true
+            options.onConfirmChange({
+              ids: changedProtectedIds(before, after),
+              kind: protectedChangeKind(transaction, before, after),
+              baseDoc: state.doc.toJSON(),
+              steps: transaction.steps.map((step) => step.toJSON()),
+            })
+            // ProseMirror only commits the root after every appended transaction
+            // has been filtered. Throwing aborts this applyTransaction batch, so
+            // an append cannot widen the root approval before a new confirmation.
+            throw new Error('Protected append exceeds the approved change')
+          }
+          if (!transaction.docChanged) return true
           const before = protectedRawMultiset(state.doc)
+          if (before.size === 0) return true
           const after = protectedRawMultiset(transaction.doc)
           if (sameProtectedRawMultiset(before, after)) return true
-          options.onConfirmChange({
+          if (allows(authority, transaction, state, options.getCurrentSource?.())) return true
+          const request: ProtectedChangeRequest = {
             ids: changedProtectedIds(before, after),
             kind: protectedChangeKind(transaction, before, after),
             baseDoc: state.doc.toJSON(),
             steps: transaction.steps.map((step) => step.toJSON()),
-          })
-          // ProseMirror only commits the root after every appended transaction
-          // has been filtered. Throwing aborts this applyTransaction batch, so
-          // an append cannot widen the root approval before a new confirmation.
-          throw new Error('Protected append exceeds the approved change')
-        }
-        if (!transaction.docChanged) return true
-        const before = protectedRawMultiset(state.doc)
-        if (before.size === 0) return true
-        const after = protectedRawMultiset(transaction.doc)
-        if (sameProtectedRawMultiset(before, after)) return true
-        if (allows(authority, transaction, state, options.getCurrentSource?.())) return true
-        const request: ProtectedChangeRequest = {
-          ids: changedProtectedIds(before, after),
-          kind: protectedChangeKind(transaction, before, after),
-          baseDoc: state.doc.toJSON(),
-          steps: transaction.steps.map((step) => step.toJSON()),
-        }
-        options.onConfirmChange(request)
-        // appendTransaction receives this filter call before ProseMirror writes
-        // its public appendedTransaction meta.  While a root is pending in the
-        // candidate state, reject by throwing so the whole batch is discarded.
-        if (authority.accepted !== undefined) throw new Error('Protected append exceeds the approved change')
-        return false
-      },
-    })]
+          }
+          options.onConfirmChange(request)
+          // appendTransaction receives this filter call before ProseMirror writes
+          // its public appendedTransaction meta.  While a root is pending in the
+          // candidate state, reject by throwing so the whole batch is discarded.
+          if (authority.accepted !== undefined)
+            throw new Error('Protected append exceeds the approved change')
+          return false
+        },
+      }),
+    ]
   },
 })
 

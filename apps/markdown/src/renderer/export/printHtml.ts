@@ -69,7 +69,10 @@ export function buildPrintHtml(editorRoot: HTMLElement, title: string): string {
   // Protected nodes are source text, never live HTML. Recreate their existing
   // NodeView code text so editor controls and any injected descendants cannot
   // become part of the printable DOM.
-  for (const chrome of clone.querySelectorAll('.protected-source-actions, .protected-source-reason')) chrome.remove()
+  for (const chrome of clone.querySelectorAll(
+    '.protected-source-actions, .protected-source-reason',
+  ))
+    chrome.remove()
   for (const source of clone.querySelectorAll('.protected-source')) {
     const code = source.querySelector('code')
     if (!code) {
@@ -78,7 +81,8 @@ export function buildPrintHtml(editorRoot: HTMLElement, title: string): string {
     }
     const safeCode = document.createElement('code')
     safeCode.textContent = code.textContent ?? ''
-    if (source.classList.contains('protected-source-inline')) safeCode.classList.add('md-protected-source-inline')
+    if (source.classList.contains('protected-source-inline'))
+      safeCode.classList.add('md-protected-source-inline')
     if (code.parentElement?.tagName === 'PRE') {
       const pre = document.createElement('pre')
       pre.append(safeCode)

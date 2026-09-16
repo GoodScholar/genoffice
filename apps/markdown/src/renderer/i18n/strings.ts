@@ -1,6 +1,7 @@
 const sourcePatchFallback = {
   sourcePatchTitle: 'Confirm source patch',
-  sourcePatchConversionFailed: 'Could not convert protected source. Edit source or generate a new proposal.',
+  sourcePatchConversionFailed:
+    'Could not convert protected source. Edit source or generate a new proposal.',
   sourcePatchRegenerate: 'This patch is stale. Generate a new proposal.',
   sourcePatchVisualOnly: 'Return to visual mode before confirming this source patch.',
 }
@@ -215,7 +216,8 @@ export const strings = {
     zoomIn: '放大',
     zoomOut: '缩小',
   },
-  en: { ...sourcePatchFallback,
+  en: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -426,7 +428,8 @@ export const strings = {
     zoomIn: 'Zoom in',
     zoomOut: 'Zoom out',
   },
-  ja: { ...sourcePatchFallback,
+  ja: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -635,7 +638,8 @@ export const strings = {
     zoomIn: '拡大',
     zoomOut: '縮小',
   },
-  ko: { ...sourcePatchFallback,
+  ko: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -845,7 +849,8 @@ export const strings = {
     zoomIn: '확대',
     zoomOut: '축소',
   },
-  fr: { ...sourcePatchFallback,
+  fr: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -1060,7 +1065,8 @@ export const strings = {
     zoomIn: 'Zoom avant',
     zoomOut: 'Zoom arrière',
   },
-  de: { ...sourcePatchFallback,
+  de: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -1274,7 +1280,8 @@ export const strings = {
     zoomIn: 'Vergrößern',
     zoomOut: 'Verkleinern',
   },
-  es: { ...sourcePatchFallback,
+  es: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -1489,7 +1496,8 @@ export const strings = {
     zoomIn: 'Acercar',
     zoomOut: 'Alejar',
   },
-  th: { ...sourcePatchFallback,
+  th: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -1696,7 +1704,8 @@ export const strings = {
     zoomIn: 'ขยาย',
     zoomOut: 'ย่อ',
   },
-  id: { ...sourcePatchFallback,
+  id: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -1906,7 +1915,8 @@ export const strings = {
     zoomIn: 'Perbesar',
     zoomOut: 'Perkecil',
   },
-  ru: { ...sourcePatchFallback,
+  ru: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -2117,7 +2127,8 @@ export const strings = {
     zoomIn: 'Увеличить',
     zoomOut: 'Уменьшить',
   },
-  ar: { ...sourcePatchFallback,
+  ar: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -2324,7 +2335,8 @@ export const strings = {
     zoomIn: 'تكبير',
     zoomOut: 'تصغير',
   },
-  pt: { ...sourcePatchFallback,
+  pt: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -2537,7 +2549,8 @@ export const strings = {
     zoomIn: 'Ampliar',
     zoomOut: 'Reduzir',
   },
-  it: { ...sourcePatchFallback,
+  it: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -2750,7 +2763,8 @@ export const strings = {
     zoomIn: 'Ingrandisci',
     zoomOut: 'Riduci',
   },
-  pl: { ...sourcePatchFallback,
+  pl: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -2961,7 +2975,8 @@ export const strings = {
     zoomIn: 'Powiększ',
     zoomOut: 'Pomniejsz',
   },
-  cs: { ...sourcePatchFallback,
+  cs: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -3171,7 +3186,8 @@ export const strings = {
     insertDiagram: 'Diagram',
     mermaidError: 'Chyba syntaxe diagramu',
   },
-  nl: { ...sourcePatchFallback,
+  nl: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -3383,7 +3399,8 @@ export const strings = {
     zoomIn: 'Inzoomen',
     zoomOut: 'Uitzoomen',
   },
-  ms: { ...sourcePatchFallback,
+  ms: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -3593,7 +3610,8 @@ export const strings = {
     zoomIn: 'Zum masuk',
     zoomOut: 'Zum keluar',
   },
-  he: { ...sourcePatchFallback,
+  he: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -3799,7 +3817,8 @@ export const strings = {
     zoomIn: 'הגדלה',
     zoomOut: 'הקטנה',
   },
-  hi: { ...sourcePatchFallback,
+  hi: {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',
@@ -4009,7 +4028,8 @@ export const strings = {
     zoomIn: 'ज़ूम इन',
     zoomOut: 'ज़ूम आउट',
   },
-  'zh-TW': { ...sourcePatchFallback,
+  'zh-TW': {
+    ...sourcePatchFallback,
     visualMode: 'Visual',
     sourceMode: 'Source',
     sourceModeError: 'Source mode error',

@@ -32,7 +32,14 @@ let nextWebContentsId = 10_000
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => tmpdir()), on: vi.fn(), quit: vi.fn(), whenReady: vi.fn() },
-  BrowserWindow: class { static fromWebContents() { return null } static getFocusedWindow() { return null } },
+  BrowserWindow: class {
+    static fromWebContents() {
+      return null
+    }
+    static getFocusedWindow() {
+      return null
+    }
+  },
   dialog: { showMessageBox: vi.fn() },
   ipcMain: {
     handle: vi.fn((channel: string, handler: SaveHandler) => ipcHandlers.set(channel, handler)),

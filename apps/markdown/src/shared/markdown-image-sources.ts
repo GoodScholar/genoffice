@@ -166,7 +166,12 @@ function imageDestinationRanges(markdown: string): MarkdownImageDestinationRange
 }
 
 const BASIC_HTML_ENTITIES: Readonly<Record<string, string>> = {
-  amp: '&', apos: "'", gt: '>', lt: '<', nbsp: '\u00a0', quot: '"',
+  amp: '&',
+  apos: "'",
+  gt: '>',
+  lt: '<',
+  nbsp: '\u00a0',
+  quot: '"',
 }
 
 function decodeHtmlImageSource(value: string): { source: string; ambiguous: boolean } {
@@ -175,7 +180,10 @@ function decodeHtmlImageSource(value: string): { source: string; ambiguous: bool
     if (body.startsWith('#')) {
       const hexadecimal = body[1]?.toLowerCase() === 'x'
       const digits = body.slice(hexadecimal ? 2 : 1)
-      if (digits.length === 0 || !(hexadecimal ? /^[0-9a-f]+$/i.test(digits) : /^[0-9]+$/.test(digits))) {
+      if (
+        digits.length === 0 ||
+        !(hexadecimal ? /^[0-9a-f]+$/i.test(digits) : /^[0-9]+$/.test(digits))
+      ) {
         ambiguous = true
         return entity
       }
@@ -207,15 +215,32 @@ function parseHtmlImageTag(
   while (cursor < text.length) {
     while (cursor < text.length && /\s/.test(text[cursor]!)) cursor += 1
     if (cursor >= text.length) return { nextIndex: text.length, ambiguous: true }
-    if (text[cursor] === '>') return { nextIndex: cursor + 1, ...(ambiguous || !sourceRange ? {} : { range: sourceRange }), ambiguous }
-    if (text[cursor] === '/' && text[cursor + 1] === '>') return { nextIndex: cursor + 2, ...(ambiguous || !sourceRange ? {} : { range: sourceRange }), ambiguous }
+    if (text[cursor] === '>')
+      return {
+        nextIndex: cursor + 1,
+        ...(ambiguous || !sourceRange ? {} : { range: sourceRange }),
+        ambiguous,
+      }
+    if (text[cursor] === '/' && text[cursor + 1] === '>')
+      return {
+        nextIndex: cursor + 2,
+        ...(ambiguous || !sourceRange ? {} : { range: sourceRange }),
+        ambiguous,
+      }
     if (text[cursor] === '/') {
       ambiguous = true
       cursor += 1
       continue
     }
     const nameStart = cursor
-    while (cursor < text.length && !/\s/.test(text[cursor]!) && text[cursor] !== '=' && text[cursor] !== '/' && text[cursor] !== '>') cursor += 1
+    while (
+      cursor < text.length &&
+      !/\s/.test(text[cursor]!) &&
+      text[cursor] !== '=' &&
+      text[cursor] !== '/' &&
+      text[cursor] !== '>'
+    )
+      cursor += 1
     if (cursor === nameStart) {
       ambiguous = true
       cursor += 1
@@ -229,7 +254,11 @@ function parseHtmlImageTag(
     }
     cursor += 1
     while (cursor < text.length && /\s/.test(text[cursor]!)) cursor += 1
-    if (cursor >= text.length || text[cursor] === '>' || (text[cursor] === '/' && text[cursor + 1] === '>')) {
+    if (
+      cursor >= text.length ||
+      text[cursor] === '>' ||
+      (text[cursor] === '/' && text[cursor + 1] === '>')
+    ) {
       if (attributeName === 'src') ambiguous = true
       continue
     }
@@ -243,7 +272,12 @@ function parseHtmlImageTag(
       cursor = valueEnd + 1
     } else {
       valueStart = cursor
-      while (cursor < text.length && !/\s/.test(text[cursor]!) && text[cursor] !== '>' && !(text[cursor] === '/' && text[cursor + 1] === '>')) {
+      while (
+        cursor < text.length &&
+        !/\s/.test(text[cursor]!) &&
+        text[cursor] !== '>' &&
+        !(text[cursor] === '/' && text[cursor + 1] === '>')
+      ) {
         if (/["'`<=]/.test(text[cursor]!)) ambiguous = true
         cursor += 1
       }
@@ -262,7 +296,10 @@ function parseHtmlImageTag(
   return { nextIndex: text.length, ambiguous: true }
 }
 
-function htmlImageSourceRanges(markdown: string, codeRanges: readonly TextRange[]): MarkdownImageSourceScan {
+function htmlImageSourceRanges(
+  markdown: string,
+  codeRanges: readonly TextRange[],
+): MarkdownImageSourceScan {
   const ranges: MarkdownImageDestinationRange[] = []
   let ambiguousHtml = false
   for (let index = 0; index < markdown.length; index += 1) {
@@ -281,7 +318,11 @@ function htmlImageSourceRanges(markdown: string, codeRanges: readonly TextRange[
       index = commentEnd + 2
       continue
     }
-    if (markdown.slice(index + 1, index + 4).toLowerCase() !== 'img' || (index + 4 < markdown.length && !/[\s/>]/.test(markdown[index + 4]!))) continue
+    if (
+      markdown.slice(index + 1, index + 4).toLowerCase() !== 'img' ||
+      (index + 4 < markdown.length && !/[\s/>]/.test(markdown[index + 4]!))
+    )
+      continue
     const parsed = parseHtmlImageTag(markdown, index)
     if (parsed.ambiguous) ambiguousHtml = true
     if (parsed.range) ranges.push(parsed.range)
@@ -293,8 +334,12 @@ function htmlImageSourceRanges(markdown: string, codeRanges: readonly TextRange[
 export function scanMarkdownImageSources(markdown: string): MarkdownImageSourceScan {
   const codeRanges = markdownCodeRanges(markdown)
   const html = htmlImageSourceRanges(markdown, codeRanges)
-  const markdownRanges = imageDestinationRanges(markdown).filter((range) => positionInRanges(codeRanges, range.start) === undefined)
-  const ordered = [...markdownRanges, ...html.ranges].sort((left, right) => left.start - right.start || left.end - right.end)
+  const markdownRanges = imageDestinationRanges(markdown).filter(
+    (range) => positionInRanges(codeRanges, range.start) === undefined,
+  )
+  const ordered = [...markdownRanges, ...html.ranges].sort(
+    (left, right) => left.start - right.start || left.end - right.end,
+  )
   const ranges: MarkdownImageDestinationRange[] = []
   for (const range of ordered) {
     const previous = ranges[ranges.length - 1]
@@ -318,13 +363,17 @@ function encodeHtmlAttributeReplacement(value: string, quote: '"' | "'" | null):
     else if (character === '<') encoded += '&lt;'
     else if (quote === '"' && character === '"') encoded += '&quot;'
     else if (quote === "'" && character === "'") encoded += '&#39;'
-    else if (quote === null && /[\s"'`=>]/.test(character)) encoded += `&#${character.codePointAt(0)!};`
+    else if (quote === null && /[\s"'`=>]/.test(character))
+      encoded += `&#${character.codePointAt(0)!};`
     else encoded += character
   }
   return encoded
 }
 
-export function rewriteMarkdownImageSources(markdown: string, rewrites: ReadonlyMap<string, string>): string {
+export function rewriteMarkdownImageSources(
+  markdown: string,
+  rewrites: ReadonlyMap<string, string>,
+): string {
   if (rewrites.size === 0) return markdown
   const ranges = scanMarkdownImageSources(markdown).ranges
   let cursor = 0
@@ -333,7 +382,10 @@ export function rewriteMarkdownImageSources(markdown: string, rewrites: Readonly
     const replacement = rewrites.get(range.source)
     if (replacement === undefined) continue
     output += markdown.slice(cursor, range.start)
-    output += range.htmlQuote === undefined ? replacement : encodeHtmlAttributeReplacement(replacement, range.htmlQuote)
+    output +=
+      range.htmlQuote === undefined
+        ? replacement
+        : encodeHtmlAttributeReplacement(replacement, range.htmlQuote)
     cursor = range.end
   }
   return cursor === 0 ? markdown : output + markdown.slice(cursor)

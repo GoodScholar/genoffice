@@ -51,19 +51,29 @@ function sourceAccess(overrides: Partial<SourceProtectionAccess> = {}): SourcePr
     source: () => 'Safe\n\n<details>raw</details>\n',
     sourceBlocks: () => [
       { raw: 'Safe\n\n', protected: [] },
-      { raw: '<details>raw</details>\n', protected: [{ id: 'html-1', reason: 'raw-html', raw: '<details>raw</details>' }] },
+      {
+        raw: '<details>raw</details>\n',
+        protected: [{ id: 'html-1', reason: 'raw-html', raw: '<details>raw</details>' }],
+      },
     ],
     frontmatter: () => '',
     protectedIdsForOps: () => [],
     propose: (_id, expectedRaw, nextRaw) => ({
-      id: 'proposal-1', origin: 'ai', fragmentId: 'html-1', expectedRaw, nextRaw, baseRevision: 0,
+      id: 'proposal-1',
+      origin: 'ai',
+      fragmentId: 'html-1',
+      expectedRaw,
+      nextRaw,
+      baseRevision: 0,
     }),
     publish: () => {},
     ...overrides,
   }
 }
 
-function sessionSourceAccess(session: ReturnType<typeof createMarkdownDocumentSession>): SourceProtectionAccess {
+function sessionSourceAccess(
+  session: ReturnType<typeof createMarkdownDocumentSession>,
+): SourceProtectionAccess {
   return {
     mode: () => 'source',
     source: () => session.serialize(),
@@ -71,7 +81,9 @@ function sessionSourceAccess(session: ReturnType<typeof createMarkdownDocumentSe
     frontmatter: () => session.frontmatter(),
     context: () => '',
     protectedIdsForOps: () => [],
-    propose: () => { throw new Error('not used') },
+    propose: () => {
+      throw new Error('not used')
+    },
     publish: () => {},
   }
 }
@@ -79,9 +91,13 @@ function sessionSourceAccess(session: ReturnType<typeof createMarkdownDocumentSe
 function createProtectedEditor(): Editor {
   const editor = createEditor()
   editor.commands.setContent({
-    type: 'doc', content: [
+    type: 'doc',
+    content: [
       { type: 'paragraph', content: [{ type: 'text', text: 'safe' }] },
-      { type: 'protectedSourceBlock', attrs: { id: 'html-1', raw: '<details>raw</details>', reason: 'raw-html' } },
+      {
+        type: 'protectedSourceBlock',
+        attrs: { id: 'html-1', raw: '<details>raw</details>', reason: 'raw-html' },
+      },
     ],
   })
   return editor
@@ -108,7 +124,14 @@ describe('lossless source access', () => {
     const access = sourceAccess()
 
     expect(buildDocContext(editor, access)).toContain('protected:html-1:raw-html')
-    const read = executeTool(editor, call('read_blocks', { startIndex: 1, endIndex: 1 }), undefined, undefined, undefined, access)
+    const read = executeTool(
+      editor,
+      call('read_blocks', { startIndex: 1, endIndex: 1 }),
+      undefined,
+      undefined,
+      undefined,
+      access,
+    )
     expect(read.output).toContain('<details>raw</details>')
   })
 
@@ -116,10 +139,13 @@ describe('lossless source access', () => {
     const editor = createProtectedEditor()
     const before = editor.getJSON()
 
-    const result = executeTool(editor, ops(
-      { op: 'replaceText', target: { start: 0 }, find: 'safe', replace: 'changed' },
-      { op: 'replaceBlocks', target: { start: 1 }, markdown: 'nope' },
-    ))
+    const result = executeTool(
+      editor,
+      ops(
+        { op: 'replaceText', target: { start: 0 }, find: 'safe', replace: 'changed' },
+        { op: 'replaceBlocks', target: { start: 1 }, markdown: 'nope' },
+      ),
+    )
 
     expect(result.isError).toBe(true)
     expect(result.mutated).not.toBe(true)
@@ -135,9 +161,13 @@ describe('lossless source access', () => {
         protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange: request },
       }),
       content: {
-        type: 'doc', content: [
+        type: 'doc',
+        content: [
           { type: 'paragraph', content: [{ type: 'text', text: 'safe' }] },
-          { type: 'protectedSourceBlock', attrs: { id: 'html-1', raw: '<details>raw</details>', reason: 'raw-html' } },
+          {
+            type: 'protectedSourceBlock',
+            attrs: { id: 'html-1', raw: '<details>raw</details>', reason: 'raw-html' },
+          },
         ],
       },
     })
@@ -145,10 +175,13 @@ describe('lossless source access', () => {
     editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 1)))
     const before = editor.getJSON()
     const undoBefore = undoDepth(editor.state)
-    const result = executeTool(editor, ops(
-      { op: 'deleteBlocks', target: { start: 0 } },
-      { op: 'replaceBlocks', target: 'selection', markdown: 'replacement' },
-    ))
+    const result = executeTool(
+      editor,
+      ops(
+        { op: 'deleteBlocks', target: { start: 0 } },
+        { op: 'replaceBlocks', target: 'selection', markdown: 'replacement' },
+      ),
+    )
 
     expect(result.isError).toBe(true)
     expect(editor.getJSON()).toEqual(before)
@@ -156,24 +189,31 @@ describe('lossless source access', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
-  it.each(['apply_ops', 'write_document', 'insert_image', 'generate_image'])('rejects %s in source mode while keeping reads available', (name) => {
-    const editor = createEditor('safe')
-    const access = sourceAccess({ mode: () => 'source' })
-    const input = name === 'apply_ops'
-      ? { ops: [{ op: 'replaceText', target: { start: 0 }, find: 'safe', replace: 'changed' }] }
-      : name === 'write_document'
-        ? { plan: 'write' }
-        : name === 'insert_image'
-          ? { url: 'https://example.com/image.png' }
-          : { prompt: 'a tree' }
+  it.each(['apply_ops', 'write_document', 'insert_image', 'generate_image'])(
+    'rejects %s in source mode while keeping reads available',
+    (name) => {
+      const editor = createEditor('safe')
+      const access = sourceAccess({ mode: () => 'source' })
+      const input =
+        name === 'apply_ops'
+          ? { ops: [{ op: 'replaceText', target: { start: 0 }, find: 'safe', replace: 'changed' }] }
+          : name === 'write_document'
+            ? { plan: 'write' }
+            : name === 'insert_image'
+              ? { url: 'https://example.com/image.png' }
+              : { prompt: 'a tree' }
 
-    const result = executeTool(editor, call(name, input), undefined, undefined, undefined, access)
+      const result = executeTool(editor, call(name, input), undefined, undefined, undefined, access)
 
-    expect(result).not.toBeInstanceOf(Promise)
-    expect(result).toMatchObject({ isError: true })
-    expect(result.mutated).not.toBe(true)
-    expect(executeTool(editor, call('get_document_context'), undefined, undefined, undefined, access).isError).toBeUndefined()
-  })
+      expect(result).not.toBeInstanceOf(Promise)
+      expect(result).toMatchObject({ isError: true })
+      expect(result.mutated).not.toBe(true)
+      expect(
+        executeTool(editor, call('get_document_context'), undefined, undefined, undefined, access)
+          .isError,
+      ).toBeUndefined()
+    },
+  )
 
   it('reads the latest session source rather than the stale visual projection in source mode', () => {
     const editor = createEditor('Original')
@@ -186,7 +226,14 @@ describe('lossless source access', () => {
 
     expect(buildDocContext(editor, access)).toContain('LATEST body')
     expect(buildDocContext(editor, access)).not.toContain('Original')
-    const read = executeTool(editor, call('read_blocks', { startIndex: 0, endIndex: 0 }), undefined, undefined, undefined, access)
+    const read = executeTool(
+      editor,
+      call('read_blocks', { startIndex: 0, endIndex: 0 }),
+      undefined,
+      undefined,
+      undefined,
+      access,
+    )
     expect(read.output).toContain('LATEST body\r\n')
     expect(read.output).not.toContain('Original')
   })
@@ -196,13 +243,25 @@ describe('lossless source access', () => {
     const access = sourceAccess({
       sourceBlocks: () => [
         { raw: 'Safe block\n', protected: [] },
-        { raw: 'OUTSIDE block\n', protected: [{ id: 'outside', reason: 'raw-html', raw: '<outside>' }] },
+        {
+          raw: 'OUTSIDE block\n',
+          protected: [{ id: 'outside', reason: 'raw-html', raw: '<outside>' }],
+        },
       ],
       context: () => 'protected:outside:raw-html\n<outside>',
     })
-    ;(editor.markdown as { serialize: () => string }).serialize = () => { throw new Error('must not serialize') }
+    ;(editor.markdown as { serialize: () => string }).serialize = () => {
+      throw new Error('must not serialize')
+    }
 
-    const read = executeTool(editor, call('read_blocks', { startIndex: 0, endIndex: 0 }), undefined, undefined, undefined, access)
+    const read = executeTool(
+      editor,
+      call('read_blocks', { startIndex: 0, endIndex: 0 }),
+      undefined,
+      undefined,
+      undefined,
+      access,
+    )
 
     expect(read.output).toBe('Safe block\n')
     expect(read.output).not.toContain('OUTSIDE')
@@ -213,7 +272,14 @@ describe('lossless source access', () => {
     const editor = createEditor('stale visual')
     const access = sourceAccess()
 
-    const read = executeTool(editor, call('read_blocks', { startIndex: 1, endIndex: 1 }), undefined, undefined, undefined, access)
+    const read = executeTool(
+      editor,
+      call('read_blocks', { startIndex: 1, endIndex: 1 }),
+      undefined,
+      undefined,
+      undefined,
+      access,
+    )
 
     expect(read.output).toContain('protected:html-1:raw-html')
     expect(read.output).toContain('<details>raw</details>')
@@ -237,25 +303,49 @@ describe('lossless source access', () => {
       createTiptapMarkdownCodec(editor),
     )
     expect(session.enterSource().ok).toBe(true)
-    expect(session.applySource('\uFEFF---\r\ntitle: LATEST\r\ntags:\r\n  - alpha\r\n---\r\n\r\nBody\r\n').ok).toBe(true)
-    const read = executeTool(editor, call('read_frontmatter'), undefined, { read: () => 'title: Original', write: () => {} }, undefined, sessionSourceAccess(session))
+    expect(
+      session.applySource('\uFEFF---\r\ntitle: LATEST\r\ntags:\r\n  - alpha\r\n---\r\n\r\nBody\r\n')
+        .ok,
+    ).toBe(true)
+    const read = executeTool(
+      editor,
+      call('read_frontmatter'),
+      undefined,
+      { read: () => 'title: Original', write: () => {} },
+      undefined,
+      sessionSourceAccess(session),
+    )
 
     expect(read.output).toBe('title: LATEST\r\ntags:\r\n  - alpha')
   })
 
   it.each([
     ['an LF closing fence at EOF', '---\ntitle: LF EOF\n---', 'title: LF EOF'],
-    ['a BOM and CRLF closing fence at EOF', '\uFEFF---\r\ntitle: CRLF EOF\r\n---', 'title: CRLF EOF'],
+    [
+      'a BOM and CRLF closing fence at EOF',
+      '\uFEFF---\r\ntitle: CRLF EOF\r\n---',
+      'title: CRLF EOF',
+    ],
     ['mixed opening and closing EOLs', '---\r\ntitle: mixed\n---\n\nBody', 'title: mixed'],
-  ] as const)('reads frontmatter with %s without changing the source', (_description, source, expected) => {
-    const editor = createEditor()
-    const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
-    expect(session.enterSource().ok).toBe(true)
-    const read = executeTool(editor, call('read_frontmatter'), undefined, { read: () => 'title: stale', write: () => {} }, undefined, sessionSourceAccess(session))
+  ] as const)(
+    'reads frontmatter with %s without changing the source',
+    (_description, source, expected) => {
+      const editor = createEditor()
+      const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
+      expect(session.enterSource().ok).toBe(true)
+      const read = executeTool(
+        editor,
+        call('read_frontmatter'),
+        undefined,
+        { read: () => 'title: stale', write: () => {} },
+        undefined,
+        sessionSourceAccess(session),
+      )
 
-    expect(read.output).toBe(expected)
-    expect(session.serialize()).toBe(source)
-  })
+      expect(read.output).toBe(expected)
+      expect(session.serialize()).toBe(source)
+    },
+  )
 
   it.each([
     ['no frontmatter', 'Body\n---\n'],
@@ -266,7 +356,14 @@ describe('lossless source access', () => {
     const session = createMarkdownDocumentSession(source, createTiptapMarkdownCodec(editor))
     expect(session.enterSource().ok).toBe(true)
 
-    const read = executeTool(editor, call('read_frontmatter'), undefined, { read: () => 'title: stale', write: () => {} }, undefined, sessionSourceAccess(session))
+    const read = executeTool(
+      editor,
+      call('read_frontmatter'),
+      undefined,
+      { read: () => 'title: stale', write: () => {} },
+      undefined,
+      sessionSourceAccess(session),
+    )
 
     expect(read.output).toBe('(the document has no frontmatter)')
     expect(session.serialize()).toBe(source)
@@ -278,9 +375,18 @@ describe('lossless source access', () => {
     const publish = vi.fn()
     const access = sourceAccess({ publish })
 
-    const result = executeTool(editor, call('propose_source_patch', {
-      fragmentId: 'html-1', expectedRaw: '<details>raw</details>', nextRaw: '<details>new</details>',
-    }), undefined, undefined, undefined, access)
+    const result = executeTool(
+      editor,
+      call('propose_source_patch', {
+        fragmentId: 'html-1',
+        expectedRaw: '<details>raw</details>',
+        nextRaw: '<details>new</details>',
+      }),
+      undefined,
+      undefined,
+      undefined,
+      access,
+    )
 
     expect(result).toMatchObject({ mutated: false })
     expect(result.isError).toBeUndefined()
@@ -294,9 +400,18 @@ describe('lossless source access', () => {
     const publish = vi.fn()
     const access = sourceAccess({ mode: () => 'source', propose, publish })
 
-    const result = executeTool(editor, call('propose_source_patch', {
-      fragmentId: 'html-1', expectedRaw: '<details>raw</details>', nextRaw: '<details>new</details>',
-    }), undefined, undefined, undefined, access)
+    const result = executeTool(
+      editor,
+      call('propose_source_patch', {
+        fragmentId: 'html-1',
+        expectedRaw: '<details>raw</details>',
+        nextRaw: '<details>new</details>',
+      }),
+      undefined,
+      undefined,
+      undefined,
+      access,
+    )
 
     expect(result).toMatchObject({ isError: true })
     expect(propose).not.toHaveBeenCalled()
@@ -633,12 +748,21 @@ describe('insert_image', () => {
   })
 
   it('does not insert after the visual session becomes inactive during download', async () => {
-    let release: ((value: { base64: string, mime: string }) => void) | undefined
-    const download = new Promise<{ base64: string, mime: string }>((resolve) => { release = resolve })
+    let release: ((value: { base64: string; mime: string }) => void) | undefined
+    const download = new Promise<{ base64: string; mime: string }>((resolve) => {
+      release = resolve
+    })
     withApi({ fetchImage: () => download, saveImage: async () => 'assets/pic.png' })
     const editor = createEditor('# A')
     let current = true
-    const pending = executeTool(editor, call('insert_image', { url: 'https://example.com/x.png' }), undefined, undefined, undefined, sourceAccess({ isCurrent: () => current })) as Promise<{ isError?: boolean, mutated?: boolean }>
+    const pending = executeTool(
+      editor,
+      call('insert_image', { url: 'https://example.com/x.png' }),
+      undefined,
+      undefined,
+      undefined,
+      sourceAccess({ isCurrent: () => current }),
+    ) as Promise<{ isError?: boolean; mutated?: boolean }>
     current = false
     release?.({ base64: PNG, mime: 'image/png' })
     await expect(pending).resolves.toMatchObject({ isError: true, mutated: false })
@@ -646,8 +770,10 @@ describe('insert_image', () => {
   })
 
   it('does not revive an image request after a source-mode round trip', async () => {
-    let release: ((value: { base64: string, mime: string }) => void) | undefined
-    const download = new Promise<{ base64: string, mime: string }>((resolve) => { release = resolve })
+    let release: ((value: { base64: string; mime: string }) => void) | undefined
+    const download = new Promise<{ base64: string; mime: string }>((resolve) => {
+      release = resolve
+    })
     withApi({ fetchImage: () => download, saveImage: async () => 'assets/pic.png' })
     const editor = createEditor('# User source')
     let visual = true
@@ -656,11 +782,25 @@ describe('insert_image', () => {
       isCurrent: () => visual,
       registerVisualOperation: () => {
         let active = true
-        revoke = () => { active = false }
-        return { isCurrent: () => active, release: () => { active = false } }
+        revoke = () => {
+          active = false
+        }
+        return {
+          isCurrent: () => active,
+          release: () => {
+            active = false
+          },
+        }
       },
     })
-    const pending = executeTool(editor, call('insert_image', { url: 'https://example.com/x.png' }), undefined, undefined, undefined, access) as Promise<{ isError?: boolean, mutated?: boolean }>
+    const pending = executeTool(
+      editor,
+      call('insert_image', { url: 'https://example.com/x.png' }),
+      undefined,
+      undefined,
+      undefined,
+      access,
+    ) as Promise<{ isError?: boolean; mutated?: boolean }>
 
     visual = false
     revoke?.()

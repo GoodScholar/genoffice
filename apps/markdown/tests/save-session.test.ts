@@ -2,9 +2,16 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import { Editor, type JSONContent } from '@tiptap/core'
 import { buildExtensions } from '../src/renderer/editor/extensions'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
-import { createTiptapMarkdownCodec, type VisualProjection } from '../src/renderer/markdown/sourceProjection'
+import {
+  createTiptapMarkdownCodec,
+  type VisualProjection,
+} from '../src/renderer/markdown/sourceProjection'
 import { losslessMarkdownEnabled } from '../src/renderer/markdown/featureFlag'
-import { applyProjectionProvenance, requestSourceBackedSave, synchronizeSourceBackedSave } from '../src/renderer/App'
+import {
+  applyProjectionProvenance,
+  requestSourceBackedSave,
+  synchronizeSourceBackedSave,
+} from '../src/renderer/App'
 
 const editors: Editor[] = []
 afterAll(() => editors.forEach((editor) => editor.destroy()))
@@ -12,7 +19,12 @@ afterAll(() => editors.forEach((editor) => editor.destroy()))
 function createSession(source: string) {
   const editor = new Editor({
     extensions: buildExtensions({
-      slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+      slashController: {
+        onOpen: () => {},
+        onUpdate: () => {},
+        onKeyDown: () => false,
+        onClose: () => {},
+      },
       slashItems: () => [],
     }),
     content: '',
@@ -24,7 +36,12 @@ function createSession(source: string) {
 function createHarness(source: string) {
   const editor = new Editor({
     extensions: buildExtensions({
-      slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+      slashController: {
+        onOpen: () => {},
+        onUpdate: () => {},
+        onKeyDown: () => false,
+        onClose: () => {},
+      },
       slashItems: () => [],
     }),
     content: '',
@@ -36,7 +53,7 @@ function createHarness(source: string) {
 }
 
 function replaceEditorText(editor: Editor, from: string, to: string): void {
-  let range: { from: number, to: number } | undefined
+  let range: { from: number; to: number } | undefined
   editor.state.doc.descendants((node, pos) => {
     if (range || !node.isText || node.text !== from) return
     range = { from: pos, to: pos + from.length }
@@ -64,7 +81,10 @@ describe('source-backed save sessions', () => {
     const session = createSession('First.\n')
     const ticket = session.beginSave()
 
-    expect(session.markSaved(ticket.source, ticket)).toMatchObject({ dirty: false, source: 'First.\n' })
+    expect(session.markSaved(ticket.source, ticket)).toMatchObject({
+      dirty: false,
+      source: 'First.\n',
+    })
   })
 
   it('keeps dirty when a visual edit lands while save is in flight', () => {
@@ -108,7 +128,10 @@ describe('source-backed save sessions', () => {
 
   it('keeps consecutive visual edits source-backed after provenance changes around protected HTML', () => {
     const { editor, session } = createHarness('Before <u>protected</u> after.\n\nSecond.')
-    editor.commands.insertContentAt(0, { type: 'paragraph', content: [{ type: 'text', text: 'Inserted.' }] })
+    editor.commands.insertContentAt(0, {
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'Inserted.' }],
+    })
     const first = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })
     expect(first.ok).toBe(true)
     applyProjectionProvenance(editor, session.view().visual.doc)
@@ -123,9 +146,13 @@ describe('source-backed save sessions', () => {
     const session = createSession('First.')
     const save = vi.fn(async () => ({ ok: true as const, path: '/tmp/note.md', text: 'First.' }))
     const onFailure = vi.fn()
-    session.beginSave = () => { throw new Error('inconsistent source') }
+    session.beginSave = () => {
+      throw new Error('inconsistent source')
+    }
 
-    await expect(requestSourceBackedSave(session, createHarness('First.').editor, 'save', save, onFailure)).rejects.toThrow('inconsistent source')
+    await expect(
+      requestSourceBackedSave(session, createHarness('First.').editor, 'save', save, onFailure),
+    ).rejects.toThrow('inconsistent source')
     expect(save).not.toHaveBeenCalled()
     expect(onFailure).toHaveBeenCalledOnce()
     expect(session.view().mode).toBe('source')
@@ -133,10 +160,14 @@ describe('source-backed save sessions', () => {
 
   it('reports an IPC rejection once without leaving visual mode', async () => {
     const { editor, session } = createHarness('First.')
-    const save = vi.fn(async () => { throw new Error('disk unavailable') })
+    const save = vi.fn(async () => {
+      throw new Error('disk unavailable')
+    })
     const onFailure = vi.fn()
 
-    await expect(requestSourceBackedSave(session, editor, 'save', save, onFailure)).rejects.toThrow('disk unavailable')
+    await expect(requestSourceBackedSave(session, editor, 'save', save, onFailure)).rejects.toThrow(
+      'disk unavailable',
+    )
     expect(save).toHaveBeenCalledOnce()
     expect(onFailure).toHaveBeenCalledOnce()
     expect(session.view().mode).toBe('visual')
@@ -158,6 +189,9 @@ describe('source-backed save sessions', () => {
       imageRewrites: [{ from: 'old.png', to: 'assets/image.png' }],
     })
     expect(saved).toMatchObject({ dirty: true, source: '![edited alt](assets/image.png)' })
-    expect(editor.state.doc.firstChild?.attrs).toMatchObject({ alt: 'edited alt', src: 'assets/image.png' })
+    expect(editor.state.doc.firstChild?.attrs).toMatchObject({
+      alt: 'edited alt',
+      src: 'assets/image.png',
+    })
   })
 })

@@ -10,7 +10,7 @@ interface SourceGeometry {
   gutterHeight: number
   scrollerHeight: number
   innerOverflow: number
-  focusOutlineWidth: number
+  focusOutlineStyle: string
   pageBottomGap: number
 }
 
@@ -46,7 +46,7 @@ async function sourceGeometry(page: Page): Promise<SourceGeometry> {
       gutterHeight: gutterRect.height,
       scrollerHeight: scroller.getBoundingClientRect().height,
       innerOverflow: scroller.scrollHeight - scroller.clientHeight,
-      focusOutlineWidth: Number.parseFloat(getComputedStyle(root).outlineWidth),
+      focusOutlineStyle: getComputedStyle(root).outlineStyle,
       pageBottomGap: workspaceRect.bottom - pageRect.bottom,
     }
   })
@@ -74,7 +74,7 @@ test.describe('markdown source layout', () => {
         expect(geometry.outerOverflow).toBeLessThanOrEqual(1)
         expect(geometry.rootBottomPastWorkspace).toBeLessThanOrEqual(1)
         expect(geometry.gutterHeight).toBeGreaterThanOrEqual(geometry.scrollerHeight - 1)
-        expect(geometry.focusOutlineWidth).toBe(0)
+        expect(geometry.focusOutlineStyle).toBe('none')
         expect(Math.abs(geometry.pageBottomGap)).toBeLessThanOrEqual(1)
       } finally {
         await closeAndSaveVideo(launched, 'markdown-source-short-layout')

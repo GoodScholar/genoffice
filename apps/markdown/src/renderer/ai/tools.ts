@@ -86,10 +86,14 @@ export function buildDocContext(editor: Editor, protection?: SourceProtectionAcc
       protection.source(),
       '',
       '## Source blocks',
-      ...blocks.map((block, index) => [
-        `${index} | source | ${block.raw}`,
-        ...block.protected.map((fragment) => `protected:${fragment.id}:${fragment.reason}\n${fragment.raw}`),
-      ].join('\n')),
+      ...blocks.map((block, index) =>
+        [
+          `${index} | source | ${block.raw}`,
+          ...block.protected.map(
+            (fragment) => `protected:${fragment.id}:${fragment.reason}\n${fragment.raw}`,
+          ),
+        ].join('\n'),
+      ),
     ].join('\n')
   }
   const doc = editor.state.doc
@@ -168,7 +172,8 @@ export const AGENT_TOOLS: AgentToolDef[] = [
   },
   {
     name: 'propose_source_patch',
-    description: 'Only when the user explicitly named or selected one protected source fragment: propose an exact raw replacement for user confirmation. This never edits the document.',
+    description:
+      'Only when the user explicitly named or selected one protected source fragment: propose an exact raw replacement for user confirmation. This never edits the document.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -280,8 +285,15 @@ function fail(output: string, summary: string): ToolExecution {
   return { output, isError: true, summary }
 }
 
-function visualWriteIsCurrent(protection?: SourceProtectionAccess, lease?: VisualOperationLease): boolean {
-  return lease?.isCurrent() !== false && protection?.mode() !== 'source' && protection?.isCurrent?.() !== false
+function visualWriteIsCurrent(
+  protection?: SourceProtectionAccess,
+  lease?: VisualOperationLease,
+): boolean {
+  return (
+    lease?.isCurrent() !== false &&
+    protection?.mode() !== 'source' &&
+    protection?.isCurrent?.() !== false
+  )
 }
 
 function clampIndex(value: unknown, max: number): number | null {
@@ -296,12 +308,22 @@ function opsSummary(ops: MdOp[], applied: number): string {
   return t('aiToolApplyOpsDone', { n: applied })
 }
 
-function applyOps(editor: Editor, input: unknown, fm?: FrontmatterAccess, protection?: SourceProtectionAccess): ToolExecution {
+function applyOps(
+  editor: Editor,
+  input: unknown,
+  fm?: FrontmatterAccess,
+  protection?: SourceProtectionAccess,
+): ToolExecution {
   const label = t('aiToolApplyOps')
   const parsed = validateOps(input)
   if ('error' in parsed) return fail(parsed.error, label)
-  const protectedIds = protection?.protectedIdsForOps(editor, parsed.ops) ?? protectedIdsForOps(editor, parsed.ops)
-  if (protectedIds.length) return fail(`Protected source fragment(s) ${protectedIds.join(', ')} require an explicit source patch proposal; the batch was not applied.`, label)
+  const protectedIds =
+    protection?.protectedIdsForOps(editor, parsed.ops) ?? protectedIdsForOps(editor, parsed.ops)
+  if (protectedIds.length)
+    return fail(
+      `Protected source fragment(s) ${protectedIds.join(', ')} require an explicit source patch proposal; the batch was not applied.`,
+      label,
+    )
   if (usesBlockIndexes(parsed.ops) && editedExternally(editor)) return fail(STALE_DOC_ERROR, label)
   const r = runOps(editor, parsed.ops, { source: 'ai', frontmatter: fm })
   const lines = r.results.map((res, i) =>
@@ -365,14 +387,18 @@ async function insertImageFromUrl(
     throw error
   }
   // never write after the user hit stop (the download may resolve long after the abort)
-  if (signal?.aborted) return finish(fail('stopped by the user; the image was not inserted', labels.fail))
-  if (!fetched) return finish(fail('download failed (the image may not be accessible)', labels.fail))
+  if (signal?.aborted)
+    return finish(fail('stopped by the user; the image was not inserted', labels.fail))
+  if (!fetched)
+    return finish(fail('download failed (the image may not be accessible)', labels.fail))
   const ext = sniffImageExt(fetched.base64)
   if (!ext) {
-    return finish(fail(
-      'unsupported image format (only png/jpg/gif can be embedded) — pick a different image',
-      labels.fail,
-    ))
+    return finish(
+      fail(
+        'unsupported image format (only png/jpg/gif can be embedded) — pick a different image',
+        labels.fail,
+      ),
+    )
   }
   let rel: Awaited<ReturnType<typeof window.markdownApi.saveImage>>
   try {
@@ -381,15 +407,24 @@ async function insertImageFromUrl(
     release()
     throw error
   }
-  if (signal?.aborted) return finish(fail('stopped by the user; the image was not inserted', labels.fail))
+  if (signal?.aborted)
+    return finish(fail('stopped by the user; the image was not inserted', labels.fail))
   if (!rel) {
-    return finish(fail(
-      'the document has no saved location yet, so there is nowhere to store the image file — ask the user to save the document first, then retry',
-      labels.fail,
-    ))
+    return finish(
+      fail(
+        'the document has no saved location yet, so there is nowhere to store the image file — ask the user to save the document first, then retry',
+        labels.fail,
+      ),
+    )
   }
   if (!visualWriteIsCurrent(protection, lease)) {
-    return finish({ ...fail('the document is no longer active in visual mode; the image was not inserted', labels.fail), mutated: false })
+    return finish({
+      ...fail(
+        'the document is no longer active in visual mode; the image was not inserted',
+        labels.fail,
+      ),
+      mutated: false,
+    })
   }
   // downloads can take long: user edits made meanwhile must keep the freshness
   // baseline stale, so only our own insertion may mark the doc seen
@@ -442,10 +477,18 @@ async function writeDocument(
     )
   }
   if (position.kind === 'whole') {
-    const ids = (protection?.protectedIdsForOps ?? protectedIdsForOps)(editor, [{
-      op: 'replaceBlocks', target: { start: 0, end: doc.childCount - 1 }, markdown: '',
-    }])
-    if (ids.length) return fail(`Protected source fragment(s) ${ids.join(', ')} require an explicit source patch proposal; the document was not written.`, label)
+    const ids = (protection?.protectedIdsForOps ?? protectedIdsForOps)(editor, [
+      {
+        op: 'replaceBlocks',
+        target: { start: 0, end: doc.childCount - 1 },
+        markdown: '',
+      },
+    ])
+    if (ids.length)
+      return fail(
+        `Protected source fragment(s) ${ids.join(', ')} require an explicit source patch proposal; the document was not written.`,
+        label,
+      )
   }
   const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v))
   const draft = new DraftLanding(editor, position)
@@ -472,13 +515,21 @@ async function writeDocument(
   }
   if (editor.isDestroyed) return finish(fail('the document was closed', label))
   if (!visualWriteIsCurrent(protection, lease)) {
-    return finish({ ...fail('the document is no longer active in visual mode; the draft was not committed', label), mutated: false })
+    return finish({
+      ...fail(
+        'the document is no longer active in visual mode; the draft was not committed',
+        label,
+      ),
+      mutated: false,
+    })
   }
   if (!result.ok || !result.markdown?.trim()) {
-    return finish(fail(
-      `The writer produced nothing (${result.error ?? 'no output'}); the document is unchanged. Tell the user briefly and offer to try again.`,
-      t('aiToolWriteDocFailed'),
-    ))
+    return finish(
+      fail(
+        `The writer produced nothing (${result.error ?? 'no output'}); the document is unchanged. Tell the user briefly and offer to try again.`,
+        t('aiToolWriteDocFailed'),
+      ),
+    )
   }
   // a kept partial whose tail no longer parses lands what the user saw rendered
   let parses: boolean
@@ -524,8 +575,20 @@ export function executeTool(
 ): ToolExecution | Promise<ToolExecution> {
   const doc = editor.state.doc
   const maxIndex = doc.childCount - 1
-  if (protection?.mode() === 'source' && ['apply_ops', 'write_document', 'insert_image', 'generate_image', 'propose_source_patch'].includes(call.name)) {
-    return fail('Structured document writes are unavailable in source mode; you may still read the source.', call.name)
+  if (
+    protection?.mode() === 'source' &&
+    [
+      'apply_ops',
+      'write_document',
+      'insert_image',
+      'generate_image',
+      'propose_source_patch',
+    ].includes(call.name)
+  ) {
+    return fail(
+      'Structured document writes are unavailable in source mode; you may still read the source.',
+      call.name,
+    )
   }
 
   switch (call.name) {
@@ -571,10 +634,17 @@ export function executeTool(
         )
       }
       const full = sourceBlocks
-        ? sourceBlocks.slice(start, end + 1).map((block) => [
-          block.raw,
-          ...block.protected.map((fragment) => `protected:${fragment.id}:${fragment.reason}\n${fragment.raw}`),
-        ].join('')).join('')
+        ? sourceBlocks
+            .slice(start, end + 1)
+            .map((block) =>
+              [
+                block.raw,
+                ...block.protected.map(
+                  (fragment) => `protected:${fragment.id}:${fragment.reason}\n${fragment.raw}`,
+                ),
+              ].join(''),
+            )
+            .join('')
         : serializeBlocks(editor, start, end)
       const offset = Math.max(0, Number(call.input.offset) || 0)
       const page = full.slice(offset, offset + READ_PAGE_CHARS)
@@ -593,15 +663,26 @@ export function executeTool(
       return applyOps(editor, call.input.ops, fm, protection)
 
     case 'propose_source_patch': {
-      const fragmentId = typeof call.input.fragmentId === 'string' ? call.input.fragmentId : undefined
-      const expectedRaw = typeof call.input.expectedRaw === 'string' ? call.input.expectedRaw : undefined
+      const fragmentId =
+        typeof call.input.fragmentId === 'string' ? call.input.fragmentId : undefined
+      const expectedRaw =
+        typeof call.input.expectedRaw === 'string' ? call.input.expectedRaw : undefined
       const nextRaw = typeof call.input.nextRaw === 'string' ? call.input.nextRaw : undefined
-      if (!protection) return fail('Protected source patches are unavailable for this document.', call.name)
-      if (!fragmentId || expectedRaw === undefined || nextRaw === undefined) return fail('fragmentId, expectedRaw, and nextRaw must each be complete strings.', call.name)
+      if (!protection)
+        return fail('Protected source patches are unavailable for this document.', call.name)
+      if (!fragmentId || expectedRaw === undefined || nextRaw === undefined)
+        return fail(
+          'fragmentId, expectedRaw, and nextRaw must each be complete strings.',
+          call.name,
+        )
       try {
         const patch = protection.propose(fragmentId, expectedRaw, nextRaw)
         protection.publish(patch)
-        return { output: `Proposed source patch ${patch.id}; waiting for user confirmation.`, mutated: false, summary: call.name }
+        return {
+          output: `Proposed source patch ${patch.id}; waiting for user confirmation.`,
+          mutated: false,
+          summary: call.name,
+        }
       } catch (error) {
         return fail(error instanceof Error ? error.message : String(error), call.name)
       }
@@ -636,10 +717,17 @@ export function executeTool(
       if (editedExternally(editor)) return fail(STALE_DOC_ERROR, t('aiToolInsertImage'))
       const url = String(call.input.url ?? '')
       if (!/^https?:\/\//.test(url)) return fail('invalid url', t('aiToolInsertImage'))
-      return insertImageFromUrl(editor, url, call.input, signal, {
-        fail: t('aiToolInsertImage'),
-        done: t('aiToolInsertImageDone'),
-      }, protection)
+      return insertImageFromUrl(
+        editor,
+        url,
+        call.input,
+        signal,
+        {
+          fail: t('aiToolInsertImage'),
+          done: t('aiToolInsertImageDone'),
+        },
+        protection,
+      )
     }
 
     case 'generate_image': {
@@ -657,10 +745,18 @@ export function executeTool(
           if (!generated.url) {
             return fail(generated.error ?? 'image generation failed', t('aiToolGenImage'))
           }
-          return insertImageFromUrl(editor, generated.url, call.input, signal, {
-            fail: t('aiToolGenImage'),
-            done: t('aiToolGenImageDone'),
-          }, protection, lease)
+          return insertImageFromUrl(
+            editor,
+            generated.url,
+            call.input,
+            signal,
+            {
+              fail: t('aiToolGenImage'),
+              done: t('aiToolGenImageDone'),
+            },
+            protection,
+            lease,
+          )
         })
         .finally(() => lease?.release())
     }

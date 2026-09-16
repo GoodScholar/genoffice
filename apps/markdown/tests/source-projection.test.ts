@@ -2,7 +2,12 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { Editor, type JSONContent } from '@tiptap/core'
 import { marked } from 'marked'
 import { buildExtensions } from '../src/renderer/editor/extensions'
-import { createTiptapMarkdownCodec, projectScan, serializeProjectedGroup, type MarkdownCodec } from '../src/renderer/markdown/sourceProjection'
+import {
+  createTiptapMarkdownCodec,
+  projectScan,
+  serializeProjectedGroup,
+  type MarkdownCodec,
+} from '../src/renderer/markdown/sourceProjection'
 import { scanMarkdownSource, type SourceScan } from '../src/renderer/markdown/sourceScanner'
 
 const editors: Editor[] = []
@@ -11,7 +16,12 @@ afterAll(() => editors.forEach((editor) => editor.destroy()))
 function createEditor(): Editor {
   const editor = new Editor({
     extensions: buildExtensions({
-      slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+      slashController: {
+        onOpen: () => {},
+        onUpdate: () => {},
+        onKeyDown: () => false,
+        onClose: () => {},
+      },
       slashItems: () => [],
     }),
     content: '',
@@ -27,8 +37,9 @@ function project(source: string) {
 }
 
 function findNodes(node: JSONContent, type: string): JSONContent[] {
-  return [node, ...(node.content ?? []).flatMap((child) => findNodes(child, type))]
-    .filter((child) => child.type === type)
+  return [node, ...(node.content ?? []).flatMap((child) => findNodes(child, type))].filter(
+    (child) => child.type === type,
+  )
 }
 
 describe('projectScan', () => {
@@ -38,7 +49,9 @@ describe('projectScan', () => {
     const node = findNodes(result.visual.doc, 'protectedSourceBlock')[0]
 
     expect(node?.attrs).toMatchObject({ raw: source, reason: 'raw-html' })
-    expect(result.fragments).toContainEqual(expect.objectContaining({ raw: source, display: 'block' }))
+    expect(result.fragments).toContainEqual(
+      expect.objectContaining({ raw: source, display: 'block' }),
+    )
   })
 
   it('projects bounded inline HTML while retaining editable GFM on either side', () => {
@@ -46,11 +59,24 @@ describe('projectScan', () => {
     const paragraph = result.visual.doc.content?.[0]
 
     expect(paragraph?.type).toBe('paragraph')
-    expect(paragraph?.content).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'text', text: 'left', marks: [expect.objectContaining({ type: 'bold' })] }),
-      expect.objectContaining({ type: 'protectedSourceInline', attrs: expect.objectContaining({ raw: '<span style="color: red">middle</span>' }) }),
-      expect.objectContaining({ type: 'text', text: 'right', marks: [expect.objectContaining({ type: 'strike' })] }),
-    ]))
+    expect(paragraph?.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'text',
+          text: 'left',
+          marks: [expect.objectContaining({ type: 'bold' })],
+        }),
+        expect.objectContaining({
+          type: 'protectedSourceInline',
+          attrs: expect.objectContaining({ raw: '<span style="color: red">middle</span>' }),
+        }),
+        expect.objectContaining({
+          type: 'text',
+          text: 'right',
+          marks: [expect.objectContaining({ type: 'strike' })],
+        }),
+      ]),
+    )
   })
 
   it('projects a legacy fenced div as one protected block atom', () => {
@@ -58,14 +84,18 @@ describe('projectScan', () => {
     const result = project(source)
 
     expect(findNodes(result.visual.doc, 'protectedSourceBlock')).toEqual([
-      expect.objectContaining({ attrs: expect.objectContaining({ raw: source, reason: 'legacy-fenced-div' }) }),
+      expect.objectContaining({
+        attrs: expect.objectContaining({ raw: source, reason: 'legacy-fenced-div' }),
+      }),
     ])
   })
 
   it('assigns one sourceId to every top-level node parsed from the same source unit', () => {
     const scan: SourceScan = {
       fallbackToSource: false,
-      units: [{ id: 's0-b0', raw: 'split', range: { from: 0, to: 5 }, trailingRaw: '', protection: null }],
+      units: [
+        { id: 's0-b0', raw: 'split', range: { from: 0, to: 5 }, trailingRaw: '', protection: null },
+      ],
     }
     const codec: MarkdownCodec = {
       lex: () => [],
@@ -74,7 +104,10 @@ describe('projectScan', () => {
     }
 
     const result = projectScan(scan, codec)
-    expect(result.visual.doc.content?.map((node) => node.attrs?.sourceId)).toEqual(['s0-b0', 's0-b0'])
+    expect(result.visual.doc.content?.map((node) => node.attrs?.sourceId)).toEqual([
+      's0-b0',
+      's0-b0',
+    ])
     expect(result.fingerprints.get('s0-b0')).toBeDefined()
   })
 
@@ -90,15 +123,18 @@ describe('projectScan', () => {
     ['bold', '**a <u>kept</u> b**', 'bold'],
     ['italic', '*a <u>kept</u> b*', 'italic'],
     ['strike', '~~a <u>kept</u> b~~', 'strike'],
-  ])('preserves %s marks across a protected inline fragment in both directions', (_name, source, mark) => {
-    const editor = createEditor()
-    const codec = createTiptapMarkdownCodec(editor)
-    const result = project(source)
-    const atom = findNodes(result.visual.doc, 'protectedSourceInline')[0]
+  ])(
+    'preserves %s marks across a protected inline fragment in both directions',
+    (_name, source, mark) => {
+      const editor = createEditor()
+      const codec = createTiptapMarkdownCodec(editor)
+      const result = project(source)
+      const atom = findNodes(result.visual.doc, 'protectedSourceInline')[0]
 
-    expect(atom?.marks).toEqual([expect.objectContaining({ type: mark })])
-    expect(serializeProjectedGroup(result.visual.doc.content ?? [], codec)).toBe(source)
-  })
+      expect(atom?.marks).toEqual([expect.objectContaining({ type: mark })])
+      expect(serializeProjectedGroup(result.visual.doc.content ?? [], codec)).toBe(source)
+    },
+  )
 
   it('restores raw source containing replacement-pattern characters verbatim', () => {
     const codec: MarkdownCodec = {
@@ -106,15 +142,19 @@ describe('projectScan', () => {
       parse: () => ({ type: 'doc' }),
       serialize: (doc) => String(doc.content?.[0]?.content?.[0]?.text),
     }
-    const nodes: JSONContent[] = [{
-      type: 'paragraph',
-      content: [{
-        type: 'protectedSourceInline',
-        attrs: { id: 's0-b0-i0', raw: '<u>$& $$ $` $\'</u>', reason: 'raw-html' },
-      }],
-    }]
+    const nodes: JSONContent[] = [
+      {
+        type: 'paragraph',
+        content: [
+          {
+            type: 'protectedSourceInline',
+            attrs: { id: 's0-b0-i0', raw: "<u>$& $$ $` $'</u>", reason: 'raw-html' },
+          },
+        ],
+      },
+    ]
 
-    expect(serializeProjectedGroup(nodes, codec)).toBe('<u>$& $$ $` $\'</u>')
+    expect(serializeProjectedGroup(nodes, codec)).toBe("<u>$& $$ $` $'</u>")
   })
 
   it('falls back to a protected block when the source exhausts private-use sentinels', () => {
@@ -143,13 +183,17 @@ describe('projectScan', () => {
       parse: () => ({ type: 'doc' }),
       serialize: () => output,
     }
-    const nodes: JSONContent[] = [{
-      type: 'paragraph',
-      content: [{
-        type: 'protectedSourceInline',
-        attrs: { id: 's0-b0-i0', raw: '<u>kept</u>', reason: 'raw-html' },
-      }],
-    }]
+    const nodes: JSONContent[] = [
+      {
+        type: 'paragraph',
+        content: [
+          {
+            type: 'protectedSourceInline',
+            attrs: { id: 's0-b0-i0', raw: '<u>kept</u>', reason: 'raw-html' },
+          },
+        ],
+      },
+    ]
 
     expect(() => serializeProjectedGroup(nodes, codec)).toThrow('Protected source serialization')
   })

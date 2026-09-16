@@ -9,7 +9,13 @@ export interface ProtectedSourceViewProps extends Pick<NodeViewProps, 'node' | '
 }
 
 /** Read-only rendering for a preserved-source atom; React text children intentionally escape raw HTML. */
-export function ProtectedSourceView({ node, editor, onEditSource, onConvert, conversionAvailable = false }: ProtectedSourceViewProps) {
+export function ProtectedSourceView({
+  node,
+  editor,
+  onEditSource,
+  onConvert,
+  conversionAvailable = false,
+}: ProtectedSourceViewProps) {
   const id = String(node.attrs.id ?? '')
   const raw = String(node.attrs.raw ?? '')
   const reason = String(node.attrs.reason ?? '')
@@ -24,10 +30,21 @@ export function ProtectedSourceView({ node, editor, onEditSource, onConvert, con
       contentEditable={false}
       data-protected-source={reason || 'unknown'}
     >
-      {inline ? <code>{raw}</code> : <pre><code>{raw}</code></pre>}
-      <span className="protected-source-reason">{t('protectedSource')}{reason ? ` · ${reason}` : ''}</span>
+      {inline ? (
+        <code>{raw}</code>
+      ) : (
+        <pre>
+          <code>{raw}</code>
+        </pre>
+      )}
+      <span className="protected-source-reason">
+        {t('protectedSource')}
+        {reason ? ` · ${reason}` : ''}
+      </span>
       <span className="protected-source-actions">
-        <button type="button" onClick={editSource}>{t('editSource')}</button>
+        <button type="button" onClick={editSource}>
+          {t('editSource')}
+        </button>
         <button
           type="button"
           data-protected-convert

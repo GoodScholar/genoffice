@@ -209,14 +209,28 @@ describe('write_document tool', () => {
     const editor = createEditor()
     let current = true
     let release: (() => void) | undefined
-    const wait = new Promise<void>((resolve) => { release = resolve })
-    const writer: AiDocWriter = { write: async (_spec, onProgress) => {
-      onProgress('draft')
-      await wait
-      return { ok: true, markdown: '# Hidden' }
-    } }
-    const protection = { mode: () => current ? 'visual' as const : 'source' as const, isCurrent: () => current } as SourceProtectionAccess
-    const pending = executeTool(editor, { id: 't', name: 'write_document', input: { plan: 'p' } }, undefined, undefined, writer, protection) as Promise<{ isError?: boolean, mutated?: boolean, output: string }>
+    const wait = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const writer: AiDocWriter = {
+      write: async (_spec, onProgress) => {
+        onProgress('draft')
+        await wait
+        return { ok: true, markdown: '# Hidden' }
+      },
+    }
+    const protection = {
+      mode: () => (current ? ('visual' as const) : ('source' as const)),
+      isCurrent: () => current,
+    } as SourceProtectionAccess
+    const pending = executeTool(
+      editor,
+      { id: 't', name: 'write_document', input: { plan: 'p' } },
+      undefined,
+      undefined,
+      writer,
+      protection,
+    ) as Promise<{ isError?: boolean; mutated?: boolean; output: string }>
     current = false
     release?.()
     const result = await pending
@@ -231,11 +245,13 @@ describe('write_document tool', () => {
     replaceEditorBaseline(editor, session.view().visual.doc)
     const historyDepth = undoDepth(editor.state)
     let release: (() => void) | undefined
-    const wait = new Promise<void>((resolve) => { release = resolve })
+    const wait = new Promise<void>((resolve) => {
+      release = resolve
+    })
     let visual = true
-    const operations = new Set<{ active: boolean, cleanup?: () => void }>()
+    const operations = new Set<{ active: boolean; cleanup?: () => void }>()
     const access = {
-      mode: () => visual ? 'visual' as const : 'source' as const,
+      mode: () => (visual ? ('visual' as const) : ('source' as const)),
       isCurrent: () => visual,
       registerVisualOperation: (cleanup?: () => void) => {
         const operation = { active: true, cleanup }
@@ -246,12 +262,21 @@ describe('write_document tool', () => {
         }
       },
     } as SourceProtectionAccess
-    const writer: AiDocWriter = { write: async (_spec, onProgress) => {
-      onProgress('Draft preview.')
-      await wait
-      return { ok: true, markdown: 'Final.' }
-    } }
-    const pending = executeTool(editor, { id: 't', name: 'write_document', input: { plan: 'p', afterIndex: 0 } }, undefined, undefined, writer, access) as Promise<{ isError?: boolean, mutated?: boolean }>
+    const writer: AiDocWriter = {
+      write: async (_spec, onProgress) => {
+        onProgress('Draft preview.')
+        await wait
+        return { ok: true, markdown: 'Final.' }
+      },
+    }
+    const pending = executeTool(
+      editor,
+      { id: 't', name: 'write_document', input: { plan: 'p', afterIndex: 0 } },
+      undefined,
+      undefined,
+      writer,
+      access,
+    ) as Promise<{ isError?: boolean; mutated?: boolean }>
     await tick()
     visual = false
     for (const operation of operations) {
@@ -274,16 +299,21 @@ describe('write_document tool', () => {
     const session = createMarkdownDocumentSession('Old\n', createTiptapMarkdownCodec(editor))
     replaceEditorBaseline(editor, session.view().visual.doc)
     let visual = true
-    const operations = new Set<{ active: boolean, cleanup?: () => void }>()
+    const operations = new Set<{ active: boolean; cleanup?: () => void }>()
     editor.on('update', ({ editor: updated, transaction }) => {
       if (!transaction.getMeta('uiOnly') && visual && session.view().mode === 'visual') {
-        session.applyVisual({ doc: updated.getJSON(), frontmatterInner: session.view().visual.frontmatterInner })
+        session.applyVisual({
+          doc: updated.getJSON(),
+          frontmatterInner: session.view().visual.frontmatterInner,
+        })
       }
     })
     let release: (() => void) | undefined
-    const wait = new Promise<void>((resolve) => { release = resolve })
+    const wait = new Promise<void>((resolve) => {
+      release = resolve
+    })
     const access = {
-      mode: () => visual ? 'visual' as const : 'source' as const,
+      mode: () => (visual ? ('visual' as const) : ('source' as const)),
       isCurrent: () => visual,
       registerVisualOperation: (cleanup?: () => void) => {
         const operation = { active: true, cleanup }
@@ -294,12 +324,21 @@ describe('write_document tool', () => {
         }
       },
     } as SourceProtectionAccess
-    const writer: AiDocWriter = { write: async (_spec, onProgress) => {
-      onProgress('Draft preview.')
-      await wait
-      return { ok: true, markdown: 'Writer output.' }
-    } }
-    const pending = executeTool(editor, { id: 't', name: 'write_document', input: { plan: 'p', afterIndex: 0 } }, undefined, undefined, writer, access) as Promise<{ isError?: boolean, mutated?: boolean }>
+    const writer: AiDocWriter = {
+      write: async (_spec, onProgress) => {
+        onProgress('Draft preview.')
+        await wait
+        return { ok: true, markdown: 'Writer output.' }
+      },
+    }
+    const pending = executeTool(
+      editor,
+      { id: 't', name: 'write_document', input: { plan: 'p', afterIndex: 0 } },
+      undefined,
+      undefined,
+      writer,
+      access,
+    ) as Promise<{ isError?: boolean; mutated?: boolean }>
 
     await tick()
     visual = false
@@ -307,7 +346,9 @@ describe('write_document tool', () => {
       operation.active = false
       operation.cleanup?.()
     }
-    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({ ok: true })
+    expect(session.applyVisual({ doc: editor.getJSON(), frontmatterInner: '' })).toMatchObject({
+      ok: true,
+    })
     expect(session.enterSource()).toMatchObject({ ok: true })
     expect(session.applySource('User source\n')).toMatchObject({ ok: true })
     const returned = session.enterVisual()

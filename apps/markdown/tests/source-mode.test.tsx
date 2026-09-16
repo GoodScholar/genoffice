@@ -19,13 +19,22 @@ import { Ribbon } from '../src/renderer/components/Ribbon'
 import { buildExtensions } from '../src/renderer/editor/extensions'
 import { LocaleProvider } from '../src/renderer/i18n/locale'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
-import { createTiptapMarkdownCodec, type MarkdownCodec } from '../src/renderer/markdown/sourceProjection'
+import {
+  createTiptapMarkdownCodec,
+  type MarkdownCodec,
+} from '../src/renderer/markdown/sourceProjection'
 import { GENERATED_TRAILING_NODE_SOURCE_ID } from '../src/renderer/markdown/generatedTrailingNode'
-import { SourceSnapshotStep, sourceSnapshotFromTransaction, sourceSnapshotPairFromTransaction } from '../src/renderer/markdown/sourceHistory'
+import {
+  SourceSnapshotStep,
+  sourceSnapshotFromTransaction,
+  sourceSnapshotPairFromTransaction,
+} from '../src/renderer/markdown/sourceHistory'
 
-;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+;(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true
 
-const roots: Array<{ root: Root, host: HTMLDivElement }> = []
+const roots: Array<{ root: Root; host: HTMLDivElement }> = []
 
 afterEach(() => {
   while (roots.length) {
@@ -83,7 +92,9 @@ describe('SourceEditor', () => {
     expect(editor.querySelector('.cm-lineNumbers')).not.toBeNull()
     expect(editor.querySelector('.cm-foldGutter')).not.toBeNull()
     expect(editor.querySelector('.cm-activeLine')).not.toBeNull()
-    expect([...editor.querySelectorAll('.cm-line')].map((line) => line.textContent).join('\n')).toBe('# Heading\n\nText')
+    expect(
+      [...editor.querySelectorAll('.cm-line')].map((line) => line.textContent).join('\n'),
+    ).toBe('# Heading\n\nText')
   })
 
   it('focuses and selects the supplied source range after mount', () => {
@@ -115,7 +126,12 @@ describe('SourceEditor', () => {
     const content = editor.querySelector<HTMLElement>('[contenteditable="true"]')!
 
     for (const options of [{ metaKey: true }, { ctrlKey: true }]) {
-      const event = new KeyboardEvent('keydown', { key: 's', bubbles: true, cancelable: true, ...options })
+      const event = new KeyboardEvent('keydown', {
+        key: 's',
+        bubbles: true,
+        cancelable: true,
+        ...options,
+      })
       content.dispatchEvent(event)
       expect(event.defaultPrevented).toBe(false)
     }
@@ -171,15 +187,27 @@ describe('SourceEditor', () => {
     act(() => view.dispatch({ changes: { from: view.state.doc.length, insert: '!' } }))
 
     const content = editor.querySelector<HTMLElement>('[contenteditable="true"]')!
-    const event = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })
+    const event = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
     act(() => content.dispatchEvent(event))
 
     expect(view.state.doc.toString()).toBe('before')
     expect(onChange).toHaveBeenLastCalledWith('before')
 
-    act(() => content.dispatchEvent(new KeyboardEvent('keydown', {
-      key: 'y', ctrlKey: true, bubbles: true, cancelable: true,
-    })))
+    act(() =>
+      content.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'y',
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    )
 
     expect(view.state.doc.toString()).toBe('before!')
     expect(onChange).toHaveBeenLastCalledWith('before!')
@@ -190,14 +218,22 @@ describe('source-mode visual handoff', () => {
   it('keeps a no-edit round trip clean and rebuilds the visual document from edited source', () => {
     const editor = new Editor({
       extensions: buildExtensions({
-        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashController: {
+          onOpen: () => {},
+          onUpdate: () => {},
+          onKeyDown: () => false,
+          onClose: () => {},
+        },
         slashItems: () => [],
       }),
       content: '',
     })
     const codec: MarkdownCodec = {
       lex: (source) => [{ type: 'paragraph', raw: source }],
-      parse: (source) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: source.trim() }] }] }),
+      parse: (source) => ({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: source.trim() }] }],
+      }),
       serialize: (doc) => String(doc.content?.[0]?.content?.[0]?.text ?? ''),
     }
     const session = createMarkdownDocumentSession('Before.\n', codec)
@@ -212,7 +248,9 @@ describe('source-mode visual handoff', () => {
     expect(visual).toMatchObject({ ok: true, view: expect.objectContaining({ mode: 'visual' }) })
     expect(session.view().visual.doc).toMatchObject({
       type: 'doc',
-      content: [expect.objectContaining({ type: 'paragraph', content: [{ type: 'text', text: 'After.' }] })],
+      content: [
+        expect.objectContaining({ type: 'paragraph', content: [{ type: 'text', text: 'After.' }] }),
+      ],
     })
     replaceSourceModeVisualDocument(editor, session.view().visual.doc, 'Before.\n', 'After.\n')
 
@@ -223,13 +261,23 @@ describe('source-mode visual handoff', () => {
   it('retains unprojectable source in source mode for saving', () => {
     const editor = new Editor({
       extensions: buildExtensions({
-        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashController: {
+          onOpen: () => {},
+          onUpdate: () => {},
+          onKeyDown: () => false,
+          onClose: () => {},
+        },
         slashItems: () => [],
       }),
       content: '',
     })
     const codec = createTiptapMarkdownCodec(editor)
-    const session = createMarkdownDocumentSession('Before.', { ...codec, lex: () => { throw new Error('cannot project') } })
+    const session = createMarkdownDocumentSession('Before.', {
+      ...codec,
+      lex: () => {
+        throw new Error('cannot project')
+      },
+    })
 
     const update = session.applySource('\uFEFFsource\r\nthat must stay')
 
@@ -239,21 +287,58 @@ describe('source-mode visual handoff', () => {
   })
 
   it('accepts the generated tail appended after a protected source-mode projection', () => {
-    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: [] }), content: '' })
-    const session = createMarkdownDocumentSession('<details>raw</details>\n', createTiptapMarkdownCodec(editor))
-    expect(() => replaceSourceModeVisualDocument(editor, session.view().visual.doc, 'before', session.serialize())).not.toThrow()
-    expect(editor.getJSON().content?.at(-1)?.attrs?.sourceId).toBe(GENERATED_TRAILING_NODE_SOURCE_ID)
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: [],
+      }),
+      content: '',
+    })
+    const session = createMarkdownDocumentSession(
+      '<details>raw</details>\n',
+      createTiptapMarkdownCodec(editor),
+    )
+    expect(() =>
+      replaceSourceModeVisualDocument(
+        editor,
+        session.view().visual.doc,
+        'before',
+        session.serialize(),
+      ),
+    ).not.toThrow()
+    expect(editor.getJSON().content?.at(-1)?.attrs?.sourceId).toBe(
+      GENERATED_TRAILING_NODE_SOURCE_ID,
+    )
     editor.destroy()
   })
 
   it('restores a full protected source snapshot through the signed history path', () => {
     let currentSession: ReturnType<typeof createMarkdownDocumentSession> | undefined
-    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: [], protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange() {}, getCurrentSource: () => currentSession?.serialize() } }), content: '' })
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: [],
+        protectedSource: {
+          onEditSource() {},
+          onConvert() {},
+          onConfirmChange() {},
+          getCurrentSource: () => currentSession?.serialize(),
+        },
+      }),
+      content: '',
+    })
     const original = '---\ntitle: Before\n---\n\n# Before\n\n<details>raw</details>\n'
     const snapshot = '---\ntitle: Restored\n---\n\n# Restored\n\n<details>raw</details>\n'
-    const session = currentSession = createMarkdownDocumentSession(original, createTiptapMarkdownCodec(editor))
+    const session = (currentSession = createMarkdownDocumentSession(
+      original,
+      createTiptapMarkdownCodec(editor),
+    ))
     replaceEditorBaseline(editor, session.view().visual.doc)
-    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
+    editor.on('transaction', ({ transaction }) =>
+      restoreSourceHistoryTransaction(session, editor, transaction),
+    )
     expect(restoreAiSourceSnapshot(editor, session, snapshot)).toEqual({ ok: true })
     expect(session.serialize()).toBe(snapshot)
     expect(editor.commands.undo()).toBe(true)
@@ -264,25 +349,49 @@ describe('source-mode visual handoff', () => {
 
 describe('source-mode history checkpoint', () => {
   it('uses the final source target when a transaction contains multiple snapshots', () => {
-    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }), content: '' })
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
     const transaction = editor.state.tr
       .step(new SourceSnapshotStep('before', 'middle'))
       .step(new SourceSnapshotStep('middle', 'after'))
 
     expect(sourceSnapshotFromTransaction(transaction)).toBe('after')
-    expect(sourceSnapshotPairFromTransaction(transaction)).toEqual({ beforeSource: 'before', source: 'after' })
+    expect(sourceSnapshotPairFromTransaction(transaction)).toEqual({
+      beforeSource: 'before',
+      source: 'after',
+    })
     editor.destroy()
   })
 
   it('rejects a forged source snapshot before it can mutate a session', () => {
-    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }), content: '' })
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+      }),
+      content: '',
+    })
     const codec: MarkdownCodec = {
-      lex: (source) => source ? [{ type: 'paragraph', raw: source }] : [],
-      parse: (source) => ({ type: 'doc', content: source ? [{ type: 'paragraph', content: [{ type: 'text', text: source.trim() }] }] : [] }),
+      lex: (source) => (source ? [{ type: 'paragraph', raw: source }] : []),
+      parse: (source) => ({
+        type: 'doc',
+        content: source
+          ? [{ type: 'paragraph', content: [{ type: 'text', text: source.trim() }] }]
+          : [],
+      }),
       serialize: (doc) => String(doc.content?.[0]?.content?.[0]?.text ?? ''),
     }
     const session = createMarkdownDocumentSession('Before\n', codec)
-    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
+    editor.on('transaction', ({ transaction }) =>
+      restoreSourceHistoryTransaction(session, editor, transaction),
+    )
 
     editor.view.dispatch(editor.state.tr.step(new SourceSnapshotStep('Before\n', 'hacked')))
 
@@ -292,15 +401,39 @@ describe('source-mode history checkpoint', () => {
 
   it('restores an empty source snapshot through a real history transaction', () => {
     const sessionRef: { current?: ReturnType<typeof createMarkdownDocumentSession> } = {}
-    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: [], protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange() {}, getCurrentSource: () => sessionRef.current?.serialize() } }), content: '' })
-    const codec: MarkdownCodec = { lex: (source) => source ? [{ type: 'paragraph', raw: source }] : [], parse: (source) => ({ type: 'doc', content: source ? [{ type: 'paragraph', content: [{ type: 'text', text: source.trim() }] }] : [] }), serialize: () => '' }
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: [],
+        protectedSource: {
+          onEditSource() {},
+          onConvert() {},
+          onConfirmChange() {},
+          getCurrentSource: () => sessionRef.current?.serialize(),
+        },
+      }),
+      content: '',
+    })
+    const codec: MarkdownCodec = {
+      lex: (source) => (source ? [{ type: 'paragraph', raw: source }] : []),
+      parse: (source) => ({
+        type: 'doc',
+        content: source
+          ? [{ type: 'paragraph', content: [{ type: 'text', text: source.trim() }] }]
+          : [],
+      }),
+      serialize: () => '',
+    }
     const session = createMarkdownDocumentSession('', codec)
     sessionRef.current = session
     const before: SourceModeSnapshot = { source: '', visual: session.view().visual }
     session.enterSource()
     session.applySource('---\ntitle: after\n---\n\nBody\n')
     completeSourceModeTransition(session, editor, before)
-    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
+    editor.on('transaction', ({ transaction }) =>
+      restoreSourceHistoryTransaction(session, editor, transaction),
+    )
 
     expect(undo(editor.state, editor.view.dispatch)).toBe(true)
     expect(session.view()).toMatchObject({ source: '', dirty: false, mode: 'visual' })
@@ -311,13 +444,20 @@ describe('source-mode history checkpoint', () => {
   it('resets history when replacing an editor baseline', () => {
     const editor = new Editor({
       element: document.createElement('div'),
-      extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }),
-      content: 'Old', contentType: 'markdown',
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+      }),
+      content: 'Old',
+      contentType: 'markdown',
     })
     editor.commands.setContent('Changed', { contentType: 'markdown' })
     expect(undoDepth(editor.state)).toBeGreaterThan(0)
 
-    replaceEditorBaseline(editor, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'New' }] }] })
+    replaceEditorBaseline(editor, {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'New' }] }],
+    })
 
     expect(editor.getText()).toBe('New')
     expect(undoDepth(editor.state)).toBe(0)
@@ -326,7 +466,15 @@ describe('source-mode history checkpoint', () => {
   })
 
   it('creates a valid editable empty document baseline without history', () => {
-    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }), content: 'Old', contentType: 'markdown' })
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+      }),
+      content: 'Old',
+      contentType: 'markdown',
+    })
     replaceEditorBaseline(editor, { type: 'doc', content: [] })
 
     expect(() => editor.state.doc.check()).not.toThrow()
@@ -338,13 +486,26 @@ describe('source-mode history checkpoint', () => {
   })
 
   it('rejects an invalid non-empty baseline without mutating editor state or history', () => {
-    const editor = new Editor({ element: document.createElement('div'), extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }), content: 'Keep', contentType: 'markdown' })
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+      }),
+      content: 'Keep',
+      contentType: 'markdown',
+    })
     editor.commands.setContent('Keep changed', { contentType: 'markdown' })
     const beforeDoc = editor.state.doc
     const beforeSelection = editor.state.selection
     const beforeUndo = undoDepth(editor.state)
 
-    expect(() => replaceEditorBaseline(editor, { type: 'doc', content: [{ type: 'text', text: 'invalid top-level text' }] })).toThrow()
+    expect(() =>
+      replaceEditorBaseline(editor, {
+        type: 'doc',
+        content: [{ type: 'text', text: 'invalid top-level text' }],
+      }),
+    ).toThrow()
     expect(editor.state.doc).toBe(beforeDoc)
     expect(editor.state.selection).toBe(beforeSelection)
     expect(undoDepth(editor.state)).toBe(beforeUndo)
@@ -353,20 +514,31 @@ describe('source-mode history checkpoint', () => {
   it('serializes an invertible no-document source snapshot step in the history transaction', () => {
     const editor = new Editor({
       element: document.createElement('div'),
-      extensions: buildExtensions({ slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} }, slashItems: () => [] }),
-      content: 'Body', contentType: 'markdown',
+      extensions: buildExtensions({
+        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
+        slashItems: () => [],
+      }),
+      content: 'Body',
+      contentType: 'markdown',
     })
     const transaction = editor.state.tr.step(new SourceSnapshotStep('before', 'after'))
     expect(transaction.doc).toBe(editor.state.doc)
     expect(sourceSnapshotFromTransaction(transaction)).toEqual('after')
-    expect(transaction.steps[0]!.invert(editor.state.doc).toJSON()).toMatchObject({ source: 'before' })
+    expect(transaction.steps[0]!.invert(editor.state.doc).toJSON()).toMatchObject({
+      source: 'before',
+    })
     editor.destroy()
   })
   it('does not dispatch or add history for an unchanged source round trip', () => {
     const editor = new Editor({
       element: document.createElement('div'),
       extensions: buildExtensions({
-        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashController: {
+          onOpen: () => {},
+          onUpdate: () => {},
+          onKeyDown: () => false,
+          onClose: () => {},
+        },
         slashItems: () => [],
       }),
       content: 'Before.',
@@ -374,11 +546,17 @@ describe('source-mode history checkpoint', () => {
     })
     const codec: MarkdownCodec = {
       lex: (source) => [{ type: 'paragraph', raw: source }],
-      parse: (source) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: source.trim() }] }] }),
+      parse: (source) => ({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: source.trim() }] }],
+      }),
       serialize: (doc) => String(doc.content?.[0]?.content?.[0]?.text ?? ''),
     }
     const session = createMarkdownDocumentSession('Before.\n', codec)
-    const start: SourceModeSnapshot = { source: session.view().source, visual: session.view().visual }
+    const start: SourceModeSnapshot = {
+      source: session.view().source,
+      visual: session.view().visual,
+    }
     session.enterSource()
     const dispatch = vi.spyOn(editor.view, 'dispatch')
 
@@ -394,24 +572,38 @@ describe('source-mode history checkpoint', () => {
     const editor = new Editor({
       element: document.createElement('div'),
       extensions: buildExtensions({
-        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashController: {
+          onOpen: () => {},
+          onUpdate: () => {},
+          onKeyDown: () => false,
+          onClose: () => {},
+        },
         slashItems: () => [],
       }),
       content: '',
     })
     const codec: MarkdownCodec = {
-      lex: (source) => source.includes('<!-- raw -->')
-        ? [{ type: 'paragraph', raw: '# Before\n\n' }, { type: 'html', raw: '<!-- raw -->\n' }]
-        : [{ type: 'paragraph', raw: source }],
+      lex: (source) =>
+        source.includes('<!-- raw -->')
+          ? [
+              { type: 'paragraph', raw: '# Before\n\n' },
+              { type: 'html', raw: '<!-- raw -->\n' },
+            ]
+          : [{ type: 'paragraph', raw: source }],
       parse: (source) => ({
         type: 'doc',
-        content: source.trim() ? [{ type: 'paragraph', content: [{ type: 'text', text: '# Before' }] }] : [],
+        content: source.trim()
+          ? [{ type: 'paragraph', content: [{ type: 'text', text: '# Before' }] }]
+          : [],
       }),
       serialize: (doc) => String(doc.content?.[0]?.content?.[0]?.text ?? ''),
     }
     const session = createMarkdownDocumentSession('# Before\n\n<!-- raw -->\n', codec)
     editor.commands.setContent(session.view().visual.doc)
-    const before: SourceModeSnapshot = { source: session.view().source, visual: session.view().visual }
+    const before: SourceModeSnapshot = {
+      source: session.view().source,
+      visual: session.view().visual,
+    }
     session.enterSource()
     expect(session.applySource('# Before\n')).toMatchObject({ ok: true })
 
@@ -429,27 +621,54 @@ describe('source-mode history checkpoint', () => {
     const editor = new Editor({
       element: document.createElement('div'),
       extensions: buildExtensions({
-        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashController: {
+          onOpen: () => {},
+          onUpdate: () => {},
+          onKeyDown: () => false,
+          onClose: () => {},
+        },
         slashItems: () => [],
-        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange() {}, getCurrentSource: () => sessionRef.current?.serialize() },
+        protectedSource: {
+          onEditSource() {},
+          onConvert() {},
+          onConfirmChange() {},
+          getCurrentSource: () => sessionRef.current?.serialize(),
+        },
       }),
       content: 'Old.',
       contentType: 'markdown',
     })
     const codec: MarkdownCodec = {
       lex: (source) => [{ type: 'paragraph', raw: source }],
-      parse: (source) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: source.trim().replace(/^---[\s\S]*?---\s*/, '') }] }] }),
+      parse: (source) => ({
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [{ type: 'text', text: source.trim().replace(/^---[\s\S]*?---\s*/, '') }],
+          },
+        ],
+      }),
       serialize: (doc) => String(doc.content?.[0]?.content?.[0]?.text ?? ''),
     }
     const session = createMarkdownDocumentSession('---\ntitle: before\n---\n\nBefore.\n', codec)
     sessionRef.current = session
     editor.commands.setContent(session.view().visual.doc)
-    const start: SourceModeSnapshot = { source: session.view().source, visual: session.view().visual }
+    const start: SourceModeSnapshot = {
+      source: session.view().source,
+      visual: session.view().visual,
+    }
     editor.commands.setContent('Before visual edit.', { contentType: 'markdown' })
-    const visualUpdate = session.applyVisual({ doc: editor.getJSON(), frontmatterInner: 'title: before' })
+    const visualUpdate = session.applyVisual({
+      doc: editor.getJSON(),
+      frontmatterInner: 'title: before',
+    })
     if (!visualUpdate.ok) throw new Error(visualUpdate.error)
     applyProjectionProvenance(editor, visualUpdate.view.visual.doc)
-    const visualStart: SourceModeSnapshot = { source: session.view().source, visual: session.view().visual }
+    const visualStart: SourceModeSnapshot = {
+      source: session.view().source,
+      visual: session.view().visual,
+    }
 
     session.enterSource()
     session.applySource('---\ntitle: after\n---\n\nAfter source edit.\n')
@@ -468,7 +687,10 @@ describe('source-mode history checkpoint', () => {
     expect(editor.getText()).toBe('Before visual edit.')
     expect(redo(editor.state, editor.view.dispatch)).toBe(true)
     expect(restored).toBeDefined()
-    expect(session.view()).toMatchObject({ source: '---\ntitle: after\n---\n\nAfter source edit.\n', mode: 'visual' })
+    expect(session.view()).toMatchObject({
+      source: '---\ntitle: after\n---\n\nAfter source edit.\n',
+      mode: 'visual',
+    })
     expect(session.view().visual.frontmatterInner).toBe('title: after')
     expect(editor.getText()).toBe('After source edit.')
     expect(start.source).toContain('title: before')
@@ -484,7 +706,12 @@ describe('source-mode ribbon', () => {
     const editor = new Editor({
       element: document.createElement('div'),
       extensions: buildExtensions({
-        slashController: { onOpen: () => {}, onUpdate: () => {}, onKeyDown: () => false, onClose: () => {} },
+        slashController: {
+          onOpen: () => {},
+          onUpdate: () => {},
+          onKeyDown: () => false,
+          onClose: () => {},
+        },
         slashItems: () => [],
       }),
       content: 'Body',
@@ -515,7 +742,8 @@ describe('source-mode ribbon', () => {
       </LocaleProvider>,
     )
 
-    const buttonByLabel = (label: string) => host.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement
+    const buttonByLabel = (label: string) =>
+      host.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement
     expect(buttonByLabel('属性').disabled).toBe(true)
     expect(buttonByLabel('大纲').disabled).toBe(true)
     editor.destroy()

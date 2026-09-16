@@ -44,8 +44,7 @@ test.describe('markdown editor', () => {
       await expect(editor).toContainText('Be careful.')
       await expect(editor).toContainText(':::callout {type="info"}')
 
-      await editor.click()
-      await editorPage.keyboard.press('ControlOrMeta+End')
+      await editor.locator('p').last().click({ force: true })
       await editorPage.keyboard.press('Enter')
       await editorPage.keyboard.type('/')
       await expect(editorPage.locator('.slash-menu')).toBeVisible()
@@ -89,7 +88,7 @@ test.describe('markdown editor', () => {
       await expect(editor.locator('strong')).toHaveText('bold')
 
       // type at the end of the document, save with ⌘/Ctrl+S
-      await editor.click()
+      await editor.locator('h1').click()
       await editorPage.keyboard.press('ControlOrMeta+End')
       await editorPage.keyboard.press('Enter')
       await editorPage.keyboard.type('Appended line.')

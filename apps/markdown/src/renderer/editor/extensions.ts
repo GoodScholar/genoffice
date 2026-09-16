@@ -68,22 +68,26 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
     SourceProvenance,
     ProtectedSourceBlock.extend({
       addNodeView() {
-        return ReactNodeViewRenderer((props) => createElement(ProtectedSourceView, {
-          ...props,
-          onEditSource: protectedSource.onEditSource,
-          onConvert: protectedSource.onConvert,
-          conversionAvailable: protectedSource.conversionAvailable === true,
-        }))
+        return ReactNodeViewRenderer((props) =>
+          createElement(ProtectedSourceView, {
+            ...props,
+            onEditSource: protectedSource.onEditSource,
+            onConvert: protectedSource.onConvert,
+            conversionAvailable: protectedSource.conversionAvailable === true,
+          }),
+        )
       },
     }),
     ProtectedSourceInline.extend({
       addNodeView() {
-        return ReactNodeViewRenderer((props) => createElement(ProtectedSourceView, {
-          ...props,
-          onEditSource: protectedSource.onEditSource,
-          onConvert: protectedSource.onConvert,
-          conversionAvailable: protectedSource.conversionAvailable === true,
-        }))
+        return ReactNodeViewRenderer((props) =>
+          createElement(ProtectedSourceView, {
+            ...props,
+            onEditSource: protectedSource.onEditSource,
+            onConvert: protectedSource.onConvert,
+            conversionAvailable: protectedSource.conversionAvailable === true,
+          }),
+        )
       },
     }),
     ProtectedSourceGuard.configure(protectedSource),

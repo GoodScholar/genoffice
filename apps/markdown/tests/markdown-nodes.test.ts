@@ -200,26 +200,35 @@ describe('legacy HTML content stays protected source', () => {
       if (node.type === 'protectedSourceBlock' || node.type === 'protectedSourceInline') {
         raws.push(String((node.attrs as { raw?: string } | undefined)?.raw))
       }
-      for (const child of (node.content as Record<string, unknown>[] | undefined) ?? []) visit(child)
+      for (const child of (node.content as Record<string, unknown>[] | undefined) ?? [])
+        visit(child)
     }
     visit(doc)
     return raws
   }
 
   it('a styled span stays raw', () => {
-    expect(protectedRaw('a <span style="color: #ff0000">red text</span> b').join('')).toContain('<span style="color: #ff0000">red text</span>')
+    expect(protectedRaw('a <span style="color: #ff0000">red text</span> b').join('')).toContain(
+      '<span style="color: #ff0000">red text</span>',
+    )
   })
 
   it('an aligned paragraph stays raw', () => {
-    expect(protectedRaw('<p style="text-align: center">centered <strong>text</strong></p>').join('')).toContain('<p style="text-align: center">')
+    expect(
+      protectedRaw('<p style="text-align: center">centered <strong>text</strong></p>').join(''),
+    ).toContain('<p style="text-align: center">')
   })
 
   it('an aligned heading stays raw', () => {
-    expect(protectedRaw('<h2 style="text-align: right">title</h2>').join('')).toContain('<h2 style="text-align: right">')
+    expect(protectedRaw('<h2 style="text-align: right">title</h2>').join('')).toContain(
+      '<h2 style="text-align: right">',
+    )
   })
 
   it('a resized image stays raw', () => {
-    expect(protectedRaw('<img src="assets/d.png" alt="d" width="300" align="center">').join('')).toContain('<img src="assets/d.png" alt="d" width="300"')
+    expect(
+      protectedRaw('<img src="assets/d.png" alt="d" width="300" align="center">').join(''),
+    ).toContain('<img src="assets/d.png" alt="d" width="300"')
   })
 
   it('u and mark tags stay raw', () => {

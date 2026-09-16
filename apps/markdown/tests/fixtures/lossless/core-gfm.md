@@ -7,13 +7,13 @@ tags: [markdown, fixture]
 
 Task list:
 
-- [x] preserve **strong** and *emphasis*
+- [x] preserve **strong** and _emphasis_
 - [ ] preserve ~~strikethrough~~ and [a link](https://example.com)
 
-| Name | Value |
-| --- | ---: |
-| alpha | 1 |
-| beta | 2 |
+| Name  | Value |
+| ----- | ----: |
+| alpha |     1 |
+| beta  |     2 |
 
 Inline math is $E = mc^2$.
 

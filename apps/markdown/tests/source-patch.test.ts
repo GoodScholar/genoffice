@@ -6,13 +6,19 @@ import { undo, redo } from '@tiptap/pm/history'
 import { buildExtensions } from '../src/renderer/editor/extensions'
 import { createMarkdownDocumentSession } from '../src/renderer/markdown/documentSession'
 import { createTiptapMarkdownCodec } from '../src/renderer/markdown/sourceProjection'
-import { applyConfirmedSourcePatch, replaceEditorBaseline, restoreSourceHistoryTransaction } from '../src/renderer/App'
+import {
+  applyConfirmedSourcePatch,
+  replaceEditorBaseline,
+  restoreSourceHistoryTransaction,
+} from '../src/renderer/App'
 import { SourcePatchCard } from '../src/renderer/ai/SourcePatchCard'
 
-;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+;(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true
 
 const editors: Editor[] = []
-const roots: Array<{ root: Root, host: HTMLDivElement }> = []
+const roots: Array<{ root: Root; host: HTMLDivElement }> = []
 
 afterEach(() => {
   for (const editor of editors.splice(0)) editor.destroy()
@@ -50,7 +56,11 @@ describe('source patch confirmation', () => {
       nextRaw: '<details>new</details>\n\n',
       baseRevision: before.revision,
     })
-    expect(session.view()).toMatchObject({ source: before.source, revision: before.revision, dirty: false })
+    expect(session.view()).toMatchObject({
+      source: before.source,
+      revision: before.revision,
+      dirty: false,
+    })
   })
 
   it('confirms only the target raw replacement in one revision', () => {
@@ -96,7 +106,10 @@ describe('source patch confirmation', () => {
     patch.baseRevision += 1
     const before = session.serialize()
 
-    expect(session.applyConfirmedPatch(patch)).toMatchObject({ ok: false, error: 'revision-changed' })
+    expect(session.applyConfirmedPatch(patch)).toMatchObject({
+      ok: false,
+      error: 'revision-changed',
+    })
     expect(session.serialize()).toBe(before)
   })
 
@@ -107,15 +120,25 @@ describe('source patch confirmation', () => {
       extensions: buildExtensions({
         slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
         slashItems: () => [],
-        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange() {}, getCurrentSource: () => sessionRef.current?.serialize() },
+        protectedSource: {
+          onEditSource() {},
+          onConvert() {},
+          onConfirmChange() {},
+          getCurrentSource: () => sessionRef.current?.serialize(),
+        },
       }),
       content: '',
     })
     editors.push(editor)
-    const session = createMarkdownDocumentSession('<details>old</details>\n\nSafe\n', createTiptapMarkdownCodec(editor))
+    const session = createMarkdownDocumentSession(
+      '<details>old</details>\n\nSafe\n',
+      createTiptapMarkdownCodec(editor),
+    )
     sessionRef.current = session
     replaceEditorBaseline(editor, session.view().visual.doc)
-    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
+    editor.on('transaction', ({ transaction }) =>
+      restoreSourceHistoryTransaction(session, editor, transaction),
+    )
     const fragment = session.view().protectedFragments[0]!
     const patch = session.proposeFragmentReplacement(fragment.id, '<details>new</details>\n\n')
 
@@ -134,15 +157,25 @@ describe('source patch confirmation', () => {
       extensions: buildExtensions({
         slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
         slashItems: () => [],
-        protectedSource: { onEditSource() {}, onConvert() {}, onConfirmChange() {}, getCurrentSource: () => sessionRef.current?.serialize() },
+        protectedSource: {
+          onEditSource() {},
+          onConvert() {},
+          onConfirmChange() {},
+          getCurrentSource: () => sessionRef.current?.serialize(),
+        },
       }),
       content: '',
     })
     editors.push(editor)
-    const session = createMarkdownDocumentSession('<details>old</details>\n\nSafe\n', createTiptapMarkdownCodec(editor))
+    const session = createMarkdownDocumentSession(
+      '<details>old</details>\n\nSafe\n',
+      createTiptapMarkdownCodec(editor),
+    )
     sessionRef.current = session
     replaceEditorBaseline(editor, session.view().visual.doc)
-    editor.on('transaction', ({ transaction }) => restoreSourceHistoryTransaction(session, editor, transaction))
+    editor.on('transaction', ({ transaction }) =>
+      restoreSourceHistoryTransaction(session, editor, transaction),
+    )
     const fragment = session.view().protectedFragments[0]!
     const patch = session.proposeFragmentReplacement(fragment.id, '<details>new</details>\n\n')
     const beforeDoc = editor.getJSON()
@@ -150,7 +183,10 @@ describe('source patch confirmation', () => {
     const beforeRevision = session.view().revision
     session.enterSource()
 
-    expect(applyConfirmedSourcePatch(editor, session, patch, 'source')).toEqual({ ok: false, error: 'source-mode' })
+    expect(applyConfirmedSourcePatch(editor, session, patch, 'source')).toEqual({
+      ok: false,
+      error: 'source-mode',
+    })
     expect(editor.getJSON()).toEqual(beforeDoc)
     expect(session.serialize()).toBe(beforeSource)
     expect(session.view()).toMatchObject({ mode: 'source', revision: beforeRevision })
@@ -177,10 +213,17 @@ describe('source patch confirmation', () => {
     const confirm = vi.fn(() => ({ ok: false as const, error: 'raw-changed' }))
     const cancel = vi.fn()
     const patch = {
-      id: 'p1', origin: 'ai' as const, fragmentId: 'html-1', expectedRaw: 'old one\nold two', nextRaw: 'new one\nnew two', baseRevision: 0,
+      id: 'p1',
+      origin: 'ai' as const,
+      fragmentId: 'html-1',
+      expectedRaw: 'old one\nold two',
+      nextRaw: 'new one\nnew two',
+      baseRevision: 0,
     }
 
-    act(() => root.render(createElement(SourcePatchCard, { patch, onConfirm: confirm, onCancel: cancel })))
+    act(() =>
+      root.render(createElement(SourcePatchCard, { patch, onConfirm: confirm, onCancel: cancel })),
+    )
     expect(host.querySelectorAll('.source-patch-line')).toHaveLength(2)
     expect(host.textContent).toContain('old one')
     expect(host.textContent).toContain('new two')
@@ -198,17 +241,33 @@ describe('source patch confirmation', () => {
     document.body.appendChild(host)
     const root = createRoot(host)
     roots.push({ root, host })
-    const confirm = vi.fn()
+    const confirm = vi
+      .fn()
       .mockReturnValueOnce({ ok: false as const, error: 'raw-changed' })
       .mockReturnValueOnce({ ok: true as const })
     const cancel = vi.fn()
-    const p1 = { id: 'p1', origin: 'ai' as const, fragmentId: 'one', expectedRaw: 'old', nextRaw: 'new', baseRevision: 0 }
+    const p1 = {
+      id: 'p1',
+      origin: 'ai' as const,
+      fragmentId: 'one',
+      expectedRaw: 'old',
+      nextRaw: 'new',
+      baseRevision: 0,
+    }
     const p2 = { ...p1, id: 'p2', fragmentId: 'two' }
 
-    act(() => root.render(createElement(SourcePatchCard, { patch: p1, onConfirm: confirm, onCancel: cancel })))
+    act(() =>
+      root.render(
+        createElement(SourcePatchCard, { patch: p1, onConfirm: confirm, onCancel: cancel }),
+      ),
+    )
     act(() => host.querySelectorAll('button')[1]!.click())
     expect(host.querySelector('[role="alert"]')).not.toBeNull()
-    act(() => root.render(createElement(SourcePatchCard, { patch: p2, onConfirm: confirm, onCancel: cancel })))
+    act(() =>
+      root.render(
+        createElement(SourcePatchCard, { patch: p2, onConfirm: confirm, onCancel: cancel }),
+      ),
+    )
     expect(host.querySelector('[role="alert"]')).toBeNull()
     act(() => host.querySelectorAll('button')[1]!.click())
     act(() => host.querySelectorAll('button')[0]!.click())

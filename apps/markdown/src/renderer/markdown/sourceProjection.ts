@@ -54,11 +54,18 @@ function stableFingerprint(value: JSONContent[]): string {
         .filter(([key]) => key !== 'sourceId')
         .map(([key, child]) => [key, withoutSourceIds(child)]),
     ) as Record<string, unknown>
-    const sourceId = record.attrs && typeof record.attrs === 'object'
-      ? (record.attrs as Record<string, unknown>).sourceId
-      : undefined
-    if (topLevel && result.type === 'paragraph' && sourceId != null
-      && Array.isArray(result.content) && result.content.length === 0) delete result.content
+    const sourceId =
+      record.attrs && typeof record.attrs === 'object'
+        ? (record.attrs as Record<string, unknown>).sourceId
+        : undefined
+    if (
+      topLevel &&
+      result.type === 'paragraph' &&
+      sourceId != null &&
+      Array.isArray(result.content) &&
+      result.content.length === 0
+    )
+      delete result.content
     return result
   }
   return JSON.stringify(value.map((node) => withoutSourceIds(node, true)))
@@ -86,9 +93,12 @@ function inlineFragments(scan: SourceScan, unitIndex: number): Sentinel[] | null
   for (let rangeIndex = 0; rangeIndex < protection.ranges.length; rangeIndex += 1) {
     const range = protection.ranges[rangeIndex]!
     if (
-      range.from < unit.range.from || range.to > unit.range.to ||
-      range.from >= range.to || range.from < previous
-    ) return null
+      range.from < unit.range.from ||
+      range.to > unit.range.to ||
+      range.from >= range.to ||
+      range.from < previous
+    )
+      return null
     previous = range.to
     const id = `${unit.id}-i${rangeIndex}`
     const raw = unit.raw.slice(range.from - unit.range.from, range.to - unit.range.from)
@@ -116,7 +126,11 @@ function replaceRanges(raw: string, unitFrom: number, sentinels: Sentinel[]): st
   return projected + raw.slice(offset)
 }
 
-function replaceSentinelText(node: JSONContent, sentinels: Sentinel[], seen: Map<string, number>): JSONContent[] {
+function replaceSentinelText(
+  node: JSONContent,
+  sentinels: Sentinel[],
+  seen: Map<string, number>,
+): JSONContent[] {
   if (node.type === 'text' && typeof node.text === 'string') {
     const parts: JSONContent[] = []
     let cursor = 0
@@ -145,7 +159,12 @@ function replaceSentinelText(node: JSONContent, sentinels: Sentinel[], seen: Map
     return parts
   }
   if (!node.content) return [node]
-  return [{ ...node, content: node.content.flatMap((child) => replaceSentinelText(child, sentinels, seen)) }]
+  return [
+    {
+      ...node,
+      content: node.content.flatMap((child) => replaceSentinelText(child, sentinels, seen)),
+    },
+  ]
 }
 
 function asEditableNodes(parsed: JSONContent, sourceId: string): JSONContent[] {
@@ -170,7 +189,12 @@ export function projectScan(scan: SourceScan, codec: MarkdownCodec): ProjectionR
   const fragments: ProjectedFragment[] = []
   const fingerprints = new Map<string, string>()
   if (scan.fallbackToSource) {
-    return { visual: { doc: { type: 'doc', content }, frontmatterInner: '' }, fragments, fingerprints, fallbackToSource: true }
+    return {
+      visual: { doc: { type: 'doc', content }, frontmatterInner: '' },
+      fragments,
+      fingerprints,
+      fallbackToSource: true,
+    }
   }
 
   for (let index = 0; index < scan.units.length; index += 1) {
@@ -208,8 +232,11 @@ export function projectScan(scan: SourceScan, codec: MarkdownCodec): ProjectionR
       parsed = { type: 'doc' }
     }
     const seen = new Map<string, number>()
-    const restored = documentContent(parsed).flatMap((node) => replaceSentinelText(node, sentinels, seen))
-    const aligned = restored.length > 0 && sentinels.every((sentinel) => seen.get(sentinel.id) === 1)
+    const restored = documentContent(parsed).flatMap((node) =>
+      replaceSentinelText(node, sentinels, seen),
+    )
+    const aligned =
+      restored.length > 0 && sentinels.every((sentinel) => seen.get(sentinel.id) === 1)
     if (!aligned) {
       const reason: ProtectedReason = 'parse-failure'
       fragments.push({ id: unit.id, raw: unit.raw, range: unit.range, display: 'block', reason })
@@ -236,10 +263,11 @@ export function serializeProjectedGroup(nodes: JSONContent[], codec: MarkdownCod
   const sentinels: Sentinel[] = []
   const onlyNode = nodes.length === 1 ? nodes[0] : undefined
   const onlyInline = onlyNode?.content?.length === 1 ? onlyNode.content[0] : undefined
-  const literalHeadingMarker = onlyNode?.type === 'paragraph'
-    && onlyInline?.type === 'text'
-    && !onlyInline.marks?.length
-    && /^#{1,6}$/.test(onlyInline.text ?? '')
+  const literalHeadingMarker =
+    onlyNode?.type === 'paragraph' &&
+    onlyInline?.type === 'text' &&
+    !onlyInline.marks?.length &&
+    /^#{1,6}$/.test(onlyInline.text ?? '')
   const rewrite = (node: JSONContent): JSONContent => {
     if (node.type === 'protectedSourceInline' || node.type === 'protectedSourceBlock') {
       const id = String(node.attrs?.id ?? '')

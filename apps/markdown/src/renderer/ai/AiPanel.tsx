@@ -702,7 +702,8 @@ export function AiPanel({
 
   const rollback = (snapshot: Snapshot): void => {
     if (busy) return
-    if (depsRef.current.restoreSnapshot(snapshot.doc)) setSnapshots((prev) => prev.filter((s) => s !== snapshot))
+    if (depsRef.current.restoreSnapshot(snapshot.doc))
+      setSnapshots((prev) => prev.filter((s) => s !== snapshot))
   }
 
   // Re-derive the display width on window resize (max is 60% of the window);

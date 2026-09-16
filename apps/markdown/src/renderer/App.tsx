@@ -122,6 +122,7 @@ export function applyProjectionProvenance(editor: Editor, visualDoc: JSONContent
   let transaction = editor.state.tr
   let changed = false
   editor.state.doc.descendants((node, pos) => {
+    if (isGeneratedTrailingParagraph(node.toJSON())) return
     const expected = projected[index++]
     if (!expected || expected.type !== node.type.name || node.isText) return
     const attrs = expected.attrs ?? {}
