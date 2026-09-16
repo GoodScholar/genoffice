@@ -201,6 +201,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             fonts-crosextra-carlito fonts-crosextra-caladea fonts-noto-cjk
 
+      # CSS layout tests use standalone Chromium in addition to Electron.
+      - name: Install Chromium for layout tests
+        run: npx playwright install --with-deps chromium
+
       # Electron needs a display server on Linux runners. DEBUG=pw:browser
       # forwards the Electron process stdout/stderr into the CI log so launch
       # failures are diagnosable.
