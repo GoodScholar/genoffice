@@ -1,9 +1,8 @@
 import { createElement } from 'react'
 import type { AnyExtension } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
-import { Markdown } from '@tiptap/markdown'
-import { TableKit } from '@tiptap/extension-table'
-import { TaskItem, TaskList } from '@tiptap/extension-list'
+import { Table, TableKit } from '@tiptap/extension-table'
+import { OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
 import { CodeBlock } from '@tiptap/extension-code-block'
 import { ReactNodeViewRenderer } from '@tiptap/react'
 import { Placeholder } from '@tiptap/extensions'
@@ -25,7 +24,9 @@ import {
 } from './protectedSource'
 import { ProtectedSourceView } from './ProtectedSourceView'
 import { buildMathExtensions } from './math'
+import { SelectiveEscapeMarkdown } from './markdownEscape'
 import { SlashCommand } from './slashCommand'
+import { boundOrderedList, boundTable, boundTaskList } from './boundedTokenizers'
 import type { SlashController, SlashItem } from './slashCommand'
 import { t } from '../i18n/locale'
 
@@ -53,6 +54,11 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
       underline: false,
       // The replacements below retain durable markers for session projection.
       trailingNode: false,
+      // re-added below with a linear-time markdown tokenizer
+      orderedList: false,
+    }),
+    OrderedList.extend({
+      markdownTokenizer: boundOrderedList(OrderedList.config.markdownTokenizer!),
     }),
     GeneratedTrailingNode,
     UserTrailingEmptyParagraph,
@@ -64,7 +70,7 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
     // 4-space nesting: the default 2 spaces is below the content column of
     // ordered items ("1. " = 3), so strict CommonMark parsers (GitHub) would
     // flatten sub-lists in the saved file. 4 is safe for every marker width.
-    Markdown.configure({ indentation: { style: 'space', size: 4 } }),
+    SelectiveEscapeMarkdown.configure({ indentation: { style: 'space', size: 4 } }),
     SourceProvenance,
     ProtectedSourceBlock.extend({
       addNodeView() {
@@ -93,8 +99,12 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
     ProtectedSourceGuard.configure(protectedSource),
     // column widths are not expressible in GFM tables — no resizable columns;
     // the wrapper div gives wide tables a horizontal scrollbar
-    TableKit.configure({ table: { resizable: false, renderWrapper: true } }),
-    TaskList,
+    TableKit.configure({ table: false }),
+    Table.extend({ markdownTokenizer: boundTable(Table.config.markdownTokenizer!) }).configure({
+      resizable: false,
+      renderWrapper: true,
+    }),
+    TaskList.extend({ markdownTokenizer: boundTaskList(TaskList.config.markdownTokenizer!) }),
     TaskItem.configure({ nested: true }),
     // KaTeX-rendered $...$ / $$...$$ formulas (issue #100)
     ...buildMathExtensions(),

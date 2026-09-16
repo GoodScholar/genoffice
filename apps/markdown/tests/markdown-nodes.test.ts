@@ -4,6 +4,7 @@ import { marked } from 'marked'
 import { buildExtensions } from '../src/renderer/editor/extensions'
 import { createTiptapMarkdownCodec, projectScan } from '../src/renderer/markdown/sourceProjection'
 import { scanMarkdownSource } from '../src/renderer/markdown/sourceScanner'
+import { escapeBrackets } from '../src/renderer/editor/markdownEscape'
 
 // Undestroyed views leave DOMObserver flush timers that fire after jsdom teardown
 // ("document is not defined" unhandled error). Editors here are shared per describe,
@@ -240,5 +241,49 @@ describe('legacy HTML content stays protected source', () => {
   it('a legacy fenced div stays a protected source block', () => {
     const source = ':::toggle {summary="More info"}\nHidden body.\n:::\n'
     expect(protectedRaw(source)).toEqual([source])
+  })
+})
+
+describe('bracket escaping on save', () => {
+  const editor = createEditor()
+
+  it.each([
+    ['wiki-style link', 'See [[Foo]] and [[Bar|alias]].'],
+    ['citation marker', 'As shown in [1] and [2, p. 4].'],
+    ['bracketed tag', '[TODO] finish the intro'],
+  ])('keeps %s verbatim', (_name, md) => {
+    const { out, stable } = roundTrip(editor, md)
+    expect(out).toBe(md)
+    expect(stable).toBe(true)
+  })
+
+  it('still escapes text that would parse as a link', () => {
+    const { out, stable } = roundTrip(editor, 'literal \\[a](b) here')
+    expect(out).toBe('literal \\[a\\](b) here')
+    expect(stable).toBe(true)
+  })
+
+  it('still escapes a task marker typed as text', () => {
+    const md = '- \\[ ] not a task'
+    const { out, stable } = roundTrip(editor, md)
+    expect(out).toContain('\\[ \\] not a task')
+    expect(stable).toBe(true)
+  })
+
+  it('still escapes a reference definition typed as text', () => {
+    const { out, stable } = roundTrip(editor, '\\[ref]: not a definition')
+    expect(out).toBe('\\[ref\\]: not a definition')
+    expect(stable).toBe(true)
+  })
+
+  it('escapes an indented reference definition too', () => {
+    expect(escapeBrackets('   [ref]: /url')).toBe('   \\[ref\\]: /url')
+    expect(escapeBrackets('  [x] not a task')).toBe('  \\[x\\] not a task')
+  })
+
+  it('keeps escaping the other inline delimiters', () => {
+    const { out, stable } = roundTrip(editor, 'a \\* b \\_ c \\~ d')
+    expect(out).toBe('a \\* b \\_ c \\~ d')
+    expect(stable).toBe(true)
   })
 })
