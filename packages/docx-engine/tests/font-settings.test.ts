@@ -27,11 +27,9 @@ it('saves document default fonts independently without changing paragraph defaul
   )
   const input = await zip.generateAsync({ type: 'uint8array' })
   const parsed = await parseDocx(input)
-  const saved = await saveDocx(
-    parsed,
-    [{ kind: 'original', docxIndex: 0 }],
-    { defaultFonts: { font: 'Times New Roman' } },
-  )
+  const saved = await saveDocx(parsed, [{ kind: 'original', docxIndex: 0 }], {
+    defaultFonts: { font: 'Times New Roman' },
+  })
   const reopened = await parseDocx(saved)
   expect(reopened.docDefaults).toMatchObject({
     asciiFont: 'Times New Roman',
