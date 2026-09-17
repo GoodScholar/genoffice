@@ -34,6 +34,12 @@ async function openSource(page: Page, text = source, visual = false): Promise<vo
         setDirty: () => {},
         save: async () => ({ ok: false, error: 'not used in renderer coverage' }),
         onSaveRequest: () => off,
+        onReadTextRequest: (handler) => {
+          window.addEventListener('test:read-source', handler)
+          return () => window.removeEventListener('test:read-source', handler)
+        },
+        sendReadTextResult: (result) =>
+          window.dispatchEvent(new CustomEvent('test:read-source-result', { detail: result })),
         sendSaveRequestAck: () => {},
         onCloseSaveRequest: () => off,
         sendCloseSaveResult: () => {},
@@ -175,4 +181,30 @@ test('real Enter and continued typing keep the caret in the split heading and li
   }
   await page.locator('.mode-toggle', { hasText: /^Source$/ }).click()
   await expect(page.locator('.source-editor .cm-content')).toContainText('Y')
+})
+
+test('MCP reads the same lossless source as saving, including source-mode edits', async ({
+  page,
+}) => {
+  const raw = '\uFEFF# Heading\r\n\r\nBefore <u>kept</u> after.\r\n'
+  await openSource(page, raw, true)
+  const read = () =>
+    page.evaluate(
+      () =>
+        new Promise<{ text?: string }>((resolve) => {
+          window.addEventListener(
+            'test:read-source-result',
+            (event) => resolve((event as CustomEvent).detail),
+            { once: true },
+          )
+          window.dispatchEvent(new Event('test:read-source'))
+        }),
+    )
+  expect(await read()).toEqual({ text: raw })
+  await page.locator('.mode-toggle', { hasText: /^Source$/ }).click()
+  await page.locator('.source-editor .cm-content').click()
+  await page.keyboard.press('ControlOrMeta+End')
+  await page.keyboard.type('unsaved source edit')
+  expect((await read()).text).toContain('unsaved source edit')
+  expect((await read()).text).toContain('<u>kept</u>')
 })

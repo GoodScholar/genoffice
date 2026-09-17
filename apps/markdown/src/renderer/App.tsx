@@ -953,10 +953,10 @@ export default function App() {
     // editor is still loading keeps the main process retrying its request
     // instead of failing on a document that is merely not ready yet.
     const offReadText = window.markdownApi.onReadTextRequest(() => {
-      const current = editorRef.current
-      if (!current || statusRef.current !== 'ready') return
+      const session = sessionRef.current
+      if (!session || statusRef.current !== 'ready') return
       try {
-        const text = serializeDocText(envelopeRef.current, current.getMarkdown())
+        const text = session.serialize()
         window.markdownApi.sendReadTextResult({ text })
       } catch (err) {
         window.markdownApi.sendReadTextResult({
