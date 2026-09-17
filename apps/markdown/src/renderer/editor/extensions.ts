@@ -1,7 +1,7 @@
 import type { AnyExtension } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { Table, TableKit } from '@tiptap/extension-table'
-import { OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
+import { OrderedList, TaskList } from '@tiptap/extension-list'
 import { Code } from '@tiptap/extension-code'
 import { CodeBlock } from '@tiptap/extension-code-block'
 import { ReactNodeViewRenderer } from '@tiptap/react'
@@ -17,6 +17,16 @@ import { SearchHighlight } from './searchHighlight'
 import { buildMathExtensions } from './math'
 import { SelectiveEscapeMarkdown } from './markdownEscape'
 import { SlashCommand } from './slashCommand'
+import {
+  renderFencedCode,
+  StyledBold,
+  StyledHardBreak,
+  StyledHeading,
+  StyledHorizontalRule,
+  StyledItalic,
+  StyledListItem,
+  StyledTaskItem,
+} from './markdownStyleRenderers'
 import { boundOrderedList, boundTable, boundTaskList } from './boundedTokenizers'
 import type { SlashController, SlashItem } from './slashCommand'
 import { t } from '../i18n/locale'
@@ -38,9 +48,22 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
       underline: false,
       // re-added below with a linear-time markdown tokenizer
       orderedList: false,
+      // re-added below with renderers that follow the document's own conventions
+      bold: false,
+      italic: false,
+      heading: false,
+      horizontalRule: false,
+      hardBreak: false,
+      listItem: false,
     }),
-    // Markdown permits code inside emphasis and links; retain those parsed marks.
+    StyledBold,
+    StyledItalic,
+    // Register after emphasis so its delimiters wrap code, not the other way around.
     Code.extend({ excludes: '' }),
+    StyledHeading,
+    StyledHorizontalRule,
+    StyledHardBreak,
+    StyledListItem,
     OrderedList.extend({
       markdownTokenizer: boundOrderedList(OrderedList.config.markdownTokenizer!),
     }),
@@ -48,6 +71,11 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
       addNodeView() {
         return ReactNodeViewRenderer(CodeBlockView)
       },
+      renderMarkdown: (node, h) =>
+        renderFencedCode(
+          String(node.attrs?.language ?? ''),
+          node.content ? h.renderChildren(node.content) : null,
+        ),
     }),
     // 4-space nesting: the default 2 spaces is below the content column of
     // ordered items ("1. " = 3), so strict CommonMark parsers (GitHub) would
@@ -61,7 +89,7 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
       renderWrapper: true,
     }),
     TaskList.extend({ markdownTokenizer: boundTaskList(TaskList.config.markdownTokenizer!) }),
-    TaskItem.configure({ nested: true }),
+    StyledTaskItem.configure({ nested: true }),
     // KaTeX-rendered $...$ / $$...$$ formulas (issue #100)
     ...buildMathExtensions(),
     LocalImage,
