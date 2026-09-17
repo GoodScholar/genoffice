@@ -1542,6 +1542,28 @@ button {
   overflow: visible;
 }
 
+.pdf-redaction-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 5;
+  overflow: visible;
+}
+
+.pdf-redaction-mark {
+  position: absolute;
+  box-sizing: border-box;
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(0, 0, 0, 0.72),
+    rgba(0, 0, 0, 0.72) 7px,
+    rgba(58, 58, 58, 0.78) 7px,
+    rgba(58, 58, 58, 0.78) 14px
+  );
+  border: 2px solid #d93333;
+  pointer-events: none;
+}
+
 /* With a tool active, take over the pointer and disable text selection so dragging doesn't select text */
 .pdf-draw-active {
   pointer-events: auto;
