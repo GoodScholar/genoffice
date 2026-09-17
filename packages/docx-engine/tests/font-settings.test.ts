@@ -29,7 +29,7 @@ it('saves document default fonts independently without changing paragraph defaul
   const parsed = await parseDocx(input)
   const saved = await saveDocx(
     parsed,
-    parsed.blocks.map((b) => ({ kind: 'original' as const, docxIndex: b.docxIndex })),
+    [{ kind: 'original', docxIndex: 0 }],
     { defaultFonts: { font: 'Times New Roman' } },
   )
   const reopened = await parseDocx(saved)
