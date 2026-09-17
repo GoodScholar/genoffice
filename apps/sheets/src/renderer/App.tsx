@@ -45,6 +45,7 @@ import {
   type UniverWorksheet,
 } from './univer-state'
 import { applyChangePlan, planFromOps, type OpExecutorContext } from './op-executor'
+import { installSheetsMcpBridge, type McpSheetHandlers } from './mcp-bridge'
 import { renameChartRefsForSheet } from './workbook-ops'
 import {
   proposeOperations as proposeOperationsImpl,
@@ -331,7 +332,7 @@ import {
 import { handleExportCsv as handleExportCsvImpl, type CsvExportContext } from './csv-export'
 import { effectivePageBreaks, installPageBreakPreview } from './page-break-preview'
 import { mapProtectedRanges } from './protected-ranges'
-import { handleSave as handleSaveImpl, type SaveContext } from './save-actions'
+import { handleSave as handleSaveImpl, type SaveContext, type SaveOutcome } from './save-actions'
 import {
   applyChartEdit as applyChartEditImpl,
   applyShapeEdit as applyShapeEditImpl,
@@ -386,6 +387,13 @@ import {
   setManualCalculation,
 } from './calc-options'
 import { solveGoalSeek } from './goal-seek'
+import {
+  awaitFormulaValues,
+  clearVerifiedFormulaValues,
+  formulaTargetsFromOps,
+  isErrorResult,
+  rememberFormulaValue,
+} from './formula-values'
 import { SlicerFieldPicker, SlicerPanels, type SlicerUiState } from './SlicerPanel'
 import { WatchWindowPanel, watchKey, type WatchCell, type WatchRowValue } from './WatchWindowPanel'
 import { TimelineFieldPicker, TimelinePanels, type TimelineUiState } from './TimelinePanel'
@@ -658,8 +666,14 @@ export function App(): React.JSX.Element {
   /// Fresh handleSave for the AutoSave tick (assigned each render, like
   /// menuActionRef, so the interval closure never goes stale).
   const handleSaveRef = useRef<
-    (mode: 'save' | 'save-as' | 'recovery', quiet?: boolean) => Promise<void>
-  >(() => Promise.resolve())
+    (
+      mode: 'save' | 'save-as' | 'recovery',
+      quiet?: boolean,
+      explicitTarget?: { path: string; overwrite: boolean },
+    ) => Promise<SaveOutcome>
+  >(() => Promise.resolve({ ok: false }))
+  /// Latest MCP bridge handlers (assigned each render; see the install below).
+  const mcpSheetHandlersRef = useRef<McpSheetHandlers | null>(null)
   const closeSaveRef = useRef<() => Promise<void>>(() => Promise.resolve())
   const refreshSelectionFormatRef = useRef<() => void>(() => {})
   const chartEditRef = useRef<(chartPath: string, edit: ChartEditData) => void>(() => {})
@@ -3670,6 +3684,8 @@ export function App(): React.JSX.Element {
     // in the engine and in the menu alike.
     resetCalculationMode(univerRef.current)
     setCalcManual(false)
+    // Values verified against the previous workbook mean nothing for this one.
+    clearVerifiedFormulaValues()
     const previous = lazyWorkbookRef.current
     if (previous) {
       clearLazyState(previous)
@@ -3953,8 +3969,12 @@ export function App(): React.JSX.Element {
     }
   }
 
-  async function handleSave(mode: 'save' | 'save-as' | 'recovery', quiet = false): Promise<void> {
-    return handleSaveImpl(saveContext(), mode, quiet)
+  async function handleSave(
+    mode: 'save' | 'save-as' | 'recovery',
+    quiet = false,
+    explicitTarget?: { path: string; overwrite: boolean },
+  ): Promise<SaveOutcome> {
+    return handleSaveImpl(saveContext(), mode, quiet, explicitTarget)
   }
   closeSaveRef.current = async () => {
     const state = lazyWorkbookRef.current
@@ -4006,6 +4026,77 @@ export function App(): React.JSX.Element {
     }
   }
   handleSaveRef.current = handleSave
+
+  // MCP visible-grid session (planning/mcp-server.md phase 2): the shell pushes
+  // read/apply/save commands; they run through the same executors the built-in
+  // AI uses. Handlers go through a ref so the bridge never sees stale closures.
+  mcpSheetHandlersRef.current = {
+    hasWorkbook: () =>
+      univerRef.current?.univerAPI.getActiveWorkbook() != null && lazyWorkbookRef.current != null,
+    context: () => getActiveSheetInfo(),
+    readCells: (addresses, sheetId) => readCellsImpl(readContext(), addresses, sheetId),
+    applyOps: async (ops, dryRun) => {
+      const runtime = univerRef.current
+      const state = lazyWorkbookRef.current
+      const workbook = runtime?.univerAPI.getActiveWorkbook()
+      if (!runtime || !state || !workbook) {
+        return { ok: false, reason: t('appNoWorkbookOpen') }
+      }
+      if (dryRun) {
+        try {
+          const plan = planFromOps(ops, workbook, 'mcp')
+          return {
+            ok: true,
+            dryRun: true,
+            structuralChanges: plan.structuralChanges.map((change) => change.label),
+            formatChanges: plan.formatChanges.map((change) => change.label),
+            cellChanges: plan.cellChanges
+              .slice(0, 100)
+              .map((change) => ({ address: change.address, after: change.after.value })),
+            cellChangeCount: plan.cellChanges.length,
+            sheetRenames: plan.sheetRenames.map((rename) => `${rename.before} -> ${rename.after}`),
+          }
+        } catch (error: unknown) {
+          return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+        }
+      }
+      const outcome = await runUiOps(ops)
+      if (!outcome.ok) return outcome
+      // A formula's text lands synchronously but its result is computed
+      // asynchronously, so an immediate read of the cells this batch targeted
+      // would show null and an agent could read that as a failed edit. Report
+      // the computed values with the result (see formula-values.ts).
+      const targets = formulaTargetsFromOps(ops)
+      if (targets.length === 0) return outcome
+      const values = await awaitFormulaValues(targets, (addresses, sheetId) =>
+        readCellsImpl(readContext(), [...addresses], sheetId),
+      )
+      // Remember them so the next save can write a real cached <v>. Verified
+      // here (read back after the engine settled) rather than guessed from the
+      // overlay, which skips the very cells a batch just wrote.
+      for (const cell of values) {
+        rememberFormulaValue(cell.sheetId, cell.address, {
+          formula: cell.formula ?? '',
+          value: cell.value as string | number | boolean | null,
+          ...(isErrorResult(cell.value) ? { isError: true } : {}),
+        })
+      }
+      return { ...outcome, formulaValues: values }
+    },
+    saveTo: async (path, overwrite) => handleSave('save-as', true, { path, overwrite }),
+  }
+  useEffect(() => {
+    const handlers = mcpSheetHandlersRef
+    return installSheetsMcpBridge({
+      hasWorkbook: () => handlers.current?.hasWorkbook() ?? false,
+      context: () => handlers.current?.context(),
+      readCells: (addresses, sheetId) => handlers.current?.readCells(addresses, sheetId) ?? {},
+      applyOps: async (ops, dryRun) =>
+        (await handlers.current?.applyOps(ops, dryRun)) ?? { ok: false, reason: 'not ready' },
+      saveTo: async (path, overwrite) =>
+        (await handlers.current?.saveTo(path, overwrite)) ?? { ok: false },
+    })
+  }, [])
   /// Re-renders the floating visuals after a journal mutation (edits and
   /// their undo/redo closures share it).
   function refreshLazyVisuals(state: LazyWorkbookState): void {

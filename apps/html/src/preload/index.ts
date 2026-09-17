@@ -32,6 +32,12 @@ const api: HtmlApi = {
   },
   sendCloseSaveResult: (ok) => ipcRenderer.send(HTML_CHANNELS.closeSaveResult, ok),
   sendSaveRequestAck: (ok) => ipcRenderer.send(HTML_CHANNELS.saveRequestAck, ok),
+  onReadTextRequest: (handler) => {
+    const listener = () => handler()
+    ipcRenderer.on(HTML_CHANNELS.readTextRequest, listener)
+    return () => ipcRenderer.removeListener(HTML_CHANNELS.readTextRequest, listener)
+  },
+  sendReadTextResult: (result) => ipcRenderer.send(HTML_CHANNELS.readTextResult, result),
   onFileRenamed: (handler) => {
     const listener = (_e: Electron.IpcRendererEvent, newPath: string) => handler(newPath)
     ipcRenderer.on(HTML_CHANNELS.fileRenamed, listener)
@@ -80,6 +86,7 @@ const api: HtmlApi = {
     return () => ipcRenderer.removeListener(HTML_CHANNELS.autoSaveDefaultChanged, listener)
   },
   getAiPanelPrefs: () => ipcRenderer.invoke(HTML_CHANNELS.getAiPanelPrefs),
+  setAiPanelPrefs: (patch) => ipcRenderer.invoke('app:set-ai-panel-prefs', patch),
   onAiPanelPrefsChanged: (handler) => {
     const listener = (_event: Electron.IpcRendererEvent, prefs: AiPanelPrefs) => handler(prefs)
     ipcRenderer.on(HTML_CHANNELS.aiPanelPrefsChanged, listener)
