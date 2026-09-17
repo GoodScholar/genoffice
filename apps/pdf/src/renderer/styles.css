@@ -1145,6 +1145,7 @@ button {
 }
 
 .pdf-outline-item {
+  flex-shrink: 0;
   display: block;
   width: 100%;
   border: none;
@@ -1166,6 +1167,7 @@ button {
 }
 
 .pdf-outline-note {
+  flex-shrink: 0;
   padding: 2px 8px 8px;
   font-size: 11px;
   color: var(--text-muted);
