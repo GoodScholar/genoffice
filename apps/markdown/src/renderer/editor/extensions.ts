@@ -2,6 +2,7 @@ import type { AnyExtension } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { Table, TableKit } from '@tiptap/extension-table'
 import { OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
+import { Code } from '@tiptap/extension-code'
 import { CodeBlock } from '@tiptap/extension-code-block'
 import { ReactNodeViewRenderer } from '@tiptap/react'
 import { Placeholder } from '@tiptap/extensions'
@@ -32,11 +33,14 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
       link: { openOnClick: false },
       // replaced by the NodeView-enhanced variant below (language picker + copy)
       codeBlock: false,
+      code: false,
       // underline would serialize as `++text++` — not part of GFM
       underline: false,
       // re-added below with a linear-time markdown tokenizer
       orderedList: false,
     }),
+    // Markdown permits code inside emphasis and links; retain those parsed marks.
+    Code.extend({ excludes: '' }),
     OrderedList.extend({
       markdownTokenizer: boundOrderedList(OrderedList.config.markdownTokenizer!),
     }),
