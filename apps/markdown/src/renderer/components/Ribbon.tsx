@@ -33,10 +33,8 @@ import {
   IconUndo,
 } from './icons'
 
-export interface RibbonProps {
+interface Props {
   editor: Editor | null
-  mode: 'visual' | 'source'
-  onModeChange(mode: 'visual' | 'source'): void
   disabled: boolean
   dirty: boolean
   onSave: () => void
@@ -163,8 +161,6 @@ function IconBtn({
 
 export function Ribbon({
   editor,
-  mode,
-  onModeChange,
   disabled,
   dirty,
   onSave,
@@ -186,7 +182,7 @@ export function Ribbon({
   aiOpen,
   onToggleAi,
   onAiPreset,
-}: RibbonProps) {
+}: Props) {
   const { t, lang } = useI18n()
   const collapse = useRibbonCollapse('mdapp.ribbonCollapsed')
   const [linkOpen, setLinkOpen] = useState(false)
@@ -230,7 +226,7 @@ export function Ribbon({
     inside: () => [linkAnchorRef.current],
   })
 
-  const off = disabled || mode === 'source' || !editor || !state
+  const off = disabled || !editor || !state
 
   const openLink = () => {
     if (!editor) return
@@ -274,7 +270,7 @@ export function Ribbon({
           className="qa-btn"
           data-tip={t('save')}
           aria-label={t('save')}
-          disabled={disabled || !dirty}
+          disabled={off || !dirty}
           onMouseDown={(e) => e.preventDefault()}
           onClick={onSave}
         >
@@ -333,22 +329,6 @@ export function Ribbon({
             onChange={(e) => onToggleAutoSave(e.target.checked)}
           />
         </label>
-        <button
-          type="button"
-          className={`mode-toggle${mode === 'visual' ? ' active' : ''}`}
-          disabled={disabled || mode === 'visual'}
-          onClick={() => onModeChange('visual')}
-        >
-          {t('visualMode')}
-        </button>
-        <button
-          type="button"
-          className={`mode-toggle${mode === 'source' ? ' active' : ''}`}
-          disabled={disabled || mode === 'source'}
-          onClick={() => onModeChange('source')}
-        >
-          {t('sourceMode')}
-        </button>
         <RibbonExpandButton state={collapse} label={t('ribbonExpand')} />
       </div>
 
@@ -535,7 +515,7 @@ export function Ribbon({
             <IconBtn
               title={t('fmProperties')}
               active={frontmatterOpen}
-              disabled={off}
+              disabled={disabled}
               onClick={onToggleFrontmatter}
             >
               <IconProperties size={ICON} />
@@ -543,7 +523,7 @@ export function Ribbon({
             <IconBtn
               title={t('outline')}
               active={outlineOpen}
-              disabled={off || (!hasOutline && !outlineOpen)}
+              disabled={disabled || (!hasOutline && !outlineOpen)}
               onClick={onToggleOutline}
             >
               <IconOutlineView size={ICON} />

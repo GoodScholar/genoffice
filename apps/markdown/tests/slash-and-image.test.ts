@@ -243,45 +243,7 @@ describe('buildPrintHtml', () => {
   })
 })
 
-describe('BlockDragHandle', () => {
-  it('positions the gutter in the page padding instead of over the first text column', async () => {
-    const { Editor } = await import('@tiptap/core')
-    const { buildExtensions } = await import('../src/renderer/editor/extensions')
-    const wrapper = document.createElement('div')
-    const element = document.createElement('div')
-    wrapper.appendChild(element)
-    document.body.appendChild(wrapper)
-    const editor = new Editor({
-      element,
-      extensions: buildExtensions({
-        slashController: { onOpen() {}, onUpdate() {}, onKeyDown: () => false, onClose() {} },
-        slashItems: () => [],
-      }),
-      content: 'block',
-    })
-    editors.push(editor)
-
-    const container = editor.view.dom.parentElement!
-    const block = editor.view.nodeDOM(0) as HTMLElement
-    const handle = wrapper.querySelector<HTMLElement>('.md-block-gutter')!
-    Object.defineProperty(container, 'offsetWidth', { configurable: true, value: 640 })
-    vi.spyOn(container, 'getBoundingClientRect').mockReturnValue(
-      DOMRect.fromRect({ x: 100, y: 40, width: 640, height: 400 }),
-    )
-    vi.spyOn(block, 'getBoundingClientRect').mockReturnValue(
-      DOMRect.fromRect({ x: 100, y: 60, width: 640, height: 28 }),
-    )
-    vi.spyOn(editor.view, 'posAtCoords').mockReturnValue({ pos: 1, inside: 0 })
-
-    editor.view.dom.dispatchEvent(
-      new MouseEvent('mousemove', { bubbles: true, clientX: 110, clientY: 70 }),
-    )
-
-    expect(handle.style.display).toBe('flex')
-    expect(handle.style.left).toBe('-52px')
-    wrapper.remove()
-  })
-
+describe('BlockDragHandle teardown', () => {
   it('removes every long-lived listener and restores the container style', async () => {
     const { Editor } = await import('@tiptap/core')
     const { buildExtensions } = await import('../src/renderer/editor/extensions')

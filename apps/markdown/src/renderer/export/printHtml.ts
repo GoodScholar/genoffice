@@ -25,7 +25,6 @@ ul, ol { padding-left: 1.6em; margin: 0.6em 0; }
 li > p { margin: 0.15em 0; }
 blockquote { margin: 0.8em 0; padding: 0.1em 1em; border-left: 3px solid #d0d5db; color: #57606a; }
 code { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 0.875em; background: rgba(129,139,152,0.14); border-radius: 4px; padding: 0.15em 0.35em; }
-code.md-protected-source-inline { white-space: pre-wrap; }
 pre { background: #f6f8fa; border: 1px solid #e4e7eb; border-radius: 8px; padding: 12px 16px; margin: 0.8em 0; white-space: pre-wrap; break-inside: avoid; }
 pre code { background: none; padding: 0; font-size: 0.85em; line-height: 1.6; }
 hr { border: none; border-top: 2px solid #e4e7eb; margin: 1.6em 0; }
@@ -65,32 +64,6 @@ export function buildPrintHtml(editorRoot: HTMLElement, title: string): string {
   for (const bar of clone.querySelectorAll('.md-codeblock-bar, .md-mermaid-error')) bar.remove()
   // a rendered mermaid block prints as its diagram; an unrendered one keeps its source
   for (const block of clone.querySelectorAll('[data-mermaid="rendered"] pre')) block.remove()
-
-  // Protected nodes are source text, never live HTML. Recreate their existing
-  // NodeView code text so editor controls and any injected descendants cannot
-  // become part of the printable DOM.
-  for (const chrome of clone.querySelectorAll(
-    '.protected-source-actions, .protected-source-reason',
-  ))
-    chrome.remove()
-  for (const source of clone.querySelectorAll('.protected-source')) {
-    const code = source.querySelector('code')
-    if (!code) {
-      source.remove()
-      continue
-    }
-    const safeCode = document.createElement('code')
-    safeCode.textContent = code.textContent ?? ''
-    if (source.classList.contains('protected-source-inline'))
-      safeCode.classList.add('md-protected-source-inline')
-    if (code.parentElement?.tagName === 'PRE') {
-      const pre = document.createElement('pre')
-      pre.append(safeCode)
-      source.replaceWith(pre)
-    } else {
-      source.replaceWith(safeCode)
-    }
-  }
 
   const escapedTitle = title.replace(/&/g, '&amp;').replace(/</g, '&lt;')
   // <base> lets the inlined KaTeX CSS resolve its relative font URLs from the

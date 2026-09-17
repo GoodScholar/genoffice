@@ -3,6 +3,7 @@ import type { Node as PmNode } from '@tiptap/pm/model'
 import { NodeSelection, TextSelection, type Transaction } from '@tiptap/pm/state'
 import type { Mapping } from '@tiptap/pm/transform'
 import { createTable } from '@tiptap/extension-table'
+import { stripLegacyFencedDivs } from '../markdown/docText'
 import type { StringKey } from '../i18n/locale'
 
 /**
@@ -97,73 +98,6 @@ export interface RunOpsResult {
   applied: number
   /** the top-level block list changed shape — indexes the model holds are stale */
   blocksChanged: boolean
-}
-
-function protectedIdsInNode(node: PmNode): string[] {
-  const ids: string[] = []
-  node.descendants((child) => {
-    if (
-      (child.type.name === 'protectedSourceBlock' || child.type.name === 'protectedSourceInline') &&
-      typeof child.attrs.id === 'string'
-    ) {
-      ids.push(child.attrs.id)
-    }
-  })
-  if (
-    (node.type.name === 'protectedSourceBlock' || node.type.name === 'protectedSourceInline') &&
-    typeof node.attrs.id === 'string'
-  )
-    ids.push(node.attrs.id)
-  return ids
-}
-
-/**
- * Resolve protected fragments affected by an op batch without dispatching.
- * Resolve the addressed range rather than blocking unrelated editable blocks.
- * Unknown scopes fail closed before any earlier op mutates state.
- */
-export function protectedIdsForOps(editor: Editor, ops: MdOp[]): string[] {
-  const byBlock = Array.from({ length: editor.state.doc.childCount }, (_, index) =>
-    protectedIdsInNode(editor.state.doc.child(index)),
-  )
-  const all = [...new Set(byBlock.flat())]
-  if (all.length === 0) return []
-  const selected = blockIndexRange(
-    editor.state.doc,
-    editor.state.selection.from,
-    editor.state.selection.to,
-  )
-  const idsForTarget = (target: BlockTarget): string[] => {
-    const start = target === 'selection' ? selected.startIndex : target.start
-    const end = target === 'selection' ? selected.endIndex : (target.end ?? target.start)
-    if (
-      !Number.isInteger(start) ||
-      !Number.isInteger(end) ||
-      start < 0 ||
-      end >= byBlock.length ||
-      start > end
-    )
-      return all
-    return [...new Set(byBlock.slice(start, end + 1).flat())]
-  }
-  let earlierOpMayChangeDocOrSelection = false
-  for (const op of ops) {
-    const hasDynamicTarget =
-      ('target' in op && op.target === 'selection') || ('after' in op && op.after === 'selection')
-    // Targets based on the live selection cannot be proven stable after any
-    // earlier structural/editor op in the same batch.  Reject before runOps
-    // rather than resolving them against a partially-mutated document.
-    if (hasDynamicTarget && earlierOpMayChangeDocOrSelection) return all
-    if (op.op === 'moveBlocks') return all
-    if ('target' in op) {
-      const ids = idsForTarget(op.target)
-      if (ids.length) return ids
-    }
-    if ('after' in op && op.after === 'selection' && selected.startIndex !== selected.endIndex)
-      return all
-    if (op.op !== 'setFrontmatter') earlierOpMayChangeDocOrSelection = true
-  }
-  return []
 }
 
 type FieldType =
@@ -485,10 +419,12 @@ export function selectionBlockRange(editor: Editor): Range {
 }
 
 export function parseMarkdownToNodes(editor: Editor, markdown: string): PmNode[] {
+  // model output guard: `:::` fenced divs are not GFM and would land as
+  // literal text — strip the fences and keep the body (same as file open).
   // Raw HTML needs no guard: parse runs it through the schema, so semantic
   // tags degrade to their GFM equivalents (<b>→bold, <img>→image) and
   // anything the schema cannot represent loses its styling, keeping text.
-  const json = editor.markdown?.parse(markdown)
+  const json = editor.markdown?.parse(stripLegacyFencedDivs(markdown))
   const content = json?.content ?? []
   return content.map((c) => editor.schema.nodeFromJSON(c))
 }

@@ -1,9 +1,46 @@
 import { describe, expect, it } from 'vitest'
 import {
-  parseRawDocEnvelope,
   parseDocText,
   serializeDocText,
+  stripLegacyFencedDivs,
 } from '../src/renderer/markdown/docText'
+
+describe('stripLegacyFencedDivs', () => {
+  it('removes callout fences and keeps the body', () => {
+    const out = stripLegacyFencedDivs(':::callout {type="warning"}\nBe careful.\n:::')
+    expect(out).toBe('Be careful.')
+  })
+
+  it('turns a toggle summary into a bold paragraph', () => {
+    const out = stripLegacyFencedDivs(':::toggle {summary="More info"}\nHidden body.\n:::')
+    expect(out).toBe('**More info**\n\nHidden body.')
+  })
+
+  it('handles a toggle summary containing a closing brace', () => {
+    const out = stripLegacyFencedDivs(':::toggle {summary="a } b"}\nBody.\n:::')
+    expect(out).toBe('**a } b**\n\nBody.')
+  })
+
+  it('handles nested legacy divs', () => {
+    const out = stripLegacyFencedDivs(':::callout\n:::toggle {summary="S"}\nbody\n:::\n:::')
+    expect(out).toBe('**S**\n\nbody')
+  })
+
+  it('leaves ::: lines inside fenced code blocks alone', () => {
+    const md = '```\n:::callout\n:::\n```'
+    expect(stripLegacyFencedDivs(md)).toBe(md)
+  })
+
+  it('leaves unrelated ::: text alone', () => {
+    const md = 'a line with ::: in the middle\n:::\nplain'
+    expect(stripLegacyFencedDivs(md)).toBe(md)
+  })
+
+  it('passes plain documents through unchanged', () => {
+    const md = '# Title\n\nHello **world**\n\n- item'
+    expect(stripLegacyFencedDivs(md)).toBe(md)
+  })
+})
 
 describe('parseDocText', () => {
   it('plain document without frontmatter', () => {
@@ -63,32 +100,6 @@ describe('parseDocText', () => {
     expect(doc.bom).toBe(true)
     expect(doc.frontmatter).toBe('---\ntitle: x\n---\n\n')
     expect(doc.body).toBe('Body\n')
-  })
-})
-
-describe('parseRawDocEnvelope', () => {
-  it('keeps BOM and CRLF while reporting bodyOffset in the original source', () => {
-    const raw = '\uFEFF---\r\ntitle: x\r\n---\r\n\r\nBody\r\n'
-    const envelope = parseRawDocEnvelope(raw)
-
-    expect(envelope).toEqual({
-      bomRaw: '\uFEFF',
-      frontmatterRaw: '---\r\ntitle: x\r\n---\r\n\r\n',
-      bodyRaw: 'Body\r\n',
-      bodyOffset: 23,
-      eol: '\r\n',
-      trailingNewline: true,
-    })
-  })
-
-  it('keeps blank lines after frontmatter in frontmatterRaw without normalizing the body', () => {
-    const raw = '---\na: 1\n---\n\n\n# Heading'
-    const envelope = parseRawDocEnvelope(raw)
-
-    expect(envelope.frontmatterRaw).toBe('---\na: 1\n---\n\n\n')
-    expect(envelope.bodyRaw).toBe('# Heading')
-    expect(envelope.bodyOffset).toBe(envelope.frontmatterRaw.length)
-    expect(envelope.trailingNewline).toBe(false)
   })
 })
 

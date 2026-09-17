@@ -1,9 +1,7 @@
-import { createElement } from 'react'
 import type { AnyExtension } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { Table, TableKit } from '@tiptap/extension-table'
 import { OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
-import { Code } from '@tiptap/extension-code'
 import { CodeBlock } from '@tiptap/extension-code-block'
 import { ReactNodeViewRenderer } from '@tiptap/react'
 import { Placeholder } from '@tiptap/extensions'
@@ -15,17 +13,8 @@ import { AiHighlight } from './aiHighlight'
 import { AiQueueAnchors } from './aiQueueAnchors'
 import { InactiveSelection } from './inactiveSelection'
 import { SearchHighlight } from './searchHighlight'
-import { GeneratedTrailingNode, UserTrailingEmptyParagraph } from './generatedTrailingNode'
-import {
-  ProtectedSourceBlock,
-  ProtectedSourceGuard,
-  ProtectedSourceInline,
-  SourceProvenance,
-  type ProtectedSourceOptions,
-} from './protectedSource'
-import { ProtectedSourceView } from './ProtectedSourceView'
 import { buildMathExtensions } from './math'
-import { SelectiveEscapeMarkdown, MarkdownWhitespace } from './markdownEscape'
+import { SelectiveEscapeMarkdown } from './markdownEscape'
 import { SlashCommand } from './slashCommand'
 import { boundOrderedList, boundTable, boundTaskList } from './boundedTokenizers'
 import type { SlashController, SlashItem } from './slashCommand'
@@ -34,38 +23,23 @@ import { t } from '../i18n/locale'
 export interface BuildExtensionsOptions {
   slashController: SlashController
   slashItems: () => SlashItem[]
-  protectedSource?: ProtectedSourceOptions
 }
 
 export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[] {
-  const protectedSource: ProtectedSourceOptions = {
-    onEditSource() {},
-    onConvert() {},
-    onConfirmChange() {},
-    conversionAvailable: false,
-    ...options.protectedSource,
-  }
   return [
     StarterKit.configure({
       // LocalImage replaces the plain image; links open externally via main-process guard
       link: { openOnClick: false },
       // replaced by the NodeView-enhanced variant below (language picker + copy)
       codeBlock: false,
-      code: false,
       // underline would serialize as `++text++` — not part of GFM
       underline: false,
-      // The replacements below retain durable markers for session projection.
-      trailingNode: false,
       // re-added below with a linear-time markdown tokenizer
       orderedList: false,
     }),
     OrderedList.extend({
       markdownTokenizer: boundOrderedList(OrderedList.config.markdownTokenizer!),
     }),
-    // GFM permits emphasis and links around inline code (for example **`name`**).
-    Code.extend({ excludes: '' }),
-    GeneratedTrailingNode,
-    UserTrailingEmptyParagraph,
     CodeBlock.extend({
       addNodeView() {
         return ReactNodeViewRenderer(CodeBlockView)
@@ -75,33 +49,6 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
     // ordered items ("1. " = 3), so strict CommonMark parsers (GitHub) would
     // flatten sub-lists in the saved file. 4 is safe for every marker width.
     SelectiveEscapeMarkdown.configure({ indentation: { style: 'space', size: 4 } }),
-    MarkdownWhitespace,
-    SourceProvenance,
-    ProtectedSourceBlock.extend({
-      addNodeView() {
-        return ReactNodeViewRenderer((props) =>
-          createElement(ProtectedSourceView, {
-            ...props,
-            onEditSource: protectedSource.onEditSource,
-            onConvert: protectedSource.onConvert,
-            conversionAvailable: protectedSource.conversionAvailable === true,
-          }),
-        )
-      },
-    }),
-    ProtectedSourceInline.extend({
-      addNodeView() {
-        return ReactNodeViewRenderer((props) =>
-          createElement(ProtectedSourceView, {
-            ...props,
-            onEditSource: protectedSource.onEditSource,
-            onConvert: protectedSource.onConvert,
-            conversionAvailable: protectedSource.conversionAvailable === true,
-          }),
-        )
-      },
-    }),
-    ProtectedSourceGuard.configure(protectedSource),
     // column widths are not expressible in GFM tables — no resizable columns;
     // the wrapper div gives wide tables a horizontal scrollbar
     TableKit.configure({ table: false }),

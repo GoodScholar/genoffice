@@ -7,12 +7,9 @@ import { moveSelectedBlocks, uiOp } from './ops'
  */
 export const BlockKeymap = Extension.create({
   name: 'blockKeymap',
-  priority: 110,
 
   addKeyboardShortcuts() {
     return {
-      // GFM table cells support line breaks, not multiple paragraph blocks.
-      Enter: () => this.editor.isActive('table') && this.editor.commands.setHardBreak(),
       'Mod-d': () => uiOp(this.editor, { op: 'duplicateBlocks', target: 'selection' }),
       'Mod-D': () => uiOp(this.editor, { op: 'duplicateBlocks', target: 'selection' }),
       'Mod-Shift-Backspace': () => uiOp(this.editor, { op: 'deleteBlocks', target: 'selection' }),

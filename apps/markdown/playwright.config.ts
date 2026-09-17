@@ -3,8 +3,8 @@ import { defineConfig } from '@playwright/test'
 /** Browser-only renderer coverage: it must not boot the Electron shell. */
 export default defineConfig({
   testDir: './tests/browser',
-  testMatch: 'source-polish.spec.ts',
-  outputDir: '../../test-results/markdown-source-polish',
+  testMatch: 'roundtrip-serializer.spec.ts',
+  outputDir: '../../test-results/markdown-roundtrip',
   timeout: 30_000,
   workers: 1,
   webServer: {

@@ -27,22 +27,6 @@ function parseWith(extensions: Editor['options']['extensions'], md: string): unk
   return editor.getJSON()
 }
 
-function withoutSourceProvenance(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(withoutSourceProvenance)
-  if (value === null || typeof value !== 'object') return value
-
-  const normalized: Record<string, unknown> = {}
-  for (const [key, entry] of Object.entries(value)) {
-    if (key === 'sourceId') continue
-    const next = withoutSourceProvenance(entry)
-    if (key === 'attrs' && next && typeof next === 'object' && Object.keys(next).length === 0) {
-      continue
-    }
-    normalized[key] = next
-  }
-  return normalized
-}
-
 /** the stock tokenizers, for equivalence checks */
 const stock = [
   StarterKit.configure({ underline: false }),
@@ -110,9 +94,7 @@ const CASES: Record<string, string> = {
 describe('bounded markdown tokenizers', () => {
   for (const [name, md] of Object.entries(CASES)) {
     it(`parses like the stock tokenizers: ${name}`, () => {
-      expect(withoutSourceProvenance(parseWith(bounded, md))).toEqual(
-        withoutSourceProvenance(parseWith(stock, md)),
-      )
+      expect(parseWith(bounded, md)).toEqual(parseWith(stock, md))
     })
   }
 

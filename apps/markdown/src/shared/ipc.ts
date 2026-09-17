@@ -69,10 +69,10 @@ export type SaveMarkdownResult =
   | {
       ok: true
       path: string
-      /** Exact text passed to the atomic writer, including any Save As asset rewrites. */
-      text: string
       /** Save As may relocate local images into the new document's assets directory. */
       imageRewrites?: Array<{ from: string; to: string }>
+      /** Actual persisted source after Save As image rewrites. */
+      writtenText?: string
     }
   | { ok: true; canceled: true }
   | { ok: false; error: string }

@@ -37,7 +37,6 @@ import {
   type EditQueueItem,
 } from './edit-queue'
 import { DOC_NAV_SCHEME, navigateToBlock, parseDocNavHref } from './doc-nav'
-import type { SourceProtectionAccess } from '../markdown/sourcePatch'
 
 // Word-parity count (docs word-count.ts): Asian chars one by one + non-Asian words
 const ASIAN_RE =
@@ -96,12 +95,13 @@ interface ChatEntry {
 /** longest selection excerpt echoed on a user bubble */
 const SCOPE_TEXT_MAX = 200
 
-/** A full source snapshot bound to the session that produced it. */
+/** structured, not the serialized file text: a body starting with `---` must
+ *  never be re-parsed as a frontmatter block on rollback */
 export interface DocSnapshot {
-  /** complete session source, including frontmatter and protected raw fragments */
-  source: string
-  /** opaque session identity; a snapshot must not cross an open/reload boundary */
-  owner: unknown
+  /** document body as markdown */
+  body: string
+  /** raw frontmatter block (fences included), kept byte-for-byte */
+  frontmatter: string
 }
 
 interface Snapshot {
@@ -122,13 +122,12 @@ export interface MarkdownAiDeps {
   getFrontmatter(): string
   /** replace the properties block; empty string removes it */
   setFrontmatter(inner: string): void
-  /** complete source-backed snapshot, for pre-mutation rollback */
+  /** document body + frontmatter, for pre-mutation snapshots */
   getSnapshot(): DocSnapshot
-  /** rollback succeeds only when the current source session accepts this snapshot */
-  restoreSnapshot(snapshot: DocSnapshot): boolean
+  /** rollback: replace the document (body and frontmatter) with a snapshot */
+  restoreSnapshot(snapshot: DocSnapshot): void
   /** fired when a run with at least one mutation finishes (auto-save hook) */
   onRunDone(mutated: boolean): void
-  sourceProtection?(): SourceProtectionAccess | undefined
 }
 
 export function AiPanel({
@@ -371,7 +370,6 @@ export function AiPanel({
           () => ({
             write: (spec, onProgress, signal) => runDocWriterRef.current(spec, onProgress, signal),
           }),
-          () => depsRef.current.sourceProtection?.(),
         ),
         createSearchSkill(),
       ]),
@@ -703,8 +701,8 @@ export function AiPanel({
 
   const rollback = (snapshot: Snapshot): void => {
     if (busy) return
-    if (depsRef.current.restoreSnapshot(snapshot.doc))
-      setSnapshots((prev) => prev.filter((s) => s !== snapshot))
+    depsRef.current.restoreSnapshot(snapshot.doc)
+    setSnapshots((prev) => prev.filter((s) => s !== snapshot))
   }
 
   // Re-derive the display width on window resize (max is 60% of the window);

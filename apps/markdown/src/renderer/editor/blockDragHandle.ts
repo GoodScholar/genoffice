@@ -116,7 +116,7 @@ function dragHandlePlugin(editor: Editor): Plugin {
         hoverPos = pos
         handle.style.display = 'flex'
         handle.style.top = `${(blockRect.top - containerRect.top) / scale + container.scrollTop + 2}px`
-        handle.style.left = `${(blockRect.left - containerRect.left) / scale - 52}px`
+        handle.style.left = `${Math.max(0, (blockRect.left - containerRect.left) / scale - 52)}px`
       }
 
       // hoverPos was computed on a past mousemove — validate before selecting

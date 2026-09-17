@@ -1,9 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
-import { marked } from 'marked'
 import { buildExtensions } from '../src/renderer/editor/extensions'
-import { createTiptapMarkdownCodec, projectScan } from '../src/renderer/markdown/sourceProjection'
-import { scanMarkdownSource } from '../src/renderer/markdown/sourceScanner'
 import { escapeBrackets } from '../src/renderer/editor/markdownEscape'
 
 // Undestroyed views leave DOMObserver flush timers that fire after jsdom teardown
@@ -190,57 +187,41 @@ describe('only pure markdown syntax is ever produced', () => {
   })
 })
 
-describe('legacy HTML content stays protected source', () => {
+describe('legacy HTML content degrades to plain markdown, keeping the text', () => {
   const editor = createEditor()
 
-  function protectedRaw(md: string): string[] {
-    const scan = scanMarkdownSource(md, (source) => marked.lexer(source))
-    const doc = projectScan(scan, createTiptapMarkdownCodec(editor)).visual.doc
-    const raws: string[] = []
-    const visit = (node: Record<string, unknown>) => {
-      if (node.type === 'protectedSourceBlock' || node.type === 'protectedSourceInline') {
-        raws.push(String((node.attrs as { raw?: string } | undefined)?.raw))
-      }
-      for (const child of (node.content as Record<string, unknown>[] | undefined) ?? [])
-        visit(child)
-    }
-    visit(doc)
-    return raws
+  function parseAndSerialize(md: string): string {
+    const manager = editor.markdown!
+    return manager.serialize(manager.parse(md))
   }
 
-  it('a styled span stays raw', () => {
-    expect(protectedRaw('a <span style="color: #ff0000">red text</span> b').join('')).toContain(
-      '<span style="color: #ff0000">red text</span>',
+  it('a styled span drops the styling but keeps the text', () => {
+    const out = parseAndSerialize('a <span style="color: #ff0000">red text</span> b')
+    expect(out).not.toContain('<span')
+    expect(out).toContain('red text')
+  })
+
+  it('an aligned paragraph becomes a plain paragraph with marks intact', () => {
+    const out = parseAndSerialize(
+      '<p style="text-align: center">centered <strong>text</strong></p>',
     )
+    expect(out).not.toContain('<p')
+    expect(out).toContain('centered **text**')
   })
 
-  it('an aligned paragraph stays raw', () => {
-    expect(
-      protectedRaw('<p style="text-align: center">centered <strong>text</strong></p>').join(''),
-    ).toContain('<p style="text-align: center">')
+  it('an aligned heading becomes a plain heading', () => {
+    const out = parseAndSerialize('<h2 style="text-align: right">title</h2>')
+    expect(out).toBe('## title')
   })
 
-  it('an aligned heading stays raw', () => {
-    expect(protectedRaw('<h2 style="text-align: right">title</h2>').join('')).toContain(
-      '<h2 style="text-align: right">',
-    )
+  it('a resized image goes back to pure image syntax', () => {
+    const out = parseAndSerialize('<img src="assets/d.png" alt="d" width="300" align="center">')
+    expect(out).toBe('![d](assets/d.png)')
   })
 
-  it('a resized image stays raw', () => {
-    expect(
-      protectedRaw('<img src="assets/d.png" alt="d" width="300" align="center">').join(''),
-    ).toContain('<img src="assets/d.png" alt="d" width="300"')
-  })
-
-  it('u and mark tags stay raw', () => {
-    const raw = protectedRaw('a <u>underlined</u> and <mark>marked</mark> b').join('')
-    expect(raw).toContain('<u>underlined</u>')
-    expect(raw).toContain('<mark>marked</mark>')
-  })
-
-  it('a legacy fenced div stays a protected source block', () => {
-    const source = ':::toggle {summary="More info"}\nHidden body.\n:::\n'
-    expect(protectedRaw(source)).toEqual([source])
+  it('u and mark tags drop the tag but keep the text', () => {
+    const out = parseAndSerialize('a <u>underlined</u> and <mark>marked</mark> b')
+    expect(out).toBe('a underlined and marked b')
   })
 })
 

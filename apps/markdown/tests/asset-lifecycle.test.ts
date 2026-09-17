@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   discardPendingOwnedAssets,
   extractMarkdownImageSources,
@@ -13,69 +13,6 @@ import {
   rollbackPreparedSaveAsAssets,
   writeImageIntoOwnedAssets,
 } from '../src/main/asset-lifecycle'
-import { MARKDOWN_CHANNELS } from '../src/shared/ipc'
-
-type SaveHandler = (event: { sender: FakeWebContents }, request: unknown) => Promise<unknown>
-
-interface FakeWebContents {
-  id: number
-  isDestroyed: ReturnType<typeof vi.fn>
-  loadURL: ReturnType<typeof vi.fn>
-  once: ReturnType<typeof vi.fn>
-  send: ReturnType<typeof vi.fn>
-  setWindowOpenHandler: ReturnType<typeof vi.fn>
-}
-
-const ipcHandlers = new Map<string, SaveHandler>()
-const saveDialog = vi.fn()
-let nextWebContentsId = 10_000
-
-vi.mock('electron', () => ({
-  app: { getPath: vi.fn(() => tmpdir()), on: vi.fn(), quit: vi.fn(), whenReady: vi.fn() },
-  BrowserWindow: class {
-    static fromWebContents() {
-      return null
-    }
-    static getFocusedWindow() {
-      return null
-    }
-  },
-  dialog: { showMessageBox: vi.fn() },
-  ipcMain: {
-    handle: vi.fn((channel: string, handler: SaveHandler) => ipcHandlers.set(channel, handler)),
-    on: vi.fn(),
-    removeHandler: vi.fn(),
-  },
-  net: { fetch: vi.fn() },
-  protocol: { handle: vi.fn() },
-  shell: { openExternal: vi.fn(), showItemInFolder: vi.fn() },
-  WebContentsView: class {
-    webContents: FakeWebContents = {
-      id: nextWebContentsId++,
-      isDestroyed: vi.fn(() => false),
-      loadURL: vi.fn(),
-      once: vi.fn(),
-      send: vi.fn(),
-      setWindowOpenHandler: vi.fn(),
-    }
-  },
-}))
-
-vi.mock('@genoffice/electron-utils', () => ({
-  configuredDefaultSaveDir: vi.fn(() => tmpdir()),
-  contextMenuLabels: vi.fn(() => ({})),
-  installContextMenu: vi.fn(),
-  installNavigationGuard: vi.fn(),
-  installRendererProtocol: vi.fn(),
-  isHeadlessMode: vi.fn(() => false),
-  registerRendererScheme: vi.fn(),
-  rendererUrl: vi.fn(() => 'genoffice-app://markdown/index.html'),
-  safeExternalUrl: vi.fn(() => null),
-  showOpenDialogWithMemory: vi.fn(),
-  showSaveDialogWithMemory: (...args: unknown[]) => saveDialog(...args),
-}))
-
-import { createMarkdownView } from '../src/main/markdown-main'
 
 const tempDirectories: string[] = []
 
@@ -549,45 +486,5 @@ describe('serialized Markdown image references', () => {
     expect(rewritten).toContain('    <img src="assets/indented.png">')
     expect(rewritten).toContain('<img src="assets/rendered-new.png">')
     expect(rewritten).toContain('![rendered](assets/rendered-markdown-new.png)')
-  })
-})
-
-describe('main-process save result text', () => {
-  it('returns the exact request text written by an ordinary save', async () => {
-    const directory = await temporaryDirectory('markdown-save-result-')
-    const path = join(directory, 'note.md')
-    await writeFile(path, '# Existing')
-    const view = createMarkdownView(path)
-    const text = '# Exact\n\nText\n'
-
-    const result = await ipcHandlers.get(MARKDOWN_CHANNELS.save)!(
-      { sender: view.webContents as unknown as FakeWebContents },
-      { text, imageSources: [], mode: 'save' },
-    )
-
-    expect(result).toMatchObject({ ok: true, path, text })
-  })
-
-  it('returns Save As text after asset relocation rewrites it', async () => {
-    const sourceDirectory = await temporaryDirectory('markdown-save-result-source-')
-    const targetDirectory = await temporaryDirectory('markdown-save-result-target-')
-    const sourcePath = join(sourceDirectory, 'note.md')
-    const targetPath = join(targetDirectory, 'copy.md')
-    await writeFile(sourcePath, '# Source')
-    await writeFile(join(sourceDirectory, 'image.png'), 'image')
-    saveDialog.mockResolvedValueOnce({ canceled: false, filePath: targetPath })
-    const view = createMarkdownView(sourcePath)
-
-    const result = await ipcHandlers.get(MARKDOWN_CHANNELS.save)!(
-      { sender: view.webContents as unknown as FakeWebContents },
-      { text: '![image](image.png)', imageSources: ['image.png'], mode: 'saveAs' },
-    )
-
-    expect(result).toMatchObject({
-      ok: true,
-      path: targetPath,
-      text: '![image](assets/image.png)',
-      imageRewrites: [{ from: 'image.png', to: 'assets/image.png' }],
-    })
   })
 })

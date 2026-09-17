@@ -44,10 +44,6 @@ const CODE_FILL = 'F2F3F5'
 
 // ── inline content → Run[] ──
 
-function protectedRun(node: JSONContent): Run {
-  return { text: String(node.attrs?.raw ?? ''), font: CODE_FONT }
-}
-
 function runsFromInline(content: JSONContent[] | undefined): Run[] {
   const runs: Run[] = []
   for (const child of content ?? []) {
@@ -59,10 +55,6 @@ function runsFromInline(content: JSONContent[] | undefined): Run[] {
       // Run[] cannot carry OMML — keep the LaTeX source visible instead
       const latex = String(child.attrs?.latex ?? '')
       if (latex) runs.push({ text: `$${latex}$`, font: CODE_FONT })
-      continue
-    }
-    if (child.type === 'protectedSourceInline') {
-      runs.push(protectedRun(child))
       continue
     }
     if (child.type !== 'text' || !child.text) continue
@@ -191,9 +183,6 @@ function mapTable(node: JSONContent): TableModel {
 
 function walkBlock(ctx: WalkContext, node: JSONContent, base?: ParaFormat): void {
   switch (node.type) {
-    case 'protectedSourceBlock':
-      pushParagraph(ctx, { type: 'paragraph', runs: [protectedRun(node)], format: base })
-      break
     case 'paragraph':
       pushParagraph(ctx, {
         type: 'paragraph',
