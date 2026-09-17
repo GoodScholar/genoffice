@@ -154,24 +154,31 @@ function collectHtmlFragments(
 ): boolean {
   let cursor = 0
   for (const token of tokens) {
-    if (!raw.startsWith(token.raw, cursor)) return false
+    const consumed = consumeTokenRaw(raw, token.raw, cursor)
+    if (consumed === null) return false
     if (token.type === 'html') {
       fragments.push({
-        raw: token.raw,
-        range: { from: from + cursor, to: from + cursor + token.raw.length },
+        raw: consumed,
+        range: { from: from + cursor, to: from + cursor + consumed.length },
       })
     } else if (containsHtml(token.tokens)) {
       const wrapped = wrappedInlineRaw(token)
       if (
         !wrapped ||
-        !collectHtmlFragments(token.tokens!, wrapped.raw, from + cursor + wrapped.offset, fragments)
+        !collectHtmlFragments(
+          token.tokens!,
+          consumed.slice(wrapped.offset, consumed.length - wrapped.offset),
+          from + cursor + wrapped.offset,
+          fragments,
+        )
       ) {
         return false
       }
     }
-    cursor += token.raw.length
+    cursor += consumed.length
   }
-  return cursor === raw.length
+  // Block tokens can own a final line ending which has no inline token.
+  return /^[ \t\r\n]*$/.test(raw.slice(cursor))
 }
 
 type HtmlPart =
@@ -275,6 +282,7 @@ export function scanMarkdownSource(
   const legacyRanges = pairedLegacyDivRanges(bodyRaw, codeRanges)
   const units: ScannedUnit[] = []
   let cursor = 0
+  let leadingRaw = ''
 
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index]
@@ -288,13 +296,7 @@ export function scanMarkdownSource(
         return failed('Lexer space token cannot be assigned to a preceding unit')
       }
       if (units.length === 0) {
-        if (
-          !tokens
-            .slice(index)
-            .every((remaining) => remaining.type === 'space' && /^[ \t\r\n]+$/.test(remaining.raw))
-        ) {
-          return failed('Lexer space token cannot be assigned to a preceding unit')
-        }
+        leadingRaw += raw
         cursor += raw.length
         continue
       }
@@ -326,7 +328,14 @@ export function scanMarkdownSource(
         protection = inlineProtection({ ...token, raw }, range)
       }
     }
-    units.push({ id: `${idPrefix}-b${units.length}`, raw, range, trailingRaw: blank, protection })
+    units.push({
+      id: `${idPrefix}-b${units.length}`,
+      raw: leadingRaw + raw,
+      range: { from: range.from - leadingRaw.length, to: range.to },
+      trailingRaw: blank,
+      protection,
+    })
+    leadingRaw = ''
   }
 
   if (cursor !== bodyRaw.length)

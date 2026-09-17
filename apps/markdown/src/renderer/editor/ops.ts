@@ -119,8 +119,8 @@ function protectedIdsInNode(node: PmNode): string[] {
 
 /**
  * Resolve protected fragments affected by an op batch without dispatching.
- * Unknown/whole-document/cross-block/move scopes fail closed when protected
- * content exists, so callers can reject before any earlier op mutates state.
+ * Resolve the addressed range rather than blocking unrelated editable blocks.
+ * Unknown scopes fail closed before any earlier op mutates state.
  */
 export function protectedIdsForOps(editor: Editor, ops: MdOp[]): string[] {
   const byBlock = Array.from({ length: editor.state.doc.childCount }, (_, index) =>
@@ -144,8 +144,7 @@ export function protectedIdsForOps(editor: Editor, ops: MdOp[]): string[] {
       start > end
     )
       return all
-    if (start !== end) return all
-    return byBlock[start] ?? []
+    return [...new Set(byBlock.slice(start, end + 1).flat())]
   }
   let earlierOpMayChangeDocOrSelection = false
   for (const op of ops) {

@@ -1,8 +1,15 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import type { Editor } from '@tiptap/core'
 import { expect, test, type Page } from '@playwright/test'
 
 const source = '# 标题\n\n第一段\n第二段\n第三段\n第四段\n第五段\n第六段\n'
 
-async function openSource(page: Page): Promise<void> {
+async function openSource(page: Page, text = source, visual = false): Promise<void> {
+  page.on('pageerror', (error) => console.log('[browser-error]', error.message))
+  page.on('console', (message) => {
+    if (message.type() === 'error') console.log('[browser-console]', message.text())
+  })
   await page.addInitScript(
     ({ text }) => {
       localStorage.setItem('mdapp.showAi', '0')
@@ -39,6 +46,7 @@ async function openSource(page: Page): Promise<void> {
         exportDocx: async () => ({ ok: false, error: 'not used in renderer coverage' }),
         exportPdf: async () => ({ ok: false, error: 'not used in renderer coverage' }),
         onChromePressed: () => off,
+        onViewImage: () => off,
         getAiSettings: async () => ({ providers: [] }),
         aiGskStatus: async () => ({ loggedIn: false }),
         aiStream: async () => {},
@@ -58,9 +66,11 @@ async function openSource(page: Page): Promise<void> {
         aiGenerateImage: async () => ({ error: 'not used in renderer coverage' }),
       }
     },
-    { text: source },
+    { text },
   )
   await page.goto('http://localhost:5177')
+  await expect(page.locator('.doc-editor')).toBeVisible()
+  if (visual) return
   await page.locator('.mode-toggle', { hasText: /^Source$/ }).click()
   await expect(page.locator('.source-editor .cm-content')).toBeVisible()
 }
@@ -111,4 +121,58 @@ test('folding and unfolding preserves the source text', async ({ page }) => {
   await page.locator('.cm-foldGutter span[title="Unfold line"]:visible').first().click()
   await expect(page.locator('.cm-foldPlaceholder')).toHaveCount(0)
   expect((await content.locator('.cm-line').allTextContents()).join('\n')).toBe(source)
+})
+
+for (const size of [127_000, 317_000]) {
+  test(`visual typing stays under 100 ms for ${size} bytes`, async ({ page }) => {
+    const fixture = readFileSync(resolve(process.cwd(), 'skills/genoffice/SKILL.md'), 'utf8')
+    let text = Buffer.from(fixture.repeat(Math.ceil(size / fixture.length)))
+      .subarray(0, size)
+      .toString('utf8')
+      .replace(/\uFFFD$/, '')
+    text += ' '.repeat(size - Buffer.byteLength(text))
+    await openSource(page, text, true)
+    const timings = await page.locator('.doc-editor').evaluate(async (node) => {
+      const editor = (node as HTMLElement & { editor: Editor }).editor
+      editor.commands.setTextSelection(3)
+      const timings: number[] = []
+      for (let i = 0; i < 10; i++) {
+        const start = performance.now()
+        editor.commands.insertContent('x')
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+        timings.push(performance.now() - start)
+      }
+      return timings
+    })
+    console.log(
+      `${size} bytes, typing through next frame: ${timings.map((value) => value.toFixed(1)).join(', ')} ms`,
+    )
+    expect(Math.max(...timings)).toBeLessThan(100)
+    await expect(page.locator('.source-editor')).toHaveCount(0)
+  })
+}
+
+test('real Enter and continued typing keep the caret in the split heading and list item', async ({
+  page,
+}) => {
+  await openSource(page, '# Heading text\n\n- List text\n\nLast paragraph.\n', true)
+  for (const selector of ['h1', 'li p']) {
+    const block = page.locator(`.doc-editor ${selector}`).first()
+    await block.click()
+    await page.keyboard.press('Home')
+    await page.keyboard.press('ArrowRight')
+    await page.keyboard.type('X')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('Y')
+    await expect(page.locator('.doc-editor')).toBeVisible()
+    await expect(page.locator('.source-editor')).toHaveCount(0)
+    expect(
+      await page.locator('.doc-editor').evaluate((node) => {
+        const editor = (node as HTMLElement & { editor: Editor }).editor
+        return editor.state.selection.$from.parent.textContent
+      }),
+    ).toContain('Y')
+  }
+  await page.locator('.mode-toggle', { hasText: /^Source$/ }).click()
+  await expect(page.locator('.source-editor .cm-content')).toContainText('Y')
 })

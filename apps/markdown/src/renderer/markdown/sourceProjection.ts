@@ -228,6 +228,18 @@ export function projectScan(scan: SourceScan, codec: MarkdownCodec): ProjectionR
     let parsed: JSONContent
     try {
       parsed = codec.parse(replaceRanges(unit.raw, unit.range.from, sentinels))
+      // Isolated block separators produce implicit empty paragraphs. Remove
+      // those boundary nodes, never newlines inside a code block's text.
+      const content = [...(parsed.content ?? [])]
+      const empty = (node: JSONContent | undefined) =>
+        node?.type === 'paragraph' && !node.content?.length
+      if (/^[ \t]*\r?\n/.test(unit.raw)) {
+        while (empty(content[0])) content.shift()
+      }
+      if (/\r?\n$/.test(unit.raw)) {
+        while (empty(content[content.length - 1])) content.pop()
+      }
+      parsed = { ...parsed, content }
     } catch {
       parsed = { type: 'doc' }
     }
@@ -268,7 +280,64 @@ export function serializeProjectedGroup(nodes: JSONContent[], codec: MarkdownCod
     onlyInline?.type === 'text' &&
     !onlyInline.marks?.length &&
     /^#{1,6}$/.test(onlyInline.text ?? '')
-  const rewrite = (node: JSONContent): JSONContent => {
+  const rewrite = (
+    node: JSONContent,
+    inCode = false,
+    first = false,
+    last = false,
+    inTable = false,
+  ): JSONContent => {
+    if (node.type === 'text' && !inCode && node.marks?.some((mark) => mark.type === 'code')) {
+      const text = node.text ?? ''
+      const fence = '`'.repeat(
+        Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length)) + 1,
+      )
+      const padded = /^[ `]|[ `]$/.test(text) && !/^ +$/.test(text) ? ` ${text} ` : text
+      const id = `code-${sentinels.length}`
+      const value = `${character}${id}${character}`
+      sentinels.push({
+        id,
+        value,
+        fragment: {
+          id,
+          raw: fence + (inTable ? padded.replace(/\|/g, '\\|') : padded) + fence,
+          range: { from: 0, to: 0 },
+          display: 'inline',
+          reason: 'parse-failure',
+        },
+      })
+      return { ...node, text: value, marks: node.marks.filter((mark) => mark.type !== 'code') }
+    }
+    if (node.type === 'text' && !inCode) {
+      // Keep significant edge whitespace through Markdown's delimiter/indentation
+      // rules. Entities decode to the original characters, including after Enter.
+      const text = node.text?.replace(
+        /^[ \t]+|[ \t]+$|(?<=\n)[ \t]+/g,
+        (whitespace, offset: number) => {
+          if (
+            !(offset === 0 && first) &&
+            !(offset + whitespace.length === node.text!.length && last) &&
+            node.text![offset - 1] !== '\n'
+          )
+            return whitespace
+          const id = `whitespace-${sentinels.length}`
+          const value = `${character}${id}${character}`
+          sentinels.push({
+            id,
+            value,
+            fragment: {
+              id,
+              raw: [...whitespace].map((char) => `&#${char.charCodeAt(0)};`).join(''),
+              range: { from: 0, to: 0 },
+              display: 'inline',
+              reason: 'parse-failure',
+            },
+          })
+          return value
+        },
+      )
+      return { ...node, text }
+    }
     if (node.type === 'protectedSourceInline' || node.type === 'protectedSourceBlock') {
       const id = String(node.attrs?.id ?? '')
       const raw = String(node.attrs?.raw ?? '')
@@ -289,9 +358,26 @@ export function serializeProjectedGroup(nodes: JSONContent[], codec: MarkdownCod
       }
       return { type: 'paragraph', content: [{ type: 'text', text: sentinel.value }] }
     }
-    return node.content ? { ...node, content: node.content.map(rewrite) } : node
+    return node.content
+      ? {
+          ...node,
+          content: node.content.map((child, index, siblings) =>
+            rewrite(
+              child,
+              inCode || node.type === 'codeBlock',
+              index === 0 ||
+                (!!child.marks?.length &&
+                  JSON.stringify(siblings[index - 1]?.marks) !== JSON.stringify(child.marks)),
+              index === siblings.length - 1 ||
+                (!!child.marks?.length &&
+                  JSON.stringify(siblings[index + 1]?.marks) !== JSON.stringify(child.marks)),
+              inTable || node.type === 'table',
+            ),
+          ),
+        }
+      : node
   }
-  let output = codec.serialize({ type: 'doc', content: nodes.map(rewrite) })
+  let output = codec.serialize({ type: 'doc', content: nodes.map((node) => rewrite(node)) })
   if (literalHeadingMarker) output = output.replace(/^#/, '\\#')
   for (const sentinel of sentinels) {
     const count = output.split(sentinel.value).length - 1

@@ -379,7 +379,11 @@ function withFreshRanges(state: DocumentState): DocumentState {
   return { ...state, visual }
 }
 
-function createState(source: string, codec: MarkdownCodec): DocumentState {
+function createState(
+  source: string,
+  codec: MarkdownCodec,
+  cache?: Map<string, JSONContent>,
+): DocumentState {
   const envelope = parseRawDocEnvelope(source)
   const scan = scanMarkdownSource(envelope.bodyRaw, codec.lex)
   if (scan.fallbackToSource) {
@@ -392,7 +396,26 @@ function createState(source: string, codec: MarkdownCodec): DocumentState {
     })
   }
 
-  const projection = projectScan(scan, codec)
+  // Retain only the current document's parsed blocks. Typing in one block
+  // should not parse every untouched block again, or grow a cache across edits.
+  const nextCache = new Map<string, JSONContent>()
+  const projection = projectScan(
+    scan,
+    cache
+      ? {
+          ...codec,
+          parse(raw) {
+            const parsed = cache.get(raw) ?? codec.parse(raw)
+            nextCache.set(raw, parsed)
+            return parsed
+          },
+        }
+      : codec,
+  )
+  if (cache) {
+    cache.clear()
+    nextCache.forEach((parsed, raw) => cache.set(raw, parsed))
+  }
   if (projection.fallbackToSource) {
     return withFreshRanges({
       source,
@@ -527,7 +550,8 @@ export function createMarkdownDocumentSession(
   source: string,
   codec: MarkdownCodec,
 ): MarkdownDocumentSession {
-  let state = createState(source, codec)
+  const parseCache = new Map<string, JSONContent>()
+  let state = createState(source, codec, parseCache)
   let baseline = source
   let revision = 0
   let mode: EditorMode = state.fallbackReason ? 'source' : 'visual'
@@ -597,7 +621,7 @@ export function createMarkdownDocumentSession(
     delta: string,
   ): DocumentState | undefined => {
     if (!delta || !next.source.endsWith(delta)) return undefined
-    const base = createState(next.source.slice(0, -delta.length), codec)
+    const base = createState(next.source.slice(0, -delta.length), codec, parseCache)
     return base.fallbackReason ? undefined : base
   }
 
@@ -736,7 +760,7 @@ export function createMarkdownDocumentSession(
         const to = from + replacement.fragment.raw.length
         nextSource = `${nextSource.slice(0, from)}${replacement.raw}${nextSource.slice(to)}`
       }
-      const projected = createState(nextSource, codec)
+      const projected = createState(nextSource, codec, parseCache)
       const projectedNodes = projected.visual.doc.content ?? []
       const sameProjection =
         projectionFingerprint(candidateNodes) === projectionFingerprint(projectedNodes) ||
@@ -795,9 +819,8 @@ export function createMarkdownDocumentSession(
           if (leadingBoundary && !/^[ \t]*(?:\r\n|\n|\r)/.test(serialized)) {
             serialized = leadingBoundary + serialized
           }
-          if (previous.raw.endsWith('\n') && !serialized.endsWith('\n'))
-            serialized += state.envelope.eol
-          if (!previous.raw.endsWith('\n')) serialized = serialized.replace(/(?:\r?\n)+$/, '')
+          const ending = /(?:\r?\n)+$/.exec(previous.raw)?.[0] ?? ''
+          serialized = serialized.replace(/(?:\r?\n)+$/, '') + ending
           serialized += previous.trailingRaw
         }
         if (!previous && index < groups.length - 1)
@@ -857,7 +880,7 @@ export function createMarkdownDocumentSession(
         error: 'Visual projection cannot be represented by a safe source rewrite',
       }
     }
-    const projected = createState(nextSource, codec)
+    const projected = createState(nextSource, codec, parseCache)
     const projectedNodes = projected.visual.doc.content ?? []
     const editableEmptyBaseline =
       candidateNodes.length === 1 &&
@@ -892,7 +915,8 @@ export function createMarkdownDocumentSession(
     if (hasUserTrailingEmpty) {
       const marker = candidateNodes[candidateNodes.length - 1]!
       const nodesWithoutMarker = candidateNodes.slice(0, -1)
-      const base = logicalSource === undefined ? undefined : createState(logicalSource, codec)
+      const base =
+        logicalSource === undefined ? undefined : createState(logicalSource, codec, parseCache)
       const logicalBase =
         !frontmatterChanged &&
         projectionFingerprint(nodesWithoutMarker) ===
@@ -1001,7 +1025,7 @@ export function createMarkdownDocumentSession(
     const nextSource = `${state.source.slice(0, fragment.range.from)}${patch.nextRaw}${state.source.slice(fragment.range.to)}`
     let next: DocumentState
     try {
-      next = createState(nextSource, codec)
+      next = createState(nextSource, codec, parseCache)
       validateState(next)
     } catch (error) {
       return {
@@ -1021,7 +1045,7 @@ export function createMarkdownDocumentSession(
 
   const applySource = (next: string): SessionUpdate => {
     if (next !== state.source) {
-      state = createState(next, codec)
+      state = createState(next, codec, parseCache)
       userTrailingEmpty = undefined
       revision += 1
       conflictReason = undefined
@@ -1033,7 +1057,7 @@ export function createMarkdownDocumentSession(
   }
 
   const restoreHistorySource = (next: string): SessionUpdate => {
-    state = createState(next, codec)
+    state = createState(next, codec, parseCache)
     userTrailingEmpty = undefined
     revision += 1
     mode = state.fallbackReason ? 'source' : 'visual'
@@ -1089,7 +1113,7 @@ export function createMarkdownDocumentSession(
       : undefined
     if (revision === ticket.revision) {
       if (sourceActuallyWritten !== state.source || !userTrailingEmpty) {
-        state = createState(sourceActuallyWritten, codec)
+        state = createState(sourceActuallyWritten, codec, parseCache)
         userTrailingEmpty = undefined
         const base =
           trailingMarker && trailingRelation
@@ -1105,7 +1129,7 @@ export function createMarkdownDocumentSession(
       return currentView()
     }
 
-    const written = createState(sourceActuallyWritten, codec)
+    const written = createState(sourceActuallyWritten, codec, parseCache)
     if (written.fallbackReason || state.fallbackReason) {
       baseline = sourceActuallyWritten
       return currentView()
@@ -1185,7 +1209,7 @@ export function createMarkdownDocumentSession(
           ? state.source
           : sourcePrefix(envelope) + trailingRelation.base.envelope.bodyRaw + trailingRelation.delta
         : sourcePrefix(envelope) + body
-    state = createState(rebasedSource, codec)
+    state = createState(rebasedSource, codec, parseCache)
     userTrailingEmpty = undefined
     const base =
       trailingMarker && trailingRelation

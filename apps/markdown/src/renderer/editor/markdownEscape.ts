@@ -1,3 +1,4 @@
+import { Extension } from '@tiptap/core'
 import { Markdown } from '@tiptap/markdown'
 
 /**
@@ -28,4 +29,24 @@ export const SelectiveEscapeMarkdown = Markdown.extend({
     const manager = this.editor.markdown as unknown as Escaper | undefined
     if (manager) manager.escapeMarkdownSyntax = escapeMarkdownText
   },
+})
+
+/** Numeric whitespace entities keep leading spaces after structural edits. */
+export const MarkdownWhitespace = Extension.create({
+  name: 'markdownWhitespace',
+  markdownTokenizer: {
+    name: 'markdownWhitespace',
+    level: 'inline',
+    start: (source) => source.search(/&#(?:32|9);/),
+    tokenize(source) {
+      const match = /^&#(32|9);/.exec(source)
+      if (!match) return undefined
+      return {
+        type: 'markdownWhitespace',
+        raw: match[0],
+        text: String.fromCharCode(Number(match[1])),
+      }
+    },
+  },
+  parseMarkdown: (token) => ({ type: 'text', text: token.text }),
 })

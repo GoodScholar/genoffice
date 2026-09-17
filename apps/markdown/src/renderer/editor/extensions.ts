@@ -3,6 +3,7 @@ import type { AnyExtension } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { Table, TableKit } from '@tiptap/extension-table'
 import { OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
+import { Code } from '@tiptap/extension-code'
 import { CodeBlock } from '@tiptap/extension-code-block'
 import { ReactNodeViewRenderer } from '@tiptap/react'
 import { Placeholder } from '@tiptap/extensions'
@@ -24,7 +25,7 @@ import {
 } from './protectedSource'
 import { ProtectedSourceView } from './ProtectedSourceView'
 import { buildMathExtensions } from './math'
-import { SelectiveEscapeMarkdown } from './markdownEscape'
+import { SelectiveEscapeMarkdown, MarkdownWhitespace } from './markdownEscape'
 import { SlashCommand } from './slashCommand'
 import { boundOrderedList, boundTable, boundTaskList } from './boundedTokenizers'
 import type { SlashController, SlashItem } from './slashCommand'
@@ -50,6 +51,7 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
       link: { openOnClick: false },
       // replaced by the NodeView-enhanced variant below (language picker + copy)
       codeBlock: false,
+      code: false,
       // underline would serialize as `++text++` — not part of GFM
       underline: false,
       // The replacements below retain durable markers for session projection.
@@ -60,6 +62,8 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
     OrderedList.extend({
       markdownTokenizer: boundOrderedList(OrderedList.config.markdownTokenizer!),
     }),
+    // GFM permits emphasis and links around inline code (for example **`name`**).
+    Code.extend({ excludes: '' }),
     GeneratedTrailingNode,
     UserTrailingEmptyParagraph,
     CodeBlock.extend({
@@ -71,6 +75,7 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
     // ordered items ("1. " = 3), so strict CommonMark parsers (GitHub) would
     // flatten sub-lists in the saved file. 4 is safe for every marker width.
     SelectiveEscapeMarkdown.configure({ indentation: { style: 'space', size: 4 } }),
+    MarkdownWhitespace,
     SourceProvenance,
     ProtectedSourceBlock.extend({
       addNodeView() {
