@@ -24,7 +24,9 @@ for (const outcome of ['canceled', 'failed', 'completed']) {
         }
         window.markdownApi.finishImageExport = async (_id, success) => {
           document.body.dataset.finished = String(success)
-          return success ? { ok: true, path: '/export/report-images' } : { ok: true, canceled: true }
+          return success
+            ? { ok: true, path: '/export/report-images' }
+            : { ok: true, canceled: true }
         }
         window.dispatchEvent(new CustomEvent('test:export', { detail: 'png' }))
       },
