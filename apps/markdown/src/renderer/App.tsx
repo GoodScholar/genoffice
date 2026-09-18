@@ -420,7 +420,7 @@ export default function App() {
             ...current.view.dom.querySelectorAll<HTMLImageElement>(
               'img[src]:not(.ProseMirror-separator)',
             ),
-          ].map((image) => image.decode()),
+          ].map((image) => image.decode().catch(() => {})),
         )
         const result = await exportImages(
           buildPrintHtml(current.view.dom, suggestedName),
