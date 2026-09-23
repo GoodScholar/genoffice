@@ -123,8 +123,9 @@ test.describe('markdown editor', () => {
       await expect(editor.locator('strong')).toHaveText('bold')
 
       // type at the end of the document, save with ⌘/Ctrl+S
-      await editor.locator('p').last().click()
-      await editorPage.keyboard.press('End')
+      await editor.click()
+      await editorPage.keyboard.press('ControlOrMeta+a')
+      await editorPage.keyboard.press('ArrowRight')
       await editorPage.keyboard.press('Enter')
       await editorPage.keyboard.type('Appended line.')
       await editorPage.keyboard.press('ControlOrMeta+s')
