@@ -5,6 +5,7 @@ import {
   blankXlsxBuffer,
   buildWorksheetXml,
   csvToXlsxBuffer,
+  csvToXlsxBufferForOpen,
   sheetCsvToXlsxBuffer,
   decodeCsvBuffer,
   isNumericCell,
@@ -241,6 +242,27 @@ describe('csvToXlsxBuffer', () => {
     await expect(csvToXlsxBuffer('')).rejects.toThrow('no data rows')
     expect(buildWorksheetXml([['<b>&"']])).toContain('&lt;b&gt;&amp;&quot;')
     expect(buildWorksheetXml([['a\rb_x000D_']])).toContain('>a_x000D_b_x005F_x000D_<')
+  })
+})
+
+describe('csvToXlsxBufferForOpen', () => {
+  it('opens a blank-lines-only CSV as an empty workbook and reports the empty source', async () => {
+    const { buffer, empty } = await csvToXlsxBufferForOpen('\r\n'.repeat(5_927))
+    const zip = await JSZip.loadAsync(buffer)
+    const sheet = await zip.file('xl/worksheets/sheet1.xml')?.async('text')
+
+    expect(empty).toBe(true)
+    expect(sheet).toContain('<sheetData></sheetData>')
+  })
+
+  it('keeps normal CSV rows unchanged', async () => {
+    const { buffer, empty } = await csvToXlsxBufferForOpen('name,amount\r\nalpha,10\r\n')
+    const zip = await JSZip.loadAsync(buffer)
+    const sheet = await zip.file('xl/worksheets/sheet1.xml')?.async('text')
+
+    expect(empty).toBe(false)
+    expect(sheet).toContain('<t xml:space="preserve">alpha</t>')
+    expect(sheet).toContain('<v>10</v>')
   })
 })
 

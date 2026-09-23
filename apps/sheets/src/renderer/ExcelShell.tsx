@@ -211,6 +211,9 @@ interface ExcelShellProps {
   readonly onIsCellEditing: () => boolean
   /// Left side of the status bar (ready / streaming / AI progress messages).
   readonly statusMessage: string
+  readonly emptyCsvNotice: boolean
+  readonly onOpenWorkbook: () => void
+  readonly onDismissEmptyCsvNotice: () => void
   /// Zoom of the active sheet in percent, echoed by the status-bar slider.
   readonly zoomPercent: number
   /// True when the edit journal has unsaved changes (enables the QAT Save).
@@ -367,6 +370,9 @@ export function ExcelShell({
   onCommand,
   onIsCellEditing,
   statusMessage,
+  emptyCsvNotice,
+  onOpenWorkbook,
+  onDismissEmptyCsvNotice,
   zoomPercent,
   canSave,
   onSave,
@@ -728,6 +734,22 @@ export function ExcelShell({
         <div className="sheet-main">
           <section className="workbook-area">
             <div id="univer-container" className="spreadsheet" />
+            {emptyCsvNotice && (
+              <div className="csv-empty-notice" role="status">
+                <span>{t('appCsvEmpty')}</span>
+                <button type="button" onClick={onOpenWorkbook}>
+                  {t('appOpenWorkbookTitle')}
+                </button>
+                <button
+                  type="button"
+                  className="csv-empty-notice-close"
+                  aria-label={t('appClose')}
+                  onClick={onDismissEmptyCsvNotice}
+                >
+                  ×
+                </button>
+              </div>
+            )}
           </section>
           {aiSelectionAskAnchor && aiScopeRange && !aiBusy && (
             <AiSelectionAsk

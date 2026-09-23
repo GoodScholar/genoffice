@@ -78,7 +78,7 @@ import {
 } from '@genoffice/ai-provider'
 import { shutdownCodexAppServers } from '@genoffice/ai-provider/codex-app-server'
 import {
-  csvToXlsxBuffer,
+  csvToXlsxBufferForOpen,
   decodeCsvBuffer,
   sheetCsvToXlsxBuffer,
 } from '@genoffice/xlsx-gateway/gateway/csv-import'
@@ -2428,6 +2428,7 @@ export function registerSheetsIpc(): void {
       suggestSaveAs: prepared.suggestSaveAs,
       csvImport: prepared.csvImport,
       csvSourcePath: prepared.csvSourcePath,
+      emptyCsv: prepared.emptyCsv,
       importTempDir: prepared.importTempDir,
       restoreTarget: prepared.restoreTarget,
     })
@@ -3892,11 +3893,13 @@ async function openWorkbookSession(
     suggestSaveAs?: string | undefined
     csvImport?: boolean | undefined
     csvSourcePath?: string | undefined
+    emptyCsv?: boolean | undefined
     importTempDir?: string | undefined
     restoreTarget?: string | undefined
   },
 ): Promise<WorkbookFile> {
-  const { suggestSaveAs, csvImport, csvSourcePath, importTempDir, restoreTarget } = options ?? {}
+  const { suggestSaveAs, csvImport, csvSourcePath, emptyCsv, importTempDir, restoreTarget } =
+    options ?? {}
   // Snapshot first, then the sidecar opens the snapshot (not the live path):
   // everything the session serves — cell reads, media, recalc, saves — comes
   // from the same bytes, even if the file on disk changes right after the
@@ -3941,6 +3944,7 @@ async function openWorkbookSession(
       readOnly: false,
       needsSaveAs: suggestSaveAs !== undefined,
       ...(csvSourcePath === undefined ? {} : { csvPath: csvSourcePath }),
+      ...(emptyCsv ? { emptyCsv: true } : {}),
       restoredFromRecovery: restoreTarget !== undefined,
       automaticRecoveryDisabled: !allowsAutomaticWorkbookRecovery(opened.sheets),
     })
@@ -3977,6 +3981,7 @@ async function prepareWorkbookForOpen(
   suggestSaveAs?: string
   csvImport?: boolean
   csvSourcePath?: string
+  emptyCsv?: boolean
   importTempDir?: string
   restoreTarget?: string
 }> {
@@ -4003,14 +4008,16 @@ async function prepareWorkbookForOpen(
   const directory = join(app.getPath('temp'), 'genoffice-imports', randomUUID())
   await mkdir(directory, { recursive: true })
   const openPath = join(directory, `${stem}.xlsx`)
+  let emptyCsv = false
   try {
     if (extension === 'csv') {
       const csvStat = await stat(path)
       if (csvStat.size > MAX_CSV_IMPORT_BYTES) throw new Error(tm('errFileTooLarge'))
-      await writeFile(
-        openPath,
-        await csvToXlsxBuffer(decodeCsvBuffer(await readFile(path), legacyCsvCharset())),
+      const converted = await csvToXlsxBufferForOpen(
+        decodeCsvBuffer(await readFile(path), legacyCsvCharset()),
       )
+      emptyCsv = converted.empty
+      await writeFile(openPath, converted.buffer)
     } else {
       await client.convertWorkbook({ path, targetPath: openPath })
     }
@@ -4022,7 +4029,13 @@ async function prepareWorkbookForOpen(
   // .csv (Excel's behavior), so no Save As detour is suggested. Legacy .xls
   // still routes the first save through Save As to a fresh .xlsx.
   return extension === 'csv'
-    ? { openPath, importTempDir: directory, csvImport: true, csvSourcePath: path }
+    ? {
+        openPath,
+        importTempDir: directory,
+        csvImport: true,
+        csvSourcePath: path,
+        ...(emptyCsv ? { emptyCsv: true } : {}),
+      }
     : { openPath, importTempDir: directory, suggestSaveAs: path.replace(/\.[^.]+$/, '.xlsx') }
 }
 

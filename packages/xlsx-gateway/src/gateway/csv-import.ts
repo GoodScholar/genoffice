@@ -273,6 +273,14 @@ export async function csvToXlsxBuffer(csvText: string, sheetName = 'Sheet1'): Pr
   return xlsxBufferFromRows(rows, sheetName)
 }
 
+export async function csvToXlsxBufferForOpen(
+  csvText: string,
+  sheetName = 'Sheet1',
+): Promise<{ buffer: Buffer; empty: boolean }> {
+  const rows = parseCsv(csvText, resolveImportDelimiter(csvText))
+  return { buffer: await xlsxBufferFromRows(rows, sheetName), empty: rows.length === 0 }
+}
+
 /**
  * Delimiter for the open-file path. The sniffer counts raw occurrences, so a
  * single-column prose file whose notes hold more semicolons/tabs than commas

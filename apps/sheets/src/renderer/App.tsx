@@ -591,6 +591,7 @@ export function App(): React.JSX.Element {
   const [fullLoadPrompt, setFullLoadPrompt] = useState<'ask' | 'tooLarge' | null>(null)
   const fullLoadRunning = useRef(false)
   const [message, setMessage] = useState(t('appReadyInitial'))
+  const [emptyCsvNotice, setEmptyCsvNotice] = useState(false)
   /// Zoom of the active sheet in percent, echoed by the status-bar slider.
   const [zoomPercent, setZoomPercent] = useState(100)
   const [selectionFormat, setSelectionFormat] = useState<SelectionFormat | null>(null)
@@ -4044,7 +4045,8 @@ export function App(): React.JSX.Element {
         return
       }
       openLazyWorkbook(selected)
-      setMessage(t('appOpened', { name: selected.name }))
+      setEmptyCsvNotice(selected.emptyCsv === true)
+      setMessage(selected.emptyCsv ? '' : t('appOpened', { name: selected.name }))
     } catch (error: unknown) {
       setMessage(error instanceof Error ? error.message : t('appOpenFailed'))
     } finally {
@@ -4447,6 +4449,9 @@ export function App(): React.JSX.Element {
         }}
         selectionFormat={selectionFormat}
         statusMessage={message}
+        emptyCsvNotice={emptyCsvNotice}
+        onOpenWorkbook={() => void handleInspectWorkbook()}
+        onDismissEmptyCsvNotice={() => setEmptyCsvNotice(false)}
         aiBusy={aiBusy}
         chat={chat}
         historicChat={historicChat}
