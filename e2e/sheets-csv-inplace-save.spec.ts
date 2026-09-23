@@ -41,7 +41,9 @@ test.describe('sheets: a CSV keeps its identity through Save', () => {
       const sheets = await waitForPageWithUrl(launched.app, '://sheets/')
       await expect(sheets.locator('.csv-empty-notice')).toBeVisible({ timeout: 30_000 })
       await expect(sheets.getByText('The CSV file has no data.')).toHaveCount(1)
-      await expect(sheets.getByRole('button', { name: 'Open Workbook (⌘O)' })).toBeVisible()
+      await expect(
+        sheets.locator('.csv-empty-notice').getByRole('button', { name: /^Open Workbook/ }),
+      ).toBeVisible()
       const shell = await waitForPageWithUrl(launched.app, 'shell/out')
       await expect(shell.locator('.tab-title').filter({ hasText: 'empty.csv' })).toBeVisible()
       await expect(sheets.locator('.workbook-status')).not.toContainText('Error invoking')
