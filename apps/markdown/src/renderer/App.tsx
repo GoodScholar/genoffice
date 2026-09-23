@@ -278,6 +278,7 @@ export default function App() {
             .chain()
             .setMeta('addToHistory', false)
             .setContent(body, { contentType: 'markdown' })
+            .setTextSelection(1)
             .run()
           sourceMapRef.current = buildSourceMap(editor, editor.state.doc, body)
           originalSourceRef.current = roundTripEnabled
