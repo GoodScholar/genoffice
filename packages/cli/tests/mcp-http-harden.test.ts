@@ -39,7 +39,7 @@ describe('mcp http hardening', () => {
         env: {},
         log: () => {},
         warn: () => {},
-      }),
+      } as Parameters<typeof mcpCommand.run>[1]),
     ).rejects.toThrow(/--token needs a non-empty value/)
   })
 
