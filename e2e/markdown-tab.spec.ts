@@ -123,9 +123,17 @@ test.describe('markdown editor', () => {
       await expect(editor.locator('strong')).toHaveText('bold')
 
       // type at the end of the document, save with ⌘/Ctrl+S
-      await editor.click()
-      await editorPage.keyboard.press('ControlOrMeta+a')
-      await editorPage.keyboard.press('ArrowRight')
+      await editor.focus()
+      await editor.evaluate((element) => {
+        const last = element.lastElementChild
+        const selection = window.getSelection()
+        if (!last || !selection) throw new Error('Markdown editor has no final block')
+        const range = document.createRange()
+        range.selectNodeContents(last)
+        range.collapse(false)
+        selection.removeAllRanges()
+        selection.addRange(range)
+      })
       await editorPage.keyboard.press('Enter')
       await editorPage.keyboard.type('Appended line.')
       await editorPage.keyboard.press('ControlOrMeta+s')
