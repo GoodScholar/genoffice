@@ -97,21 +97,24 @@ function findAttribute(
   quote: string
   lead: string
 } | null {
-  const re = new RegExp(
-    `(\\s+)(${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(?:\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s"'=<>\`]+)))?`,
-    'i',
-  )
-  const m = re.exec(startTag)
-  if (!m) return null
-  const from = m.index
-  const to = m.index + m[0].length
-  const lead = m[1]!
-  if (m[3] === undefined) return { from, to, valueFrom: to, valueTo: to, quote: '', lead }
-  const raw = m[3]
-  const quote = raw.startsWith('"') ? '"' : raw.startsWith("'") ? "'" : ''
-  const valueTo = to - (quote ? 1 : 0)
-  const valueFrom = valueTo - (m[4] ?? m[5] ?? m[6] ?? '').length
-  return { from, to, valueFrom, valueTo, quote, lead }
+  const tagName = /^<[^\s/>]+/.exec(startTag)
+  if (!tagName) return null
+  const attrs = /(\s+)([^\s"'<>/=]+)(?:\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/gy
+  attrs.lastIndex = tagName[0].length
+  let m: RegExpExecArray | null
+  while ((m = attrs.exec(startTag))) {
+    if (m[2]!.toLowerCase() !== name.toLowerCase()) continue
+    const from = m.index
+    const to = m.index + m[0].length
+    const lead = m[1]!
+    if (m[3] === undefined) return { from, to, valueFrom: to, valueTo: to, quote: '', lead }
+    const raw = m[3]
+    const quote = raw.startsWith('"') ? '"' : raw.startsWith("'") ? "'" : ''
+    const valueTo = to - (quote ? 1 : 0)
+    const valueFrom = valueTo - (m[4] ?? m[5] ?? m[6] ?? '').length
+    return { from, to, valueFrom, valueTo, quote, lead }
+  }
+  return null
 }
 
 const ENTITY_RE = /&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/y

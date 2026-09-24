@@ -158,6 +158,33 @@ describe('compileOps', () => {
     ).next
     expect(removed).toContain('<section>')
   })
+  it('set_attr matches the complete attribute name rather than a prefix', () => {
+    const doc = '<a hreflang=en href=/old>x</a>'
+    const { next, compiled } = run(
+      [{ op: 'set_attr', sid: sidOf(doc, 'a'), name: 'href', value: '/new' }],
+      doc,
+    )
+    expect(compiled.errors).toEqual([])
+    expect(next).toBe('<a hreflang=en href="/new">x</a>')
+  })
+  it('set_attr ignores attribute-like text inside another quoted value', () => {
+    const doc = '<a title="keep href=/wrong" HREF="/old">x</a>'
+    const { next, compiled } = run(
+      [{ op: 'set_attr', sid: sidOf(doc, 'a'), name: 'href', value: '/new' }],
+      doc,
+    )
+    expect(compiled.errors).toEqual([])
+    expect(next).toBe('<a title="keep href=/wrong" HREF="/new">x</a>')
+  })
+  it('set_style ignores style-like text inside another quoted value', () => {
+    const doc = '<div title="keep style=color:red" style="color: red">x</div>'
+    const { next, compiled } = run(
+      [{ op: 'set_style', sid: sidOf(doc, 'div'), styles: { color: 'blue' } }],
+      doc,
+    )
+    expect(compiled.errors).toEqual([])
+    expect(next).toBe('<div title="keep style=color:red" style="color: blue">x</div>')
+  })
   it('set_attr escapes ampersands in single-quoted attributes', () => {
     const doc = `<html><body><div title='x'>hi</div></body></html>`
     const sid = sidOf(doc, 'div')
