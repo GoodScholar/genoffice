@@ -143,7 +143,7 @@ import * as arrangeActions from './arrange-actions'
 import * as tableActions from './table-actions'
 import * as styleActions from './style-actions'
 import { handleGlobalKeydown, slideRailHasFocus } from './keyboard-actions'
-import { clickSelection, normalizeSelection } from '../shared/slide-selection'
+import { clickSelection, currentAfterHistory, normalizeSelection } from '../shared/slide-selection'
 import { useEscOverlay, useEscOverlayOpen } from './esc-overlay'
 import { buildCtxItems } from './context-menu-items'
 import { isMac, nextSelection } from './platform-modifiers'
@@ -1021,19 +1021,22 @@ export function App() {
     return !!sel && !sel.isCollapsed
   }
 
-  /** Apply the full slides set after undo/redo: page count may change (undoing a new page), clamp current */
-  const applyHistoryResult = useCallback((r: RenderSlide[] | null) => {
-    if (!r) return
-    setSlides(r)
-    setCurrent((c) => Math.min(c, r.length - 1))
-    setSelectedSlides([])
-    setSelectedIds([])
-    setEditing(null)
-    setPasteFloater(null) // The paste the floater refers to may have just been undone
-    notesDraftRef.current = null // Undo overrides the unsaved draft, avoiding writing an old draft back
-    setAnnotationsNonce((n) => n + 1) // Notes/comments aren't in RenderSlide; re-fetch
-    void window.slidesApi.isDirty().then(setDirty)
-  }, [])
+  /** Apply the full slides set after undo/redo, keeping the current slide when it still exists. */
+  const applyHistoryResult = useCallback(
+    (r: RenderSlide[] | null, current: number, partPath?: string) => {
+      if (!r) return
+      setSlides(r)
+      setCurrent(currentAfterHistory(r, current, partPath))
+      setSelectedSlides([])
+      setSelectedIds([])
+      setEditing(null)
+      setPasteFloater(null) // The paste the floater refers to may have just been undone
+      notesDraftRef.current = null // Undo overrides the unsaved draft, avoiding writing an old draft back
+      setAnnotationsNonce((n) => n + 1) // Notes/comments aren't in RenderSlide; re-fetch
+      void window.slidesApi.isDirty().then(setDirty)
+    },
+    [],
+  )
 
   const undo = useCallback(async () => {
     // Preserve native undo while typing. The cleared AI composer explicitly yields to deck undo.
@@ -1042,7 +1045,8 @@ export function App() {
       document.execCommand('undo')
       return
     }
-    applyHistoryResult(await window.slidesApi.undo())
+    const { current, slide } = ctxRef.current
+    applyHistoryResult(await window.slidesApi.undo(), current, slide?.partPath)
   }, [editing, applyHistoryResult])
 
   const redo = useCallback(async () => {
@@ -1051,7 +1055,8 @@ export function App() {
       document.execCommand('redo')
       return
     }
-    applyHistoryResult(await window.slidesApi.redo())
+    const { current, slide } = ctxRef.current
+    applyHistoryResult(await window.slidesApi.redo(), current, slide?.partPath)
   }, [editing, applyHistoryResult])
 
   // Global shortcuts (keyboard-actions.ts): the handler reads the latest state via ctxRef, so attach once
