@@ -314,6 +314,7 @@ import { installRtlGridMirror } from './rtl-grid-mirror'
 import { installMultiRowAutofit } from './autofit-multi-row'
 import { registerExcelJumpNav } from './excel-jump-nav'
 import { registerExcelShortcuts } from './excel-shortcuts'
+import { installCtrlDragFill } from './ctrl-drag-fill'
 import { installCopyMaterialize } from './copy-materialize'
 import { installStatusBarFileStats } from './statusbar-file-stats'
 import { applyUniverLocale, insertRowsBelowLocale, numberAsTextAlertLocale } from './univer-locales'
@@ -2711,6 +2712,7 @@ export function App(): React.JSX.Element {
       window.desktopApi?.onCloseSaveRequest?.(() => void closeSaveRef.current()) ??
       (() => undefined)
     const gridHost = document.getElementById('univer-container')
+    const ctrlDragFillDisposable = gridHost ? installCtrlDragFill(runtime, gridHost) : null
     const disposePictureTransfer = gridHost
       ? installPictureTransfer(gridHost, {
           isCellEditing: () => editingCellRef.current,
@@ -2922,6 +2924,7 @@ export function App(): React.JSX.Element {
       contentDisposable.dispose()
       disposePictureTransfer()
       disposeWheelZoom()
+      ctrlDragFillDisposable?.dispose()
       gridHost?.removeEventListener('pointerdown', onSelectionPointerDown, true)
       window.removeEventListener('pointermove', onSelectionPointerMove, true)
       window.removeEventListener('pointerup', finishSelectionPointer, true)
