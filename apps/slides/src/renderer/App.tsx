@@ -108,7 +108,7 @@ import { t, useI18n } from './i18n/locale'
 import { AiPanel } from './ai/AiPanel'
 import { ChartDataDialog } from './components/ChartDataDialog'
 import type { BrushFormat } from './format-brush'
-import { isTextUndoTarget, shouldRouteUndoToDeck } from './undo-routing'
+import { isTextUndoTarget, shouldRouteHistoryToDeck } from './undo-routing'
 import type {
   ActionCtx,
   CropTargetState,
@@ -1038,7 +1038,7 @@ export function App() {
   const undo = useCallback(async () => {
     // Preserve native undo while typing. The cleared AI composer explicitly yields to deck undo.
     const target = document.activeElement as HTMLElement | null
-    if (editing || (isTextUndoTarget(target) && !shouldRouteUndoToDeck(target))) {
+    if (editing || (isTextUndoTarget(target) && !shouldRouteHistoryToDeck(target))) {
       document.execCommand('undo')
       return
     }
@@ -1046,7 +1046,8 @@ export function App() {
   }, [editing, applyHistoryResult])
 
   const redo = useCallback(async () => {
-    if (editing || inTextField()) {
+    const target = document.activeElement as HTMLElement | null
+    if (editing || (isTextUndoTarget(target) && !shouldRouteHistoryToDeck(target))) {
       document.execCommand('redo')
       return
     }
