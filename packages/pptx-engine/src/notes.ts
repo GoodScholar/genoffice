@@ -11,7 +11,7 @@
  */
 import type { OpenedPptx } from './index'
 import { relsPathFor, resolveTarget, type PackageArchive } from './zip'
-import { escapeXmlText } from './xml-utils'
+import { decodeNumericCharRefs, escapeXmlText } from './xml-utils'
 
 const XMLDECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
 const NS_A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
@@ -34,9 +34,7 @@ function setEntry(archive: PackageArchive, path: string, xml: string): void {
 
 /** Unescape XML text (for reading <a:t>). */
 export function unescapeXml(s: string): string {
-  return s
-    .replace(/&#x([0-9a-fA-F]+);/g, (_m, h: string) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_m, d: string) => String.fromCodePoint(Number(d)))
+  return decodeNumericCharRefs(s)
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')

@@ -880,6 +880,18 @@ describe('bullet (buChar/buAutoNum/buNone) and paragraph indent parsing', () => 
     expect(p.indent).toBe(-127000)
   })
 
+  it('keeps invalid numeric bullet references without aborting slide parsing', () => {
+    const slide = parseSlide({
+      path: 'ppt/slides/slide1.xml',
+      slideXml: sldWith('<a:pPr><a:buChar char="&#x110000;"/></a:pPr>'),
+      ctx: {},
+    })
+    expect((slide.elements[0] as any).text.paragraphs[0].bullet).toEqual({
+      type: 'char',
+      char: '&#x110000;',
+    })
+  })
+
   it('buAutoNum / buNone', () => {
     const num = parseSlide({
       path: 'ppt/slides/slide1.xml',
@@ -958,6 +970,11 @@ describe('slide master bodyStyle bullet/indent inheritance', () => {
     expect(p.bullet).toEqual({ type: 'char', char: '•' })
     expect(p.marL).toBe(342900)
     expect(p.indent).toBe(-342900)
+  })
+
+  it('keeps invalid numeric bullet references in master list styles', () => {
+    const master = parseMasterTextStyles(masterXml.replace('&#x2022;', '&#x110000;'))
+    expect(master.body?.levels[0]?.bullet).toEqual({ type: 'char', char: '&#x110000;' })
   })
 
   it('buFontTx on an inheriting paragraph keeps the glyph but drops the chain font', () => {

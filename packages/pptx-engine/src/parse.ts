@@ -69,6 +69,7 @@ import {
   type TablePartStyle,
   type TableStyleFlags,
 } from './table-style'
+import { decodeNumericCharRefs } from './xml-utils'
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -3570,7 +3571,7 @@ function parseParagraph(
   let bullet: Paragraph['bullet']
   if (pPr['a:buNone'] !== undefined) bullet = { type: 'none' }
   else if (pPr['a:buChar']?.['@_char'] != null) {
-    bullet = { type: 'char', char: decodeCharRefs(String(pPr['a:buChar']['@_char'])) }
+    bullet = { type: 'char', char: decodeNumericCharRefs(String(pPr['a:buChar']['@_char'])) }
   } else if (pPr['a:buAutoNum']) {
     bullet = { type: 'number' }
     if (pPr['a:buAutoNum']['@_type']) bullet.numType = String(pPr['a:buAutoNum']['@_type'])
@@ -3724,13 +3725,6 @@ function parseParagraphDefRPr(defRPrNode: any, style: LevelTextStyle): Paragraph
   }
 }
 
-/** fast-xml-parser does not decode numeric character references in attributes (&#x2022; etc.); done here. */
-function decodeCharRefs(s: string): string {
-  return s
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
-}
-
 // East Asian (OOXML a:ea bucket): Chinese/Japanese + Hangul (jamo/syllables), matching the EAW fullwidth ranges in metrics
 const CJK_RE =
   /[\u1100-\u11ff\u2e80-\u303e\u3041-\u33ff\u3400-\u9fff\ua960-\ua97f\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]/
@@ -3769,7 +3763,7 @@ function themeFontSource(ref: string | undefined): string | undefined {
 function parseRun(r: any, ctx: ParseContext, dflt?: LevelTextStyle): TextRun {
   const rPr = r['a:rPr'] ?? {}
   const rawT = r['a:t']
-  const text = decodeCharRefs(
+  const text = decodeNumericCharRefs(
     typeof rawT === 'string'
       ? rawT
       : rawT == null
