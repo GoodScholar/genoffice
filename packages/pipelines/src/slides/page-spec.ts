@@ -249,7 +249,10 @@ export function parsePageSpecObject(
     const type = el.type
 
     if (type === 'image') {
-      const url = typeof el.url === 'string' ? el.url.trim() : ''
+      const url =
+        typeof el.url === 'string'
+          ? el.url.trim().replace(/^https?:\/\//i, (scheme) => scheme.toLowerCase())
+          : ''
       if (!/^https?:\/\//.test(url) && !(opts.localImages && url)) {
         warnings.push(`element ${i}: image url must be http(s), dropped`)
         continue

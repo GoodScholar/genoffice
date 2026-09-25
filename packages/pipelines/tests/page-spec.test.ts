@@ -82,6 +82,23 @@ describe('parsePageSpec', () => {
     expect(r.spec.elements).toHaveLength(2)
     expect((r.spec.elements[0] as { shape: string }).shape).toBe('rect')
   })
+
+  it('accepts and normalizes uppercase HTTP(S) image URL schemes', () => {
+    const r = parsePageSpec(
+      JSON.stringify({
+        elements: [
+          { type: 'image', url: 'HTTPS://example.com/a.png', x: 0, y: 0, w: 10, h: 10 },
+          { type: 'image', url: 'HtTp://example.com/b.png', x: 10, y: 0, w: 10, h: 10 },
+        ],
+      }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.spec.elements.map((el) => (el.type === 'image' ? el.url : undefined))).toEqual([
+      'https://example.com/a.png',
+      'http://example.com/b.png',
+    ])
+  })
 })
 
 describe('parsePageSpec near-duplicate text', () => {
