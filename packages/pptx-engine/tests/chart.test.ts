@@ -239,6 +239,18 @@ describe('parseChartXml', () => {
     expect(m.series[0]!.values).toEqual([1, 2])
   })
 
+  it('ignores per-point overrides outside the series point count', () => {
+    const xml = `<c:chartSpace xmlns:c="c" xmlns:a="a"><c:chart><c:plotArea>
+<c:pieChart><c:ser><c:idx val="0"/>
+  <c:dPt><c:idx val="0"/><c:spPr><a:solidFill><a:srgbClr val="AA0000"/></a:solidFill></c:spPr></c:dPt>
+  <c:dPt><c:idx val="20000000"/><c:spPr><a:solidFill><a:srgbClr val="0000AA"/></a:solidFill></c:spPr><c:explosion val="10"/></c:dPt>
+  <c:val><c:numRef><c:numCache><c:ptCount val="1"/><c:pt idx="0"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val>
+</c:ser></c:pieChart></c:plotArea></c:chart></c:chartSpace>`
+    const s = parseChartXml(xml)!.series[0]!
+    expect(s.pointColors).toEqual(['#AA0000'])
+    expect(s.pointExplosionPct).toBeUndefined()
+  })
+
   it('parses bar+line combo: both plots kept, series tagged with plotKind', () => {
     const COMBO = `<c:chartSpace xmlns:c="c" xmlns:a="a"><c:chart><c:plotArea><c:layout/>
 <c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>
@@ -1329,6 +1341,16 @@ describe('date axis chronological order', () => {
     expect(m.series[0]!.pointColors?.[2]).toBe('#FF0000')
     expect(m.series[0]!.pointColors?.[0]).toBeUndefined()
     expect(m.catAxis?.reversed).toBe(true)
+  })
+
+  it('keeps date-axis sorting bounded when a point override has a huge index', () => {
+    const xml = chartXml('maxMin', [46174, 46143, 46113]).replace(
+      '</c:dPt>',
+      '</c:dPt><c:dPt><c:idx val="20000000"/><c:spPr><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></c:spPr></c:dPt>',
+    )
+    const m = parseChartXml(xml)!
+    expect(m.series[0]!.pointColors).toHaveLength(3)
+    expect(m.series[0]!.pointColors?.[2]).toBe('#FF0000')
   })
 
   it('reorders a series shorter than the categories by point index', () => {

@@ -566,7 +566,7 @@ export function parseChartXml(
         const pointExpl: Array<number | undefined> = []
         for (const dPt of dPts) {
           const idx = parseInt(dPt['c:idx']?.['@_val'], 10)
-          if (Number.isNaN(idx)) continue
+          if (!Number.isFinite(idx) || idx < 0 || idx >= s.values.length) continue
           const dSp = dPt['c:spPr']
           const c = resolveColorNode(dSp?.['a:solidFill'], theme)
           if (c != null) pointColors[idx] = c
