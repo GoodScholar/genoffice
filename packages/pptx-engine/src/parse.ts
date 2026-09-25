@@ -3512,7 +3512,11 @@ function parseParagraph(
     r: 'right',
     just: 'justify',
   }
-  const level = pPr['@_lvl'] ? parseInt(pPr['@_lvl'], 10) : undefined
+  const parsedLevel = pPr['@_lvl'] ? parseInt(pPr['@_lvl'], 10) : undefined
+  const level =
+    parsedLevel != null && Number.isFinite(parsedLevel)
+      ? Math.max(0, Math.min(8, parsedLevel))
+      : undefined
   // Inherited default style for this level (shape lstStyle → layout ph → master ph → master txStyles)
   const dflt = mergeTextStyleChain(chain, level ?? 0)
   // The paragraph's own <a:pPr><a:defRPr> sits between the runs and that chain:

@@ -479,7 +479,7 @@ class AutoNumCounter {
   /** Number of a numbered text paragraph; undefined for anything else (state still advances). */
   next(p: Paragraph, hasText: boolean): number | undefined {
     if (!hasText) return undefined
-    const lvl = p.level ?? 0
+    const lvl = Number.isFinite(p.level) ? Math.max(0, Math.min(8, Math.trunc(p.level!))) : 0
     const b = p.bullet
     const from = b?.type === 'number' ? lvl + 1 : lvl
     for (let l = from; l < this.counts.length; l++) this.counts[l] = 0
