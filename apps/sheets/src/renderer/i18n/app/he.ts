@@ -447,6 +447,7 @@ export const he = {
   appColumnLabel: 'עמודה {col}',
   appBridgeUnavailable: 'גשר הקבצים של שולחן העבודה אינו זמין. הפעל מחדש את אפליקציית Electron.',
   appOpenCanceled: 'בחירת חוברת העבודה בוטלה.',
+  appOpeningWorkbook: 'פותח חוברת עבודה…',
   appOpened: '{name} נפתח — עריכות תאים נשמרות חזרה עם ⌘S.',
   appOpenFailed: 'לא ניתן לפתוח את חוברת העבודה.',
   appPageSetupNeedsFile: 'פתח תחילה קובץ XLSX — הגדרת העמוד נשמרת לקובץ.',

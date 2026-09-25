@@ -287,7 +287,19 @@ describe('spare sheets view', () => {
   it('creates a fresh view when no spare is ready and does not nudge it', () => {
     manager.openSheetsTab('/tmp/budget.xlsx')
     expect(createSheetsView).toHaveBeenCalledTimes(1)
+    expect(createSheetsView).toHaveBeenCalledWith({
+      includeAiHandlers: false,
+      openingWorkbook: true,
+    })
     expect(nudgeQueuedWorkbook).not.toHaveBeenCalled()
+  })
+
+  it('starts a new blank view without the opening state', () => {
+    manager.openSheetsTab()
+    expect(createSheetsView).toHaveBeenCalledWith({
+      includeAiHandlers: false,
+      openingWorkbook: false,
+    })
   })
 
   it('drops a spare whose renderer died instead of handing it out', () => {

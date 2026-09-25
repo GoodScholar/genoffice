@@ -2066,7 +2066,9 @@ export async function exportSheetsPdfHeadless(
 }
 
 /** tab-mode equivalent of createSheetsWindow: same runtime/IPC wiring, no BrowserWindow of its own. */
-export function createSheetsView(options: { includeAiHandlers?: boolean } = {}): WebContentsView {
+export function createSheetsView(
+  options: { includeAiHandlers?: boolean; openingWorkbook?: boolean } = {},
+): WebContentsView {
   const client = sidecar ?? new XlsxSidecarClient(resolveSidecarPath())
   sidecar = client
   client.start()
@@ -2091,7 +2093,12 @@ export function createSheetsView(options: { includeAiHandlers?: boolean } = {}):
   }
   // mode=tab: the shell's tab strip owns the traffic lights / caption buttons,
   // so the ribbon must not reserve space for them
-  void view.webContents.loadURL(rendererUrl(runtime.rendererUrl, 'sheets', { mode: 'tab' }))
+  void view.webContents.loadURL(
+    rendererUrl(runtime.rendererUrl, 'sheets', {
+      mode: 'tab',
+      ...(options.openingWorkbook ? { openingWorkbook: '1' } : {}),
+    }),
+  )
   return view
 }
 

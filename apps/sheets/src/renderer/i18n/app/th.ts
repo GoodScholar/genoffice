@@ -466,6 +466,7 @@ export const th = {
   appColumnLabel: 'คอลัมน์ {col}',
   appBridgeUnavailable: 'สะพานไฟล์เดสก์ท็อปใช้งานไม่ได้ รีสตาร์ตแอป Electron',
   appOpenCanceled: 'ยกเลิกการเลือกเวิร์กบุ๊กแล้ว',
+  appOpeningWorkbook: 'กำลังเปิดสมุดงาน…',
   appOpened: 'เปิด {name} แล้ว — การแก้ไขเซลล์บันทึกกลับด้วย ⌘S',
   appOpenFailed: 'เปิดเวิร์กบุ๊กไม่ได้',
   appPageSetupNeedsFile: 'เปิดไฟล์ XLSX ก่อน — การตั้งค่าหน้ากระดาษจะถูกบันทึกลงไฟล์',

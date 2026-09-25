@@ -518,6 +518,7 @@ export const ja = {
   appBridgeUnavailable:
     'デスクトップファイルブリッジが利用できません。Electron アプリを再起動してください。',
   appOpenCanceled: 'ブックの選択をキャンセルしました。',
+  appOpeningWorkbook: 'ブックを開いています…',
   appOpened: '{name} を開きました — セルの編集は ⌘S でファイルに保存されます。',
   appOpenFailed: 'ブックを開けません。',
   appPageSetupNeedsFile: '先に XLSX ファイルを開いてください。ページ設定はファイルに保存されます。',

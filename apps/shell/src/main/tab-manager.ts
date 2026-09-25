@@ -273,7 +273,8 @@ export class TabManager {
   openSheetsTab(openPath?: string, options?: { newBlank?: boolean }): string {
     if (options?.newBlank) setSheetsNewBlank()
     const spare = this.takeSpareSheetsView()
-    const view = spare ?? createSheetsView({ includeAiHandlers: false })
+    const view =
+      spare ?? createSheetsView({ includeAiHandlers: false, openingWorkbook: Boolean(openPath) })
     // bind the path to this tab's webContents: a multi-select Open creates
     // several sheets tabs in one loop, so a single global path would be
     // overwritten before the earlier tabs consume it

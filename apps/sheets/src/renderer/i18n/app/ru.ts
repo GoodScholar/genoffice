@@ -501,6 +501,7 @@ export const ru = {
   appColumnLabel: 'Столбец {col}',
   appBridgeUnavailable: 'Мост файлов рабочего стола недоступен. Перезапустите приложение Electron.',
   appOpenCanceled: 'Выбор книги отменён.',
+  appOpeningWorkbook: 'Открытие книги…',
   appOpened: '{name} открыт — изменения ячеек сохраняются обратно с помощью ⌘S.',
   appOpenFailed: 'Не удаётся открыть книгу.',
   appPageSetupNeedsFile: 'Сначала откройте файл XLSX — параметры страницы сохраняются в файл.',

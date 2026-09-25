@@ -492,6 +492,7 @@ export const cs = {
   appBridgeUnavailable:
     'Souborové rozhraní počítače není k dispozici. Restartujte aplikaci Electron.',
   appOpenCanceled: 'Výběr sešitu zrušen.',
+  appOpeningWorkbook: 'Otevírání sešitu…',
   appOpened: 'Otevřeno {name} — úpravy buněk se uloží zpět pomocí ⌘S.',
   appOpenFailed: 'Sešit nelze otevřít.',
   appPageSetupNeedsFile: 'Nejprve otevřete soubor XLSX — vzhled stránky se ukládá do souboru.',

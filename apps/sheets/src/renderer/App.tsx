@@ -451,7 +451,11 @@ function dateTextKind(value: string): 'date-like' | 'text' {
   return kind
 }
 
-export function App(): React.JSX.Element {
+export function App({
+  queuedWorkbookAtBoot = false,
+}: {
+  queuedWorkbookAtBoot?: boolean
+}): React.JSX.Element {
   const adapterRef = useRef(new InMemoryWorkbookAdapter(initialSnapshot))
   const univerRef = useRef<UniverRuntime | null>(null)
   const lazyWorkbookRef = useRef<LazyWorkbookState | null>(null)
@@ -591,6 +595,11 @@ export function App(): React.JSX.Element {
   const [fullLoadPrompt, setFullLoadPrompt] = useState<'ask' | 'tooLarge' | null>(null)
   const fullLoadRunning = useRef(false)
   const [message, setMessage] = useState(t('appReadyInitial'))
+  const [openingWorkbook, setOpeningWorkbook] = useState(
+    () =>
+      queuedWorkbookAtBoot ||
+      new URLSearchParams(window.location.search).get('openingWorkbook') === '1',
+  )
   const [emptyCsvNotice, setEmptyCsvNotice] = useState(false)
   /// Zoom of the active sheet in percent, echoed by the status-bar slider.
   const [zoomPercent, setZoomPercent] = useState(100)
@@ -3748,7 +3757,10 @@ export function App(): React.JSX.Element {
     return state.hyperlinkTargets.get(sheetId)?.get(`${row}:${column}`) ?? null
   }
 
-  function openLazyWorkbook(opened: WorkbookFile, opts?: { continueChat?: boolean }): void {
+  function openLazyWorkbook(
+    opened: WorkbookFile,
+    opts?: { continueChat?: boolean; onInitialRangeLoaded?: () => void },
+  ): void {
     if (opts?.continueChat) chatContinuesRef.current = true
     const selected: WorkbookFile = {
       ...opened,
@@ -3906,7 +3918,10 @@ export function App(): React.JSX.Element {
     if (runtime) {
       requestAnimationFrame(() => {
         const workbook = runtime.univerAPI.getActiveWorkbook()
-        if (!workbook) return
+        if (!workbook) {
+          opts?.onInitialRangeLoaded?.()
+          return
+        }
         // Register existing file tables so Univer renders filter dropdowns
         // and banding. This is visual-only (the journal is empty for file
         // tables), so failures are swallowed — the data is still usable.
@@ -3973,7 +3988,10 @@ export function App(): React.JSX.Element {
           consumePendingUndoCarry(runtime, workbook.getId())
         })
         const worksheet = workbook.getActiveSheet()
-        if (!worksheet) return
+        if (!worksheet) {
+          opts?.onInitialRangeLoaded?.()
+          return
+        }
         // apply the opening sheet's formula view (sheetView/@showFormulas)
         applyShowFormulasView(runtime, state, worksheet.getSheetId())
         queueVisualInstall(
@@ -4019,6 +4037,12 @@ export function App(): React.JSX.Element {
           restore && restoredSheet
             ? { row: restore.viewRow, column: restore.viewColumn }
             : undefined,
+        ).then(
+          () => opts?.onInitialRangeLoaded?.(),
+          (error: unknown) => {
+            setMessage(error instanceof Error ? error.message : t('appLoadRangeFailed'))
+            opts?.onInitialRangeLoaded?.()
+          },
         )
         if (state.formulaMode) {
           void preloadEntireWorkbook(runtime, lazyWorkbookRef, setMessage)
@@ -4029,12 +4053,19 @@ export function App(): React.JSX.Element {
           }, 1500)
         }
       })
+    } else {
+      opts?.onInitialRangeLoaded?.()
     }
   }
 
   async function handleInspectWorkbook(): Promise<void> {
     if (workbookOpeningRef.current) return
     workbookOpeningRef.current = true
+    setOpeningWorkbook(true)
+    const finishOpening = (): void => {
+      workbookOpeningRef.current = false
+      setOpeningWorkbook(false)
+    }
     try {
       if (!window.desktopApi) {
         throw new Error(t('appBridgeUnavailable'))
@@ -4042,15 +4073,15 @@ export function App(): React.JSX.Element {
       const selected = await window.desktopApi.selectWorkbook()
       if (!selected) {
         setMessage(t('appOpenCanceled'))
+        finishOpening()
         return
       }
-      openLazyWorkbook(selected)
+      openLazyWorkbook(selected, { onInitialRangeLoaded: finishOpening })
       setEmptyCsvNotice(selected.emptyCsv === true)
       setMessage(selected.emptyCsv ? '' : t('appOpened', { name: selected.name }))
     } catch (error: unknown) {
       setMessage(error instanceof Error ? error.message : t('appOpenFailed'))
-    } finally {
-      workbookOpeningRef.current = false
+      finishOpening()
     }
   }
 
@@ -4087,6 +4118,7 @@ export function App(): React.JSX.Element {
   }
 
   menuActionRef.current = (action) => {
+    if (action !== 'open' && (openingWorkbook || workbookOpeningRef.current)) return
     if (action === 'open') {
       void handleInspectWorkbook()
     } else if (action === 'print') {
@@ -4437,6 +4469,7 @@ export function App(): React.JSX.Element {
         />
       )}
       <ExcelShell
+        openingWorkbook={openingWorkbook}
         prompt={prompt}
         preview={preview}
         sheetHasContent={sheetHasContent}
@@ -4448,7 +4481,7 @@ export function App(): React.JSX.Element {
           return solveGoalSeek(runtime, { setCell, toValue, byCell })
         }}
         selectionFormat={selectionFormat}
-        statusMessage={message}
+        statusMessage={openingWorkbook ? t('appOpeningWorkbook') : message}
         emptyCsvNotice={emptyCsvNotice}
         onOpenWorkbook={() => void handleInspectWorkbook()}
         onDismissEmptyCsvNotice={() => setEmptyCsvNotice(false)}
@@ -4520,6 +4553,11 @@ export function App(): React.JSX.Element {
         onGetConsolidateDefault={() => consolidateDefaultReferenceImpl(dataToolsContext())}
         onApplyHeaderFooter={(result) => handleApplyHeaderFooterImpl(pageLayoutContext(), result)}
       />
+      {openingWorkbook && (
+        <div className="workbook-opening-screen" role="status" aria-live="polite">
+          {t('appOpeningWorkbook')}
+        </div>
+      )}
       {advancedFilterColumns !== null && (
         <AdvancedFilterDialog
           columns={advancedFilterColumns}

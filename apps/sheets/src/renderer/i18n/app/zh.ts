@@ -438,6 +438,7 @@ export const zh = {
   // Open / save / page setup
   appBridgeUnavailable: '桌面文件桥不可用。请重启 Electron 应用。',
   appOpenCanceled: '已取消选择工作簿。',
+  appOpeningWorkbook: '正在打开工作簿…',
   appOpened: '已打开 {name}——单元格编辑用 ⌘S 保存回文件。',
   appOpenFailed: '无法打开工作簿。',
   appPageSetupNeedsFile: '请先打开 XLSX 文件——页面设置会保存进文件。',
