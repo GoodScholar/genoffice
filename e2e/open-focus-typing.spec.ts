@@ -81,23 +81,35 @@ test('docs: typing works immediately after opening a file from Home', async () =
   }
 })
 
-test('sheets: typing into the active cell works immediately after opening from Home', async () => {
+test('sheets: typing works when a spare view opens the next workbook', async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'genoffice-openfocus-e2e-'))
-  const xlsx = join(scratch, 'open-focus.xlsx')
-  await copyFile(XLSX, xlsx)
+  const firstXlsx = join(scratch, 'first.xlsx')
+  const secondXlsx = join(scratch, 'second.xlsx')
+  await copyFile(XLSX, firstXlsx)
+  await copyFile(XLSX, secondXlsx)
 
   const launched = await launchShell({
     onboardingSeen: true,
     videoDir: 'open-focus-sheets',
-    // the real production open path adopts the pre-mounted spare sheets view
-    // (helpers disable it by default) — the focus bug only shows through it
+    // Keep prewarming enabled: the focus bug only shows when a spare is reused.
     env: { GENOFFICE_DEBUG_HOOKS: '1', GENOFFICE_NO_SPARE_VIEW: '' },
   })
   try {
-    // let the spare view mount (scheduled 1.5s after the shell finishes loading)
-    await launched.page.waitForTimeout(2_500)
-    await openFromHome(launched.app, launched.page, xlsx)
-    const sheets = await waitForPageWithUrl(launched.app, '://sheets/')
+    await openFromHome(launched.app, launched.page, firstXlsx)
+    const firstSheets = await waitForPageWithUrl(launched.app, '://sheets/')
+    // A spare is now created only while Sheets is active.
+    await expect
+      .poll(
+        () => launched.app.windows().filter((page) => page.url().includes('://sheets/')).length,
+        {
+          timeout: 15_000,
+        },
+      )
+      .toBe(2)
+    const sheets = launched.app
+      .windows()
+      .find((page) => page !== firstSheets && page.url().includes('://sheets/'))!
+    await openFromHome(launched.app, launched.page, secondXlsx)
     await sheets.waitForFunction(
       () =>
         (window as unknown as { __genofficeDebug?: { univerAPI?: unknown } }).__genofficeDebug
