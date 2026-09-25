@@ -163,6 +163,55 @@ describe('parseFileToText: pptx', () => {
     expect(await pptxToText(await zip.generateAsync({ type: 'uint8array' }))).toBe('## Slide 1')
   })
 
+  async function alternateContentSlide(choice: string, fallback: string): Promise<string> {
+    const zip = new JSZip()
+    zip.file(
+      'ppt/slides/slide1.xml',
+      '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ' +
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">' +
+        '<p:cSld><p:spTree><mc:AlternateContent>' +
+        `<mc:Choice Requires="p14">${choice}</mc:Choice>` +
+        `<mc:Fallback>${fallback}</mc:Fallback>` +
+        '</mc:AlternateContent></p:spTree></p:cSld></p:sld>',
+    )
+    return pptxToText(await zip.generateAsync({ type: 'uint8array' }))
+  }
+
+  const shapeText = (text: string) =>
+    `<p:sp><p:txBody><a:p><a:r><a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`
+
+  it('extracts one AlternateContent text representation', async () => {
+    expect(await alternateContentSlide(shapeText('Choice text'), shapeText('Fallback text'))).toBe(
+      '## Slide 1\nChoice text',
+    )
+  })
+
+  it('extracts one AlternateContent run inside a paragraph', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'ppt/slides/slide1.xml',
+      '<p:sld><p:cSld><p:spTree><p:sp><p:txBody><a:p><mc:AlternateContent>' +
+        '<mc:Choice><a:r><a:t>Choice run</a:t></a:r></mc:Choice>' +
+        '<mc:Fallback><a:r><a:t>Fallback run</a:t></a:r></mc:Fallback>' +
+        '</mc:AlternateContent></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
+    )
+    expect(await pptxToText(await zip.generateAsync({ type: 'uint8array' }))).toBe(
+      '## Slide 1\nChoice run',
+    )
+  })
+
+  it('uses Fallback text when Choice has no extractable text', async () => {
+    expect(await alternateContentSlide('<p:pic/>', shapeText('Fallback text'))).toBe(
+      '## Slide 1\nFallback text',
+    )
+  })
+
+  it('counts pictures from only the selected AlternateContent branch', async () => {
+    const text = await alternateContentSlide('<p:pic/>', '<p:pic/>')
+    expect(text).toContain('## Slide 1\n[picture-only slide: 1 image, no extractable text]')
+  })
+
   it('keeps a:tab as a tab between runs', async () => {
     const zip = new JSZip()
     zip.file(

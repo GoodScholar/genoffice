@@ -97,11 +97,33 @@ function collectText(nodes: readonly unknown[], out: string[], isText = false): 
         out.push('\n')
       } else if (key === 'a:tab') {
         out.push('\t')
+      } else if (key === 'mc:AlternateContent' && Array.isArray(value)) {
+        collectText(alternateContentBranch(value), out, isText)
       } else if (Array.isArray(value)) {
         collectText(value, out, key === 'a:t')
       }
     }
   }
+}
+
+function alternateContentBranch(nodes: readonly unknown[]): readonly unknown[] {
+  const choices: unknown[][] = []
+  let fallback: unknown[] | undefined
+  for (const node of nodes) {
+    if (node == null || typeof node !== 'object') continue
+    for (const [key, value] of Object.entries(node)) {
+      if (!Array.isArray(value)) continue
+      if (key === 'mc:Choice') choices.push(value)
+      else if (key === 'mc:Fallback') fallback = value
+    }
+  }
+  // Prefer a Choice we can extract text from; otherwise use the compatibility fallback.
+  const textChoice = choices.find((choice) => {
+    const texts: string[] = []
+    collectText(choice, texts)
+    return texts.join('').trim().length > 0
+  })
+  return textChoice ?? fallback ?? choices[0] ?? []
 }
 
 /** walk the slide tree; each a:p paragraph becomes one output entry (a:br splits it further) */
@@ -115,6 +137,8 @@ function collectParagraphs(nodes: readonly unknown[], out: string[]): void {
         collectText(value, texts)
         const line = texts.join('')
         if (line.trim()) out.push(line)
+      } else if (key === 'mc:AlternateContent') {
+        collectParagraphs(alternateContentBranch(value), out)
       } else {
         collectParagraphs(value, out)
       }
@@ -129,6 +153,7 @@ function countPictures(nodes: readonly unknown[]): number {
     for (const [key, value] of Object.entries(node)) {
       if (!Array.isArray(value)) continue
       if (key === 'p:pic') count += 1
+      else if (key === 'mc:AlternateContent') count += countPictures(alternateContentBranch(value))
       else count += countPictures(value)
     }
   }
