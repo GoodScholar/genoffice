@@ -160,6 +160,32 @@ describe('AgentLoop', () => {
     expect(transport.requests[1].messageCount).toBe(3)
   })
 
+  it('keeps an opaque tool-call signature in the assistant history', async () => {
+    const transport = scriptedTransport([
+      (cb) => {
+        cb.onToolCall({
+          id: 't1',
+          name: 'do_thing',
+          input: {},
+          thoughtSignature: 'opaque-signature',
+        })
+        cb.onDone()
+      },
+      (cb) => cb.onDone(),
+    ])
+    const loop = new AgentLoop({ transport, skill: makeSkill() })
+    loop.run('make a change')
+    await flush()
+    await flush()
+    const assistant = loop.messages[1] as Extract<AgentMessage, { role: 'assistant' }>
+    expect(assistant.toolCalls?.[0]).toEqual({
+      id: 't1',
+      name: 'do_thing',
+      input: {},
+      thoughtSignature: 'opaque-signature',
+    })
+  })
+
   it('stores streamed reasoning on the tool-calling assistant message and drops it on the next run', async () => {
     const transport = scriptedTransport([
       (cb) => {

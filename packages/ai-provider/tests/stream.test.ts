@@ -529,6 +529,92 @@ describe('streamForProvider: anthropic', () => {
 })
 
 describe('streamForProvider: gemini', () => {
+  it('returns a streamed function-call signature in the same part on the next turn', async () => {
+    const first = okResponse(
+      sseStream([
+        'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"write_document","args":{"title":"A"}},"thoughtSignature":"opaque-signature"}]},"finishReason":"STOP"}]}',
+      ]),
+    )
+    const second = okResponse(
+      sseStream([
+        'data: {"candidates":[{"content":{"parts":[{"text":"done"}]},"finishReason":"STOP"}]}',
+      ]),
+    )
+    const fetchMock = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second)
+    vi.stubGlobal('fetch', fetchMock)
+    const { toolCalls, cb } = collector()
+    await streamForProvider(
+      'gemini',
+      { apiKey: 'k', model: 'gemini-3.5-flash-lite' },
+      'sys',
+      [],
+      [],
+      100,
+      cb,
+    )
+    expect(toolCalls[0]).toMatchObject({
+      name: 'write_document',
+      thoughtSignature: 'opaque-signature',
+    })
+
+    await streamForProvider(
+      'gemini',
+      { apiKey: 'k', model: 'gemini-3.5-flash-lite' },
+      'sys',
+      [
+        { role: 'user', text: 'write a document' },
+        { role: 'assistant', text: '', toolCalls },
+        { role: 'tool', results: [{ id: toolCalls[0]!.id, name: 'write_document', output: 'ok' }] },
+      ],
+      [],
+      100,
+      collector().cb,
+    )
+    const request = JSON.parse((fetchMock.mock.calls[1]![1] as RequestInit).body as string)
+    expect(request.contents[1].parts).toEqual([
+      {
+        functionCall: { name: 'write_document', args: { title: 'A' } },
+        thoughtSignature: 'opaque-signature',
+      },
+    ])
+  })
+
+  it('captures snake-case function-call signatures from a JSON response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    functionCall: { name: 'write_document', args: {} },
+                    thought_signature: 'json-signature',
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    )
+    const { toolCalls, cb } = collector()
+    await streamForProvider(
+      'gemini',
+      { apiKey: 'k', model: 'gemini-3.5-flash-lite' },
+      'sys',
+      [],
+      [],
+      100,
+      cb,
+    )
+    expect(toolCalls[0]).toMatchObject({
+      name: 'write_document',
+      thoughtSignature: 'json-signature',
+    })
+  })
+
   it('emits text and a whole (non-partial) function call', async () => {
     const body = sseStream([
       'data: {"candidates":[{"content":{"parts":[{"text":"hi there"}]}}]}',
