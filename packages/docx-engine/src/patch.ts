@@ -65,8 +65,8 @@ import { PAGE_MARK, TOTAL_PAGES_MARK } from './types'
 import { patchParagraphTexts } from './text-patch'
 import { balanceFieldChars } from './field-balance'
 import {
-  mergeStyleXml,
   mergeDefaultFontsXml,
+  upsertStyleInStylesXml,
   type DefaultFonts,
   type StyleUpsert,
 } from './style-upsert'
@@ -896,16 +896,7 @@ export async function saveDocx(
       ? await file.async('string')
       : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' +
         '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"></w:styles>'
-    for (const up of options.styleUpserts ?? []) {
-      const existing = new RegExp(
-        `<w:style [^>]*w:styleId="${up.styleId.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}"[\\s\\S]*?</w:style>`,
-      )
-      const match = existing.exec(xml)
-      const styleXml = mergeStyleXml(match?.[0] ?? null, up)
-      xml = match
-        ? xml.replace(existing, () => styleXml)
-        : xml.replace('</w:styles>', `${styleXml}</w:styles>`)
-    }
+    for (const up of options.styleUpserts ?? []) xml = upsertStyleInStylesXml(xml, up)
     stylesXmlOut = options.defaultFonts ? mergeDefaultFontsXml(xml, options.defaultFonts) : xml
   }
 

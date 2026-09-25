@@ -31,6 +31,17 @@ describe('style font slot isolation', () => {
     expect(xml).toContain('<w:b/>')
     expect(xml).not.toContain('w:asciiTheme')
   })
+
+  it('patches single-quoted style and font attributes without losing other font slots', () => {
+    const xml = mergeStyleXml(
+      "<w:style w:type='paragraph' w:styleId='Body'><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri' w:eastAsia='SimSun'/></w:rPr></w:style>",
+      { styleId: 'Body', rPr: { font: 'Arial' } },
+    )
+    expect(xml).toContain('w:styleId="Body"')
+    expect(xml).toContain('w:ascii="Arial"')
+    expect(xml).toContain('w:hAnsi="Arial"')
+    expect(xml).toContain('w:eastAsia="SimSun"')
+  })
 })
 
 import { buildDocx } from './helpers/build-docx'
@@ -111,6 +122,38 @@ it('previews and persists per-slot inheritance for both style types', async () =
   expect(preview.styles).toEqual(reopened.styles)
   expect(preview.docDefaults).toEqual(reopened.docDefaults)
 })
+
+it('previews and saves a single-quoted style in place', async () => {
+  const parsed = await parseDocx(
+    await buildDocx({
+      bodyXml: '<w:p><w:r><w:t>Text</w:t></w:r></w:p>',
+      stylesXml:
+        '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+        "<w:style w:type = 'paragraph' w:styleId = 'Other'/>" +
+        "<w:style w:type='paragraph' w:styleId='Body'><w:name w:val='Body'/>" +
+        "<w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri' w:eastAsia='SimSun'/></w:rPr>" +
+        '</w:style></w:styles>',
+    }),
+  )
+  const upsert = { styleId: 'Body', rPr: { font: 'Arial' } }
+  const preview = await previewFontSettings(parsed, [upsert])
+  expect(preview.styles.get('Body')?.display).toMatchObject({
+    fontAscii: 'Arial',
+    eastAsiaFont: 'SimSun',
+  })
+
+  const saved = await saveDocx(parsed, [{ kind: 'original', docxIndex: 0 }], {
+    styleUpserts: [upsert],
+  })
+  const savedStyles = await (await JSZip.loadAsync(saved)).file('word/styles.xml')!.async('string')
+  expect(savedStyles.match(/<w:style\b[^>]*\bw:styleId=(?:"Body"|'Body')/g)).toHaveLength(1)
+  const reopened = await parseDocx(saved)
+  expect(reopened.styles.get('Body')?.display).toMatchObject({
+    fontAscii: 'Arial',
+    eastAsiaFont: 'SimSun',
+  })
+})
+
 it('an East Asian-only edit does not materialize inherited Latin or complex-script slots', async () => {
   const parsed = await parseDocx(
     await buildDocx({ bodyXml: '<w:p><w:r><w:t>\u4e2d\u6587 English 123</w:t></w:r></w:p>' }),
