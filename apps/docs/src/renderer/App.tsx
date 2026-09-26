@@ -6464,6 +6464,7 @@ export function App() {
       {viewImage && (
         <ImageViewer
           src={viewImage}
+          lang={lang}
           labels={{
             zoomIn: t('ribbonZoomIn'),
             zoomOut: t('ribbonZoomOut'),

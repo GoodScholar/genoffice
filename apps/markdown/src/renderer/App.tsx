@@ -127,7 +127,7 @@ export function deriveAutoFileName(editor: Editor): string {
 }
 
 export default function App() {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
   const [status, setStatus] = useState<LoadStatus>('loading')
   const [filePath, setFilePath] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -955,6 +955,7 @@ export default function App() {
       {viewImage && (
         <ImageViewer
           src={viewImage}
+          lang={lang}
           labels={{
             zoomIn: t('zoomIn'),
             zoomOut: t('zoomOut'),
