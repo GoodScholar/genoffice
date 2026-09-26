@@ -113,6 +113,37 @@ const TURN_LIMIT_NOTE =
   '[System] The tool-call turn limit for this request has been reached; no more tools may be called this turn. ' +
   'Answer directly from the information already gathered; if the task is unfinished, briefly state what is done and what remains.'
 
+export const TOOL_ABORTED_OUTPUT =
+  '(the user stopped the run while this tool was still executing; its result was discarded)'
+
+const TOOL_ABORTED = Symbol('tool-aborted')
+
+async function awaitToolOrAbort(
+  tool: ToolExecution | Promise<ToolExecution>,
+  signal: AbortSignal | undefined,
+): Promise<ToolExecution | typeof TOOL_ABORTED> {
+  if (!signal) return tool
+  if (signal.aborted) return TOOL_ABORTED
+  const running = Promise.resolve(tool)
+  return new Promise<ToolExecution | typeof TOOL_ABORTED>((resolve, reject) => {
+    const onAbort = (): void => {
+      resolve(TOOL_ABORTED)
+      running.catch(() => undefined)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    running.then(
+      (execution) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(execution)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
+}
+
 /**
  * Terminal assistant text when tools mutated the artifact (or an edits-only
  * turn was restored) and the model returned no prose. Must be non-empty so
@@ -724,17 +755,32 @@ export class AgentLoop<TSnapshot = unknown> {
       this.inputParseFails = 0
       events?.onToolStart?.(call)
       const snapshot = !this.mutationSeen ? captureSnapshot?.() : undefined
-      let execution: ToolExecution
+      let raced: ToolExecution | typeof TOOL_ABORTED
       try {
-        execution = await skill.executeTool(call, this.abortController?.signal)
+        raced = await awaitToolOrAbort(
+          skill.executeTool(call, this.abortController?.signal),
+          this.abortController?.signal,
+        )
       } catch (e) {
-        execution = {
+        raced = {
           output: e instanceof Error ? e.message : String(e),
           isError: true,
           summary: call.name,
         }
       }
       if (generation !== this.generation) return // reset while a tool was running
+      if (raced === TOOL_ABORTED) {
+        const aborted: ToolExecution = {
+          output: TOOL_ABORTED_OUTPUT,
+          isError: true,
+          summary: call.name,
+        }
+        this.executedCalls.push({ name: call.name, ok: false })
+        results.push({ id: call.id, name: call.name, output: aborted.output, isError: true })
+        events?.onToolExecuted?.({ call, execution: aborted })
+        continue
+      }
+      const execution = raced
       this.executedCalls.push({ name: call.name, ok: !execution.isError })
       const firstMutation = !!execution.mutated && !this.mutationSeen
       if (execution.mutated) {
