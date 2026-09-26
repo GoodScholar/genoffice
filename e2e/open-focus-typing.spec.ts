@@ -19,11 +19,21 @@ const XLSX = resolve(__dirname, '../apps/sheets/fixtures/generated/compatibility
 
 /** the Home-list click that precedes an open leaves keyboard focus on chrome */
 async function openFromHome(app: ElectronApplication, home: Page, file: string): Promise<void> {
-  await app.evaluate(({ BrowserWindow }) => {
+  await app.evaluate(({ app: electronApp, BrowserWindow }) => {
+    electronApp.focus({ steal: true })
     const win = BrowserWindow.getAllWindows()[0]
     win.focus()
     win.webContents.focus()
   })
+  // Native window activation is asynchronous (especially between app launches).
+  await expect
+    .poll(() =>
+      app.evaluate(({ BrowserWindow }) => {
+        const win = BrowserWindow.getAllWindows()[0]
+        return win.isFocused() && win.webContents.isFocused()
+      }),
+    )
+    .toBe(true)
   await home.evaluate(
     (p) =>
       (window as unknown as { aiOffice: { openPath(p: string): Promise<void> } }).aiOffice.openPath(
@@ -33,11 +43,13 @@ async function openFromHome(app: ElectronApplication, home: Page, file: string):
   )
 }
 
-/** the fix's observable end state: the document's editable surface holds focus */
+/** the document's editable surface must hold focus before typing */
 async function waitForEditableFocus(page: Page): Promise<void> {
-  await page.waitForFunction(() => document.activeElement?.isContentEditable === true, null, {
-    timeout: 30_000,
-  })
+  await page.waitForFunction(
+    () => document.activeElement instanceof HTMLElement && document.activeElement.isContentEditable,
+    null,
+    { timeout: 30_000 },
+  )
 }
 
 /** Playwright's keyboard bypasses Electron-level focus, so the shell layer is
@@ -57,6 +69,55 @@ async function expectViewFocused(app: ElectronApplication, urlPart: string): Pro
       ),
     )
     .toBe(true)
+}
+
+async function cellA1Value(page: Page): Promise<unknown> {
+  return page.evaluate(() => {
+    const api = (
+      window as unknown as {
+        __genofficeDebug: {
+          univerAPI: {
+            getActiveWorkbook(): {
+              getActiveSheet(): { getRange(a: string): { getValue(): unknown } }
+            }
+          }
+        }
+      }
+    ).__genofficeDebug.univerAPI
+    return api.getActiveWorkbook()?.getActiveSheet()?.getRange('A1')?.getValue() ?? null
+  })
+}
+
+/** Observe an initialized hidden spare before opening a workbook. */
+async function waitForSpareViewReady(app: ElectronApplication): Promise<number> {
+  let spareId = 0
+  await expect
+    .poll(
+      async () => {
+        const spare = await app.evaluate(async ({ BrowserWindow, WebContentsView }) => {
+          const view = BrowserWindow.getAllWindows()[0].contentView.children.find(
+            (child): child is Electron.WebContentsView =>
+              child instanceof WebContentsView &&
+              !child.getVisible() &&
+              child.webContents.getURL().includes('://sheets/'),
+          )
+          if (!view || view.getVisible() || view.webContents.isLoading()) return null
+          const mounted = await view.webContents.executeJavaScript(`
+              window.__genofficeSpareViewReady?.() === true &&
+              document.querySelector('#univer-container canvas') !== null &&
+              document.querySelector('#univer-container [contenteditable="true"]') !== null
+            `)
+          return mounted ? view.webContents.id : null
+        })
+        if (spare === null) return false
+        spareId = spare
+        return true
+      },
+      { timeout: 60_000 },
+    )
+    .toBe(true)
+
+  return spareId
 }
 
 test('docs: typing works immediately after opening a file from Home', async () => {
@@ -97,15 +158,9 @@ test('sheets: typing works when a spare view opens the next workbook', async () 
   try {
     await openFromHome(launched.app, launched.page, firstXlsx)
     const firstSheets = await waitForPageWithUrl(launched.app, '://sheets/')
-    // A spare is now created only while Sheets is active.
-    await expect
-      .poll(
-        () => launched.app.windows().filter((page) => page.url().includes('://sheets/')).length,
-        {
-          timeout: 15_000,
-        },
-      )
-      .toBe(2)
+    // Prewarming starts only while Sheets is active. Wait for the hidden
+    // replacement to finish initialization before opening the second file.
+    const spareId = await waitForSpareViewReady(launched.app)
     const sheets = launched.app
       .windows()
       .find((page) => page !== firstSheets && page.url().includes('://sheets/'))!
@@ -117,29 +172,30 @@ test('sheets: typing works when a spare view opens the next workbook', async () 
       null,
       { timeout: 60_000 },
     )
-    await expectViewFocused(launched.app, '://sheets/')
-    await waitForEditableFocus(sheets)
-
-    await sheets.keyboard.type('4242')
-    await sheets.keyboard.press('Enter')
+    // The same hidden webContents must be adopted and receive Electron focus.
     await expect
       .poll(() =>
-        sheets.evaluate(() => {
-          const api = (
-            window as unknown as {
-              __genofficeDebug: {
-                univerAPI: {
-                  getActiveWorkbook(): {
-                    getActiveSheet(): { getRange(a: string): { getValue(): unknown } }
-                  }
-                }
-              }
-            }
-          ).__genofficeDebug.univerAPI
-          return api.getActiveWorkbook()?.getActiveSheet()?.getRange('A1')?.getValue() ?? null
-        }),
+        launched.app.evaluate(({ BrowserWindow, WebContentsView }, id) => {
+          const win = BrowserWindow.getAllWindows()[0]
+          const view = win.contentView.children.find(
+            (child): child is Electron.WebContentsView =>
+              child instanceof WebContentsView && child.webContents.id === id,
+          )
+          return {
+            visible: view?.getVisible(),
+            focused: view?.webContents.isFocused(),
+          }
+        }, spareId),
       )
-      .toBe(4242)
+      .toEqual({ visible: true, focused: true })
+    // The debug API is published before the file's first range streams in.
+    // Wait for the fixture data and the opening guard before sending keys.
+    await expect.poll(() => cellA1Value(sheets)).toBe('Old')
+    await expect(sheets.locator('main.app-shell')).toHaveAttribute('aria-busy', 'false')
+    await waitForEditableFocus(sheets)
+    await sheets.keyboard.type('4242')
+    await sheets.keyboard.press('Enter')
+    await expect.poll(() => cellA1Value(sheets)).toBe(4242)
   } finally {
     await closeAndSaveVideo(launched, 'open-focus-sheets')
   }

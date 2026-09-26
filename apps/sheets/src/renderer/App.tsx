@@ -1602,6 +1602,13 @@ export function App({
     installFilterRangeOutlineSuppression(runtime)
     loadSnapshotIntoUniver(runtime, initialSnapshot, 'new-workbook', 'Untitled')
     univerRef.current = runtime
+    // The hidden spare can have a canvas/editor before Univer finishes booting.
+    // Expose its lifecycle readiness only to explicitly enabled e2e drivers.
+    if ((window as unknown as Record<string, unknown>).__genofficeDebugHooks === true) {
+      ;(window as unknown as Record<string, unknown>).__genofficeSpareViewReady = () =>
+        runtime.univerAPI.getCurrentLifecycleStage() ===
+        runtime.univerAPI.Enum.LifecycleStages.Steady
+    }
     // a throwing construction must not poison the injector's depth counter
     installInjectorResolutionGuard(runtime)
     // find-bar reveals share scrollToCell's broken freeze offset (r135)
