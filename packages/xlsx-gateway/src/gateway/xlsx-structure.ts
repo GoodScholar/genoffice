@@ -73,6 +73,79 @@ export type RowColumnOp = Extract<StructuralOp, { index: number }>
 
 export class StructuralShiftError extends Error {}
 
+export function inferWorksheetAddresses(worksheetXml: string): string {
+  const sheetDataOpen = /<sheetData\b[^>]*>/.exec(worksheetXml)
+  const closeIndex = worksheetXml.lastIndexOf('</sheetData>')
+  if (!sheetDataOpen || closeIndex < sheetDataOpen.index + sheetDataOpen[0].length) {
+    return worksheetXml
+  }
+
+  const bodyStart = sheetDataOpen.index + sheetDataOpen[0].length
+  const body = worksheetXml.slice(bodyStart, closeIndex)
+  let currentRow = 0
+  let firstRow = true
+  let changed = false
+  const normalizedBody = body.replace(/<row\b[^>]*?(?:\/>|>[\s\S]*?<\/row>)/g, (rowXml) => {
+    const rowOpenEnd = rowXml.indexOf('>')
+    if (rowOpenEnd === -1) return rowXml
+    const selfClosing = rowXml.slice(0, rowOpenEnd).endsWith('/>')
+    const rowOpen = selfClosing ? rowXml.slice(0, rowOpenEnd) : rowXml.slice(0, rowOpenEnd + 1)
+    const rowBody = selfClosing ? '' : rowXml.slice(rowOpenEnd + 1, rowXml.length - '</row>'.length)
+    const explicitRow = readPositiveInteger(readTagAttribute(rowOpen, 'r'))
+    const rowNumber = explicitRow ?? (firstRow ? 1 : currentRow + 1)
+    firstRow = false
+    currentRow = rowNumber
+    let nextColumn = 0
+    const rowAttributeMissing = readTagAttribute(rowOpen, 'r') === undefined
+    let rowChanged = rowAttributeMissing
+    const normalizedCells = rowBody.replace(/<c\b[^>]*?(?:\/>|>[\s\S]*?<\/c>)/g, (cellXml) => {
+      const cellOpenEnd = cellXml.indexOf('>')
+      if (cellOpenEnd === -1) return cellXml
+      const cellSelfClosing = cellXml.slice(0, cellOpenEnd).endsWith('/>')
+      const cellOpen = cellSelfClosing
+        ? cellXml.slice(0, cellOpenEnd)
+        : cellXml.slice(0, cellOpenEnd + 1)
+      const cellBody = cellSelfClosing
+        ? ''
+        : cellXml.slice(cellOpenEnd + 1, cellXml.length - '</c>'.length)
+      const explicitAddress = readTagAttribute(cellOpen, 'r')
+      const parsed = explicitAddress === undefined ? null : parseA1(explicitAddress)
+      nextColumn = parsed === null ? nextColumn + 1 : parsed.column + 1
+      if (explicitAddress !== undefined) return cellXml
+      rowChanged = true
+      const address = `${columnToLetters(nextColumn - 1)}${rowNumber}`
+      const normalizedOpen = addTagAttribute(cellOpen, 'r', address)
+      return cellSelfClosing ? normalizedOpen : `${normalizedOpen}${cellBody}</c>`
+    })
+    const normalizedOpen = rowAttributeMissing
+      ? addTagAttribute(rowOpen, 'r', String(rowNumber))
+      : rowOpen
+    changed ||= rowChanged
+    return selfClosing
+      ? `${normalizedOpen}${normalizedCells}`
+      : `${normalizedOpen}${normalizedCells}</row>`
+  })
+
+  return changed
+    ? worksheetXml.slice(0, bodyStart) + normalizedBody + worksheetXml.slice(closeIndex)
+    : worksheetXml
+}
+
+function readTagAttribute(tag: string, name: string): string | undefined {
+  return new RegExp(`(?:^|\\s)${name}="([^"]*)"`).exec(tag)?.[1]
+}
+
+function addTagAttribute(tag: string, name: string, value: string): string {
+  const nameEnd = /^<[^ \t\r\n/>]+/.exec(tag)?.[0].length ?? 1
+  return `${tag.slice(0, nameEnd)} ${name}="${value}"${tag.slice(nameEnd)}`
+}
+
+function readPositiveInteger(value: string | undefined): number | undefined {
+  if (value === undefined || !/^[0-9]+$/.test(value)) return undefined
+  const number = Number(value)
+  return number > 0 && Number.isSafeInteger(number) ? number : undefined
+}
+
 export function applyStructuralOps(
   worksheetXml: string,
   ops: readonly StructuralOp[],
@@ -82,7 +155,7 @@ export function applyStructuralOps(
   /// whenever such ops exist).
   resolveColStyle?: (baseXfIndex: number, delta: WorkbookStyleEdit) => number,
 ): string {
-  let xml = worksheetXml
+  let xml = ops.length === 0 ? worksheetXml : inferWorksheetAddresses(worksheetXml)
   let outlineTouched = false
   for (const op of ops) {
     if ('start' in op) {

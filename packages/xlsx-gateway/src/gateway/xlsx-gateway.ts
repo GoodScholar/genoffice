@@ -105,6 +105,7 @@ import {
 } from './xlsx-hyperlinks'
 import {
   applyStructuralOps,
+  inferWorksheetAddresses,
   isShiftingOp,
   shiftChartReferences,
   shiftCrossSheetFormulas,
@@ -514,7 +515,7 @@ export async function readBasicWorkbook(buffer: Buffer): Promise<ImportedXlsx> {
     sheets.push({
       id,
       name: decodedName,
-      cells: parseWorksheetCells(worksheetXml, sharedStrings),
+      cells: parseWorksheetCells(inferWorksheetAddresses(worksheetXml), sharedStrings),
     })
     sheetNamesById[id] = decodedName
   }
@@ -564,7 +565,7 @@ export async function applyPlanToXlsx(
     const sheetName = sheetNamesById[change.sheetId]
     if (!sheetName) throw new Error(`Missing XLSX sheet mapping for ${change.sheetId}.`)
     const worksheetPath = await resolveWorksheetPath(pkg, sheetName)
-    const worksheetXml = await pkg.readText(worksheetPath)
+    const worksheetXml = inferWorksheetAddresses(await pkg.readText(worksheetPath))
     const actualCell = parseCell(worksheetXml, change.address)
     if (!cellsEqual(actualCell, change.before)) {
       throw new Error(`${sheetName}!${change.address} no longer has the expected content.`)
@@ -977,7 +978,7 @@ export async function planCellEditsToXlsx(
   // 300MB sheet avoids allocating two successive full-size output strings.
   const cellMutationSheets = new Set([...fillsBySheet.keys(), ...editsBySheet.keys()])
   for (const sheetName of cellMutationSheets) {
-    const worksheetXml = worksheetXmls.get(sheetName) ?? ''
+    const worksheetXml = inferWorksheetAddresses(worksheetXmls.get(sheetName) ?? '')
     const cellMutations = groupCellMutations(
       fillsBySheet.get(sheetName) ?? [],
       editsBySheet.get(sheetName) ?? [],
@@ -2444,6 +2445,7 @@ function transformWorksheetCells<T>(
   patchPrefix?: (prefix: string) => string,
 ): string {
   if (cellItems.size === 0) return worksheetXml
+  worksheetXml = inferWorksheetAddresses(worksheetXml)
   const remainingRows = new Map(cellItems)
   const targetRows = [...cellItems.keys()].sort((left, right) => left - right)
   const buildRow = (rowNumber: number): string => {
