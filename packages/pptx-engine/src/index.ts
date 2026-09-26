@@ -3126,9 +3126,11 @@ export interface ReplaceOptions {
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /**
- * Deck-wide replace (matches within a run; cross-run matches are not handled —
- * consistent with byte-faithful run-structure patches). Covers text/shape, table
- * cells, and direct group children; dynamic field runs are skipped.
+ * Deck-wide replace (a match may span consecutive runs of a paragraph: the
+ * replacement lands in the run holding its first character and the matched text
+ * is cut from the runs it covers, so untouched text keeps its own rPr). Covers
+ * text/shape, table cells, and direct group children; dynamic field runs are
+ * skipped and no match spans one.
  * Returns the replacement count; elements on changed slides are flagged dirty.
  */
 export function replaceAllInDeck(
@@ -3145,24 +3147,51 @@ export function replaceAllInDeck(
 
   const replaceInParagraphs = (paragraphs: Paragraph[]): boolean => {
     let hit = false
-    for (const p of paragraphs)
-      for (const r of p.runs) {
-        if (budget <= 0) return hit
-        if (r.field || !r.text) continue
-        re.lastIndex = 0
-        let n = 0
-        const next = r.text.replace(re, (m) => {
-          if (n >= budget) return m
-          n++
-          return replace
-        })
-        if (n > 0) {
-          r.text = next
-          count += n
-          budget -= n
-          hit = true
+    for (const p of paragraphs) {
+      if (budget <= 0) return hit
+      const runs = p.runs.filter((r) => !r.field && !!r.text)
+      if (!runs.length) continue
+      let full = ''
+      const ends: number[] = []
+      for (const r of runs) {
+        full += r.text
+        ends.push(full.length)
+      }
+      const out = runs.map(() => '')
+      const runAt = (offset: number): number => {
+        for (let k = 0; k < ends.length; k++) if (offset < ends[k]!) return k
+        return ends.length - 1
+      }
+      const keep = (from: number, to: number): void => {
+        let off = from
+        for (let k = 0; k < ends.length && off < to; k++) {
+          const end = ends[k]!
+          if (end <= off) continue
+          const take = Math.min(end, to) - off
+          out[k] += full.slice(off, off + take)
+          off += take
         }
       }
+      re.lastIndex = 0
+      let cursor = 0
+      let n = 0
+      let m: RegExpExecArray | null
+      while (budget > 0 && (m = re.exec(full)) !== null) {
+        n++
+        budget--
+        keep(cursor, m.index)
+        out[runAt(m.index)] += replace
+        cursor = m.index + m[0].length
+      }
+      if (n > 0) {
+        keep(cursor, full.length)
+        for (let i = 0; i < runs.length; i++) {
+          if (runs[i]!.text !== out[i]) runs[i]!.text = out[i]!
+        }
+        count += n
+        hit = true
+      }
+    }
     return hit
   }
 

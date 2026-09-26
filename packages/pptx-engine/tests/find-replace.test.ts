@@ -83,3 +83,89 @@ describe('replaceAllInDeck', () => {
     )
   })
 })
+
+describe('replaceAllInDeck across runs (#1005)', () => {
+  const runs0 = (deck: SlideDeck) =>
+    (deck.slides[0]!.elements[0] as TextElement).text!.paragraphs[0]!.runs
+
+  it('a match spanning two runs is replaced once and keeps each run its own text', () => {
+    const deck = deckWith(
+      sp('<a:r><a:rPr b="1"/><a:t>Hel</a:t></a:r><a:r><a:t>lo world</a:t></a:r>'),
+    )
+    expect(runs0(deck)).toHaveLength(2)
+    expect(replaceAllInDeck(deck, 'Hello', 'Hi').count).toBe(1)
+    expect(runs0(deck).map((r) => r.text)).toEqual(['Hi', ' world'])
+  })
+
+  it('the replacement takes the formatting of the run holding the match start', () => {
+    const deck = deckWith(
+      sp('<a:r><a:rPr b="1"/><a:t>Hel</a:t></a:r><a:r><a:rPr i="1"/><a:t>lo</a:t></a:r>'),
+    )
+    replaceAllInDeck(deck, 'Hello', 'Hi')
+    const [first, second] = runs0(deck)
+    expect(first!.text).toBe('Hi')
+    expect(first!.bold).toBe(true)
+    expect(first!.italic).toBe(false)
+    expect(second!.text).toBe('')
+    expect(second!.italic).toBe(true)
+  })
+
+  it('a match spanning three runs cuts the middle one without touching its rPr', () => {
+    const deck = deckWith(
+      sp(
+        '<a:r><a:rPr b="1"/><a:t>ab</a:t></a:r>' +
+          '<a:r><a:rPr i="1"/><a:t>cd</a:t></a:r>' +
+          '<a:r><a:rPr u="sng"/><a:t>ef</a:t></a:r>',
+      ),
+    )
+    expect(replaceAllInDeck(deck, 'bcde', 'X').count).toBe(1)
+    const runs = runs0(deck)
+    expect(runs.map((r) => r.text)).toEqual(['aX', '', 'f'])
+    expect(runs[1]!.italic).toBe(true)
+    const out = patchedElementXml(deck.slides[0]!.elements[0]!)
+    expect(out).toContain('<a:t>aX</a:t>')
+    expect(out).toContain('<a:t>f</a:t>')
+    expect(out).toMatch(/<a:rPr[^>]*\bi="1"[^>]*\/>/)
+  })
+
+  it('each cross-run match is counted and replaced, not just the first', () => {
+    const deck = deckWith(sp('<a:r><a:rPr b="1"/><a:t>x-y </a:t></a:r><a:r><a:t>x-y</a:t></a:r>'))
+    expect(replaceAllInDeck(deck, 'x-y', 'Z').count).toBe(2)
+    expect(runs0(deck).map((r) => r.text)).toEqual(['Z ', 'Z'])
+  })
+
+  it('firstOnly stops at the first match even when a later one spans runs', () => {
+    const deck = deckWith(sp('<a:r><a:rPr b="1"/><a:t>ab</a:t></a:r><a:r><a:t>cd</a:t></a:r>'))
+    expect(replaceAllInDeck(deck, 'bc', 'X', { firstOnly: true }).count).toBe(1)
+    expect(runs0(deck).map((r) => r.text)).toEqual(['aX', 'd'])
+  })
+
+  it('matchCase applies across the run boundary', () => {
+    const deck = deckWith(sp('<a:r><a:rPr b="1"/><a:t>Hel</a:t></a:r><a:r><a:t>LO x</a:t></a:r>'))
+    expect(replaceAllInDeck(deck, 'hello', 'hi', { matchCase: true }).count).toBe(0)
+    expect(runs0(deck).map((r) => r.text)).toEqual(['Hel', 'LO x'])
+  })
+
+  it('a dynamic field run is a barrier: no match spans it', () => {
+    const deck = deckWith(
+      sp(
+        '<a:r><a:rPr b="1"/><a:t>ab</a:t></a:r>' +
+          '<a:fld id="{X}" type="slidenum"><a:rPr/><a:t>cd</a:t></a:fld>' +
+          '<a:r><a:t>ef</a:t></a:r>',
+      ),
+    )
+    // 'b' + the field's 'c' are not adjacent user text, so nothing matches
+    expect(replaceAllInDeck(deck, 'bcd', 'X').count).toBe(0)
+    // each side still replaces on its own, and the field text stays put
+    expect(replaceAllInDeck(deck, 'ef', 'Z').count).toBe(1)
+    expect(runs0(deck).map((r) => r.text)).toEqual(['ab', 'cd', 'Z'])
+  })
+
+  it('text either side of a cross-run match keeps its run split', () => {
+    const deck = deckWith(
+      sp('<a:r><a:rPr b="1"/><a:t>keep-</a:t></a:r><a:r><a:t>-keep</a:t></a:r>'),
+    )
+    expect(replaceAllInDeck(deck, '--', '=').count).toBe(1)
+    expect(runs0(deck).map((r) => r.text)).toEqual(['keep=', 'keep'])
+  })
+})
