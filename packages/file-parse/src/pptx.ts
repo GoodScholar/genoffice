@@ -96,6 +96,24 @@ async function zipText(zip: JSZip, path: string): Promise<string | undefined> {
 }
 
 /**
+ * One compatibility branch of an mc:AlternateContent element: the Fallback when the
+ * producer wrote one, else the first Choice. Reading both branches would duplicate
+ * every run and every picture the element carries. The parser strips namespace
+ * prefixes, so the branches arrive as AlternateContent / Choice / Fallback.
+ */
+function mcBranch(value: readonly unknown[]): readonly unknown[] {
+  let choice: readonly unknown[] | undefined
+  for (const entry of value) {
+    if (entry == null || typeof entry !== 'object') continue
+    for (const [key, branch] of Object.entries(entry)) {
+      if (key === 'Fallback') return Array.isArray(branch) ? branch : []
+      if (key === 'Choice' && !choice && Array.isArray(branch)) choice = branch
+    }
+  }
+  return choice ?? []
+}
+
+/**
  * One paragraph's text in document order. Only #text directly under a:t counts: untrimmed, the
  * whitespace laying out any other element is a value too. <a:br> is a soft line break, <a:tab>
  * is a tab stop between runs, and <a:fld> (slide number, date) contributes its own a:t where it sits.
@@ -111,7 +129,8 @@ function collectText(nodes: readonly unknown[], out: string[], isText = false): 
       } else if (key === 'tab') {
         out.push('\t')
       } else if (Array.isArray(value)) {
-        collectText(value, out, key === 't')
+        if (key === 'AlternateContent') collectText(mcBranch(value), out)
+        else collectText(value, out, key === 't')
       }
     }
   }
@@ -129,7 +148,7 @@ function collectParagraphs(nodes: readonly unknown[], out: string[]): void {
         const line = texts.join('')
         if (line.trim()) out.push(line)
       } else {
-        collectParagraphs(value, out)
+        collectParagraphs(key === 'AlternateContent' ? mcBranch(value) : value, out)
       }
     }
   }
@@ -141,7 +160,8 @@ function countPictures(nodes: readonly unknown[]): number {
     if (node == null || typeof node !== 'object') continue
     for (const [key, value] of Object.entries(node)) {
       if (key === 'pic') count += 1
-      else if (Array.isArray(value)) count += countPictures(value)
+      else if (Array.isArray(value))
+        count += countPictures(key === 'AlternateContent' ? mcBranch(value) : value)
     }
   }
   return count

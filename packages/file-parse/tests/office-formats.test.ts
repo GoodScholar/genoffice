@@ -213,6 +213,64 @@ describe('parseFileToText: pptx', () => {
     expect(await pptxToText(bytes)).toContain('Col1\tCol2')
   })
 
+  /** minimal slide part: the txBody the walkers read, in the shape tree they walk to find it */
+  function slideXml(body: string): string {
+    return (
+      '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ' +
+      'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
+      'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">' +
+      `<p:cSld><p:spTree><p:sp><p:txBody>${body}</p:txBody></p:sp></p:spTree></p:cSld></p:sld>`
+    )
+  }
+
+  /** the two branches of one shape's mc:AlternateContent; no fallback at all when it is omitted */
+  function altContent(choice: string, fallback?: string): string {
+    return (
+      '<mc:AlternateContent>' +
+      `<mc:Choice Requires="a14">${choice}</mc:Choice>` +
+      (fallback === undefined ? '' : `<mc:Fallback>${fallback}</mc:Fallback>`) +
+      '</mc:AlternateContent>'
+    )
+  }
+
+  it('reads one branch of an mc:AlternateContent, never both', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'ppt/slides/slide1.xml',
+      slideXml(
+        // the branches carry different runs on purpose: identical ones would let a
+        // walker read both without the duplication showing up here
+        `<a:p><a:r><a:t xml:space="preserve">Total: </a:t></a:r>` +
+          altContent('<a:r><a:t>21</a:t></a:r>', '<a:r><a:t>20</a:t></a:r>') +
+          `</a:p>` +
+          // a Choice with no Fallback is the branch a consumer that understands the
+          // required namespaces would take, so it is the text that survives
+          `<a:p>${altContent('<a:r><a:t>ChoiceOnly</a:t></a:r>')}</a:p>` +
+          '<a:p><mc:AlternateContent/></a:p>' +
+          '<a:p><a:r><a:t>Plain</a:t></a:r></a:p>',
+      ),
+    )
+    expect(await pptxToText(await zip.generateAsync({ type: 'uint8array' }))).toBe(
+      '## Slide 1\nTotal: 20\nChoiceOnly\nPlain',
+    )
+  })
+
+  it('counts a picture its two branches both carry as the one image', async () => {
+    const zip = new JSZip()
+    zip.file('ppt/slides/slide1.xml', slideXml('<a:p><a:r><a:t>Agenda</a:t></a:r></a:p>'))
+    const pic = '<p:pic><p:blipFill><a:blip r:embed="rId2"/></p:blipFill></p:pic>'
+    zip.file(
+      'ppt/slides/slide2.xml',
+      '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ' +
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">' +
+        `<p:cSld><p:spTree>${altContent(pic, pic)}</p:spTree></p:cSld></p:sld>`,
+    )
+    expect(await pptxToText(await zip.generateAsync({ type: 'uint8array' }))).toContain(
+      '## Slide 2\n[picture-only slide: 1 image, no extractable text]',
+    )
+  })
+
   async function presentationFixture(slideIds: string, relationships: string): Promise<JSZip> {
     const zip = await JSZip.loadAsync(await buildPptxFixture())
     zip.file(
