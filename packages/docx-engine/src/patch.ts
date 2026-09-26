@@ -93,7 +93,7 @@ export type ParsedDocFull = ParsedDoc & { extras: ParseExtras }
 /** Body content in final editor order (hidden trailing elements are appended automatically). */
 export type SaveBlock = (
   | { kind: 'original'; docxIndex: number }
-  | { kind: 'generated'; block: GeneratedBlock }
+  | { kind: 'generated'; block: GeneratedBlock; docxIndex?: number }
   /** self-contained OOXML fragment created by the editor (e.g. a new table);
    *  docxIndex marks the source block (kept when a section-break paragraph is
    *  rewritten, used to inject per-section header references); replaceImage
@@ -349,8 +349,8 @@ export async function saveDocx(
   finalBlocks: SaveBlock[],
   options: SaveOptions = {},
 ): Promise<Uint8Array> {
-  const { documentXml, originalBytes, bodyInnerStart, bodyInnerEnd } = parsed.internal
-  const elements = parsed.extras.elements
+  const { documentXml, originalBytes, bodyContentStart, bodyContentEnd } = parsed.internal
+  const { elements, opaqueRegions } = parsed.extras
   const scrubPersonalInfo = options.removePersonalInfo ?? parsed.removePersonalInfo ?? false
 
   const visibleOriginalOrder = parsed.blocks.filter((b) => !b.hidden).map((b) => b.docxIndex)
@@ -1031,7 +1031,62 @@ export async function saveDocx(
     }
   }
 
-  const parts: string[] = []
+  const retainedIndexes = new Set<number>()
+  for (const block of finalBlocks) {
+    if (block.kind === 'original') retainedIndexes.add(block.docxIndex)
+    else if (
+      (block.kind === 'xml' || block.kind === 'generated') &&
+      block.docxIndex !== undefined
+    ) {
+      retainedIndexes.add(block.docxIndex)
+    }
+  }
+  for (const block of parsed.blocks) {
+    if (block.hidden && block.docxIndex !== null) retainedIndexes.add(block.docxIndex)
+  }
+  const opaqueBefore = new Map<number, string[]>()
+  const opaqueAfter = new Map<number, string[]>()
+  const nestedOpaque = new Map<number, string[]>()
+  const detachedOpaque: string[] = []
+  for (const region of opaqueRegions) {
+    if (region.start < bodyContentStart || region.end > bodyContentEnd) continue
+    const containingIndex = elements.findIndex(
+      (element) => region.start >= element.start && region.end <= element.end,
+    )
+    const xml = documentXml.slice(region.start, region.end)
+    if (containingIndex !== -1) {
+      if (retainedIndexes.has(containingIndex)) {
+        const regions = nestedOpaque.get(containingIndex) ?? []
+        regions.push(xml)
+        nestedOpaque.set(containingIndex, regions)
+      } else {
+        detachedOpaque.push(xml)
+      }
+      continue
+    }
+    let afterIndex = -1
+    let beforeIndex = -1
+    for (let index = 0; index < elements.length; index++) {
+      if (elements[index].end <= region.start) afterIndex = index
+      if (elements[index].start >= region.end) {
+        beforeIndex = index
+        break
+      }
+    }
+    if (afterIndex !== -1 && retainedIndexes.has(afterIndex)) {
+      const regions = opaqueAfter.get(afterIndex) ?? []
+      regions.push(xml)
+      opaqueAfter.set(afterIndex, regions)
+    } else if (beforeIndex !== -1 && retainedIndexes.has(beforeIndex)) {
+      const regions = opaqueBefore.get(beforeIndex) ?? []
+      regions.push(xml)
+      opaqueBefore.set(beforeIndex, regions)
+    } else {
+      detachedOpaque.push(xml)
+    }
+  }
+
+  const parts: string[] = [...detachedOpaque]
   for (let i = 0; i < finalBlocks.length; i++) {
     const fb = finalBlocks[i]
     let xml: string
@@ -1042,6 +1097,7 @@ export async function saveDocx(
       xml = documentXml.slice(el.start, el.end)
       fbDocxIndex = fb.docxIndex
     } else if (fb.kind === 'generated') {
+      if (fb.docxIndex !== undefined) fbDocxIndex = fb.docxIndex
       xml = generateParagraphXml(fb.block, genCtx)
       // If the original paragraph was inside a w:sdt shell, re-wrap it
       if (fb.block.sdtShell) {
@@ -1074,13 +1130,22 @@ export async function saveDocx(
       const injected = injectInkRunsIntoParagraph(xml, blockInks.map(inkRunXml).join(''))
       if (injected !== null) xml = injected
     }
-    if (fb.revision && !new RegExp(`^<w:${fb.revision.kind}[\\s>]`).test(xml)) {
+    if (fb.revision && !new RegExp(`^<w:${fb.revision.kind}(?:\\s|>)`).test(xml)) {
       const revision = fb.revision
       const attrs =
         ` w:id="${escapeXmlAttr(revision.id ?? '0')}"` +
         ` w:author="${escapeXmlAttr(revision.author)}"` +
         (revision.date ? ` w:date="${escapeXmlAttr(revision.date)}"` : '')
       xml = `<w:${revision.kind}${attrs}>${xml}</w:${revision.kind}>`
+    }
+    if (fbDocxIndex !== undefined && fb.kind !== 'original') {
+      const nested = (nestedOpaque.get(fbDocxIndex) ?? []).join('')
+      if (nested) xml = insertBeforeClosingTag(xml, nested)
+    }
+    if (fbDocxIndex !== undefined) {
+      const leadingOpaque = (opaqueBefore.get(fbDocxIndex) ?? []).join('')
+      const trailingOpaque = (opaqueAfter.get(fbDocxIndex) ?? []).join('')
+      if (leadingOpaque || trailingOpaque) xml = leadingOpaque + xml + trailingOpaque
     }
     parts.push(xml)
   }
@@ -1102,14 +1167,20 @@ export async function saveDocx(
           xml = xml.replace(/(<w:sectPr[^>]*>)/, `$1${hfRefTags.join('')}`)
         }
       }
+      const index = block.docxIndex
+      if (index !== null) {
+        const leadingOpaque = (opaqueBefore.get(index) ?? []).join('')
+        const trailingOpaque = (opaqueAfter.get(index) ?? []).join('')
+        if (leadingOpaque || trailingOpaque) xml = leadingOpaque + xml + trailingOpaque
+      }
       parts.push(xml)
     }
   }
 
   let newDocumentXml =
-    documentXml.slice(0, bodyInnerStart) +
+    documentXml.slice(0, bodyContentStart) +
     balanceFieldChars(parts.join('')) +
-    documentXml.slice(bodyInnerEnd)
+    documentXml.slice(bodyContentEnd)
 
   // every ref-less body sectPr picks up the new header/footer references
   // (the trailing sectPr already received them above and is skipped by the
@@ -1410,18 +1481,96 @@ export async function saveDocx(
   })
 }
 
+function insertBeforeClosingTag(xml: string, content: string): string {
+  const close = xml.lastIndexOf('</')
+  return close === -1 ? xml + content : xml.slice(0, close) + content + xml.slice(close)
+}
+
 /**
  * A comment-list edit is authoritative. Remove body markers for ids no longer
  * present even when their paragraphs were copied through as original XML.
  */
+function opaqueMarkupEnd(xml: string, start: number): number | null {
+  if (xml.startsWith('<!--', start)) {
+    const at = xml.indexOf('-->', start + 4)
+    return at === -1 ? xml.length : at + 3
+  }
+  if (xml.startsWith('<![CDATA[', start)) {
+    const at = xml.indexOf(']]>', start + 9)
+    return at === -1 ? xml.length : at + 3
+  }
+  if (xml.startsWith('<?', start)) {
+    const at = xml.indexOf('?>', start + 2)
+    return at === -1 ? xml.length : at + 2
+  }
+  if (!xml.startsWith('<!', start)) return null
+  let quote = ''
+  let subsetDepth = 0
+  for (let index = start + 2; index < xml.length; index += 1) {
+    const character = xml[index]
+    if (quote) {
+      if (character === quote) quote = ''
+    } else if (character === '"' || character === "'") {
+      quote = character
+    } else if (character === '[') {
+      subsetDepth += 1
+    } else if (character === ']') {
+      subsetDepth = Math.max(0, subsetDepth - 1)
+    } else if (character === '>' && subsetDepth === 0) {
+      return index + 1
+    }
+  }
+  return xml.length
+}
+
+function xmlTagEnd(xml: string, start: number): number {
+  let quote = ''
+  for (let index = start + 1; index < xml.length; index += 1) {
+    const character = xml[index]
+    if (quote) {
+      if (character === quote) quote = ''
+    } else if (character === '"' || character === "'") {
+      quote = character
+    } else if (character === '>') {
+      return index + 1
+    }
+  }
+  return xml.length
+}
+
 function removeDeletedCommentMarkers(xml: string, liveIds: Set<string>): string {
-  return xml.replace(
-    /<w:comment(?:RangeStart|RangeEnd|Reference)\b[^>]*(?:\/\s*>|>\s*<\/w:comment(?:RangeStart|RangeEnd|Reference)\s*>)/g,
-    (tag) => {
-      const id = /\bw:id\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(tag)
-      return id && !liveIds.has(id[1] ?? id[2]) ? '' : tag
-    },
-  )
+  let out = ''
+  let cursor = 0
+  while (cursor < xml.length) {
+    const start = xml.indexOf('<', cursor)
+    if (start === -1) return out + xml.slice(cursor)
+    out += xml.slice(cursor, start)
+    const opaqueEnd = opaqueMarkupEnd(xml, start)
+    if (opaqueEnd !== null) {
+      out += xml.slice(start, opaqueEnd)
+      cursor = opaqueEnd
+      continue
+    }
+    const end = xmlTagEnd(xml, start)
+    const tag = xml.slice(start, end)
+    const match = /^<w:(commentRangeStart|commentRangeEnd|commentReference)\b/.exec(tag)
+    const id = /\bw:id\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(tag)
+    if (match && id && !liveIds.has(id[1] ?? id[2])) {
+      const name = match[1]!
+      if (tag.endsWith('/>')) {
+        cursor = end
+        continue
+      }
+      const close = new RegExp(`^\\s*</w:${name}\\s*>`).exec(xml.slice(end))
+      if (close) {
+        cursor = end + close[0].length
+        continue
+      }
+    }
+    out += tag
+    cursor = end
+  }
+  return out
 }
 
 /**
@@ -1771,38 +1920,17 @@ function mapXmlStartTags(xml: string, rewrite: (tag: string) => string): string 
     if (start < 0) return out + xml.slice(cursor)
     out += xml.slice(cursor, start)
 
-    const specialEnd = xml.startsWith('<!--', start)
-      ? '-->'
-      : xml.startsWith('<![CDATA[', start)
-        ? ']]>'
-        : xml.startsWith('<?', start)
-          ? '?>'
-          : null
-    if (specialEnd !== null) {
-      const at = xml.indexOf(specialEnd, start + 2)
-      if (at < 0) return out + xml.slice(start)
-      const end = at + specialEnd.length
-      out += xml.slice(start, end)
-      cursor = end
+    const opaqueEnd = opaqueMarkupEnd(xml, start)
+    if (opaqueEnd !== null) {
+      out += xml.slice(start, opaqueEnd)
+      cursor = opaqueEnd
       continue
     }
 
-    let quote = ''
-    let end = start + 1
-    for (; end < xml.length; end += 1) {
-      const char = xml[end]!
-      if (quote) {
-        if (char === quote) quote = ''
-      } else if (char === '"' || char === "'") {
-        quote = char
-      } else if (char === '>') {
-        break
-      }
-    }
-    if (end >= xml.length) return out + xml.slice(start)
-    const tag = xml.slice(start, end + 1)
+    const end = xmlTagEnd(xml, start)
+    const tag = xml.slice(start, end)
     out += tag.startsWith('</') || tag.startsWith('<!') ? tag : rewrite(tag)
-    cursor = end + 1
+    cursor = end
   }
   return out
 }

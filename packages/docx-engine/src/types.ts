@@ -2241,5 +2241,7 @@ export interface ParsedDoc {
     /** inner body range [start, end) in documentXml covered by top-level elements */
     bodyInnerStart: number
     bodyInnerEnd: number
+    bodyContentStart: number
+    bodyContentEnd: number
   }
 }

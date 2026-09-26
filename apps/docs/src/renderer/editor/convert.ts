@@ -2170,10 +2170,11 @@ export function pmDocToSavePlan(inputDoc: PmNode, originalBlocks: Block[]): Save
       // deleted — and may reuse the anchor's original pPr bytes. A split twin
       // (anchor already consumed) gets no rawPPr, so revision records and
       // section props are never duplicated.
-      if (original && !usedIndexes.has(idx!)) {
+      const replacesOriginal = original !== undefined && !usedIndexes.has(idx!)
+      if (replacesOriginal) {
         usedIndexes.add(idx!)
         mapAnchor(idx!)
-        applyRawPPr(generated, original)
+        applyRawPPr(generated, original!)
       } else if (original) {
         // A split twin inherits the source node's attrs, but pPrChange and
         // bookmark/comment anchors belong only to the anchored original.
@@ -2186,7 +2187,11 @@ export function pmDocToSavePlan(inputDoc: PmNode, originalBlocks: Block[]): Save
         // emitted exactly once, by the anchor.
         if (generated.sdtShell?.group !== undefined) delete generated.sdtShell
       }
-      pushBlock({ kind: 'generated', block: generated })
+      pushBlock({
+        kind: 'generated',
+        block: generated,
+        ...(replacesOriginal ? { docxIndex: idx! } : {}),
+      })
     }
   }
 
