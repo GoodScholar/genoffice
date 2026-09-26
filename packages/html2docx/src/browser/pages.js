@@ -5,6 +5,7 @@
       docRTL,
       isVisible,
       markForScreenshot,
+      boundedScreenshotSliceCount,
       nextShotId,
       processChildren,
       processElement,
@@ -219,6 +220,7 @@
       return null;
     };
     const sliceBoundaries = () => {
+      if (boundedScreenshotSliceCount(bodyHeight, sliceBudget) === 0) return [];
       // A composition only slightly taller than one page reads as a
       // single-page design (e.g. a resume): render one full slice and let
       // the renderer's page scale absorb the few percent, instead of
@@ -256,13 +258,17 @@
       return boundaries;
     };
     const screenshotPageSlices = ({ authoredPageHeights = false } = {}) => {
+      const sliceCount = authoredPageHeights
+        ? boundedScreenshotSliceCount(bodyHeight, renderedPageHeight)
+        : boundedScreenshotSliceCount(bodyHeight, sliceBudget);
+      if (sliceCount === 0) return [];
       // Absolutely-positioned multi-page canvases are authored in exact
       // viewport-height pages: gap-aware cuts would shift authored page
       // boundaries, so slice at the authored pitch and let the renderer
       // headroom shrink each page to fit.
       const boundaries = authoredPageHeights
         ? Array.from(
-            { length: Math.ceil(bodyHeight / renderedPageHeight) },
+            { length: sliceCount },
             (_, index) => Math.min(bodyHeight, (index + 1) * renderedPageHeight),
           )
         : sliceBoundaries();
@@ -283,6 +289,7 @@
       }
       paintLeft = Math.max(0, Math.round(paintLeft));
       const paintWidth = Math.round(paintRight - paintLeft);
+      if (!Number.isFinite(paintWidth) || paintWidth <= 0) return [];
       let previousBoundary = 0;
       return boundaries.map((boundary) => {
         const sliceHeight = Math.round(boundary - previousBoundary);
@@ -386,8 +393,26 @@
       const element = document.querySelector(`[data-h2d-id="${node.shotId}"]`);
       if (!element) continue;
       const rect = element.getBoundingClientRect();
+      if (
+        !Number.isFinite(rect.left) ||
+        !Number.isFinite(rect.top) ||
+        !Number.isFinite(rect.width) ||
+        rect.width <= 0
+      ) {
+        ir.splice(index, 1);
+        continue;
+      }
       const maxSliceHeight = 700;
-      const sliceCount = Math.ceil(rect.height / maxSliceHeight);
+      const sliceCount = boundedScreenshotSliceCount(rect.height, maxSliceHeight);
+      if (sliceCount === 0) {
+        ir.splice(index, 1);
+        continue;
+      }
+      const sliceWidth = Math.round(rect.width);
+      if (!Number.isFinite(sliceWidth) || sliceWidth <= 0) {
+        ir.splice(index, 1);
+        continue;
+      }
       const slices = Array.from({ length: sliceCount }, (_, sliceIndex) => {
         const sliceHeight = Math.min(
           maxSliceHeight,
@@ -403,7 +428,7 @@
           clip: {
             x: Math.max(0, Math.round(rect.left)),
             y: Math.max(0, Math.round(rect.top + sliceIndex * maxSliceHeight)),
-            width: Math.round(rect.width),
+            width: sliceWidth,
             height: Math.round(sliceHeight),
           },
         };

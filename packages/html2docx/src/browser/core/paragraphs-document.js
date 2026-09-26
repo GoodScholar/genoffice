@@ -287,6 +287,7 @@
     docRTL: DOC_RTL,
     isVisible,
     markForScreenshot,
+    boundedScreenshotSliceCount,
     nextShotId: () => `h2d-${shotCounter++}`,
     processChildren,
     processElement,

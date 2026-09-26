@@ -447,6 +447,36 @@ test('splits a tall visual section into flowable screenshot slices', async () =>
   assert.match(screenshotText, /Consumer map/)
 })
 
+test('rejects hostile screenshot geometry before allocating slices', async () => {
+  const { ir, zip } = await convertHtml(
+    `<!doctype html><html><head><style>
+      img { display:block; width:100px; height:100px; }
+    </style></head><body>
+      <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" alt="hostile">
+      <script>
+        const image = document.querySelector('img');
+        const original = image.getBoundingClientRect.bind(image);
+        image.getBoundingClientRect = () => {
+          const rect = original();
+          return {
+            left: rect.left,
+            top: rect.top,
+            right: rect.left + rect.width,
+            bottom: rect.top + 100000000,
+            width: rect.width,
+            height: 100000000,
+            x: rect.left,
+            y: rect.top,
+          };
+        };
+      </script>
+    </body></html>`,
+    'hostile-screenshot-geometry',
+  )
+  assert.equal(ir.filter((node) => node.type === 'image' && node.clip).length, 0)
+  assert.equal(Object.keys(zip.files).filter((name) => name.startsWith('word/media/')).length, 0)
+})
+
 test('keeps a KPI row horizontal inside a card nested in a layout row', async () => {
   const { ir, xml } = await convertHtml(
     `<!doctype html><html><head><style>
