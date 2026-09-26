@@ -1279,13 +1279,17 @@ impl CellBuilder {
         styled_xfs: &[bool],
         rich_image_cells: &HashSet<(usize, usize)>,
     ) -> Result<Option<CellRecord>, SidecarError> {
-        let formula = if self.formula.is_empty() {
+        let picture = rich_image_cells.contains(&(self.row, self.column));
+        let formula = if picture || self.formula.is_empty() {
             None
         } else {
             Some(format!("={}", strip_future_function_markers(&self.formula)))
         };
         let mut rich = None;
         let value = match self.cell_type.as_deref() {
+            // Resolved pictures replace cached text/errors and the renderer's
+            // unsupported DISPIMG formula; the source XML remains untouched.
+            _ if picture => None,
             // Empty <v/> or a stale index degrades to a valueless styled cell;
             // erroring here used to blank the whole sheet.
             Some("s") => match self
@@ -1310,9 +1314,6 @@ impl CellBuilder {
                 normalize_cell_text(&mut inline_text);
                 Some(CellValue::String(inline_text))
             }
-            // An error cell hosting an in-cell picture record renders as the
-            // picture, not as its cached #VALUE! placeholder.
-            Some("e") if rich_image_cells.contains(&(self.row, self.column)) => None,
             Some("str") | Some("e") => {
                 let mut raw_value = self.raw_value;
                 normalize_cell_text(&mut raw_value);

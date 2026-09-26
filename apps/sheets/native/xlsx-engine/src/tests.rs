@@ -597,6 +597,154 @@ fn resolves_in_cell_rich_value_pictures() {
     assert!(!json.contains("mediaPath"));
 }
 
+fn wps_cell_image_fixture_entries() -> Vec<(&'static str, &'static str)> {
+    let mut entries: Vec<_> = rich_data_fixture_entries()
+        .into_iter()
+        .filter(|(name, _)| matches!(*name, "xl/workbook.xml" | "xl/media/image1.png"))
+        .collect();
+    entries.extend([
+        (
+            "xl/_rels/workbook.xml.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#,
+        ),
+        (
+            "xl/cellimages.xml",
+            r#"<etc:cellImages xmlns:etc="http://www.wps.cn/officeDocument/2017/etCustomData" xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><etc:cellImage><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="1" name="ID_photo"/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill></xdr:pic></etc:cellImage></etc:cellImages>"#,
+        ),
+        (
+            "xl/_rels/cellimages.xml.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#,
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="2"><c r="A2"/><c r="B2" t="str"><f>_xlfn.DISPIMG(&quot;ID_photo&quot;,1)</f><v>cached image text</v></c><c r="C2" t="e"><f>DISPIMG("ID_photo",1)</f><v>#VALUE!</v></c><c r="D2" t="str"><f>DISPIMG("ID_missing",1)</f><v>missing image</v></c><c r="E2" t="str"><v>DISPIMG("ID_photo",1)</v></c></row><row r="4"><c r="A4" t="str"><f>=_xlfn.DISPIMG("ID_photo",1)</f><v>merged image text</v></c></row></sheetData><mergeCells count="1"><mergeCell ref="A4:C5"/></mergeCells></worksheet>"#,
+        ),
+    ]);
+    entries
+}
+
+#[test]
+fn resolves_wps_cell_images_per_formula_cell_and_suppresses_cached_text() {
+    let (_dir, path) = open_fixture(&wps_cell_image_fixture_entries());
+    let original = fs::read(&path).unwrap();
+    let mut sessions = WorkbookSessions::new();
+    let metadata = sessions.open(&path).unwrap();
+    let images = &metadata.sheets[0].cell_images;
+    assert_eq!(images.len(), 3);
+    assert_eq!(
+        images
+            .iter()
+            .map(|image| (image.row, image.column))
+            .collect::<Vec<_>>(),
+        [(1, 1), (1, 2), (3, 0)]
+    );
+    assert_ne!(images[0].id, images[1].id);
+    for image in images {
+        assert_eq!(image.media_path, "xl/media/image1.png");
+        let media = sessions
+            .read_media(&metadata.session_id, &image.id)
+            .unwrap();
+        assert_eq!(media.media_type, "image/png");
+    }
+    let result = sessions
+        .read_range(
+            &metadata.session_id,
+            "sheet-1",
+            &CellRange {
+                start_row: 0,
+                end_row: 3,
+                start_column: 0,
+                end_column: 4,
+            },
+        )
+        .unwrap();
+    for image in images {
+        assert!(!result.cells.iter().any(|cell| {
+            cell.row == image.row
+                && cell.column == image.column
+                && (cell.value.is_some() || cell.formula.is_some())
+        }));
+    }
+    assert!(result.cells.iter().any(|cell| {
+        cell.column == 3
+            && matches!(&cell.value, Some(CellValue::String(text)) if text == "missing image")
+    }));
+    assert!(result.cells.iter().any(|cell| {
+        cell.column == 4 && matches!(&cell.value, Some(CellValue::String(text)) if text == "DISPIMG(\"ID_photo\",1)")
+    }));
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn missing_wps_media_keeps_cached_cell_values() {
+    let entries: Vec<_> = wps_cell_image_fixture_entries()
+        .into_iter()
+        .filter(|(name, _)| *name != "xl/media/image1.png")
+        .collect();
+    let (_dir, path) = open_fixture(&entries);
+    let mut sessions = WorkbookSessions::new();
+    let metadata = sessions.open(&path).unwrap();
+    assert!(metadata.sheets[0].cell_images.is_empty());
+    let result = sessions
+        .read_range(
+            &metadata.session_id,
+            "sheet-1",
+            &CellRange {
+                start_row: 1,
+                end_row: 1,
+                start_column: 1,
+                end_column: 1,
+            },
+        )
+        .unwrap();
+    let cell = &result.cells[0];
+    assert!(matches!(&cell.value, Some(CellValue::String(text)) if text == "cached image text"));
+    assert_eq!(cell.formula.as_deref(), Some("=DISPIMG(\"ID_photo\",1)"));
+}
+
+#[test]
+fn caps_wps_pictures_without_hiding_unrendered_cells() {
+    let cells: String = (1..=MAX_CELL_IMAGES + 1).map(|row| format!(
+        "<row r=\"{row}\"><c r=\"A{row}\" t=\"str\"><f>DISPIMG(\"ID_photo\",1)</f><v>image placeholder</v></c></row>"
+    )).collect();
+    let sheet = format!(
+        "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>{cells}</sheetData></worksheet>"
+    );
+    let entries: Vec<_> = wps_cell_image_fixture_entries()
+        .into_iter()
+        .map(|(name, value)| {
+            (
+                name,
+                if name == "xl/worksheets/sheet1.xml" {
+                    sheet.as_str()
+                } else {
+                    value
+                },
+            )
+        })
+        .collect();
+    let (_dir, path) = open_fixture(&entries);
+    let mut sessions = WorkbookSessions::new();
+    let metadata = sessions.open(&path).unwrap();
+    assert_eq!(metadata.sheets[0].cell_images.len(), MAX_CELL_IMAGES);
+    let result = sessions
+        .read_range(
+            &metadata.session_id,
+            "sheet-1",
+            &CellRange {
+                start_row: MAX_CELL_IMAGES,
+                end_row: MAX_CELL_IMAGES,
+                start_column: 0,
+                end_column: 0,
+            },
+        )
+        .unwrap();
+    assert!(
+        matches!(&result.cells[0].value, Some(CellValue::String(text)) if text == "image placeholder")
+    );
+    assert!(result.cells[0].formula.is_some());
+}
+
 /// A valueMetadata bk may carry one rc per metadata type; XLRICHVALUE
 /// still resolves when it is not the first record.
 #[test]
