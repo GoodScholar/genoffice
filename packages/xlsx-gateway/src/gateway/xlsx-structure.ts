@@ -460,15 +460,24 @@ export function shiftCrossSheetFormulas(
   for (const op of rowColumnOps(ops)) {
     const axis: Axis = axisOf(op)
     const shift = toShift(op)
+    const rewrite = (body: string): string =>
+      escapeXmlText(shiftFormulaText(decodeEntities(body), editedSheetName, shift, axis, true))
     // The attribute part must not end with '/': a self-closing shared
     // formula (`<f t="shared" si="0"/>`) is not an opening tag, and matching
     // it would swallow real XML up to the next `</f>` as a "formula body".
     xml = xml.replace(
       /<f\b([^>]*[^/>])?>([\s\S]*?)<\/f>/g,
       (_full, attributes: string | undefined, body: string) =>
-        `<f${attributes ?? ''}>${escapeXmlText(
-          shiftFormulaText(decodeEntities(body), editedSheetName, shift, axis, true),
-        )}</f>`,
+        `<f${attributes ?? ''}>${rewrite(body)}</f>`,
+    )
+    xml = xml.replace(
+      /<(formula[12]?)>([\s\S]*?)<\/\1>/g,
+      (_full, tag: string, body: string) => `<${tag}>${rewrite(body)}</${tag}>`,
+    )
+    xml = xml.replace(
+      /(<hyperlink\b[^>]*?\blocation=")([^"]+)(")/g,
+      (_full, prefix: string, location: string, suffix: string) =>
+        `${prefix}${rewrite(location)}${suffix}`,
     )
   }
   return xml
