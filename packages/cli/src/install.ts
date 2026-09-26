@@ -54,7 +54,7 @@ export function installCliLink(opts: InstallOptions): InstallOutcome {
   let occupied: string | undefined
   for (const dir of dirs) {
     const link = join(dir, 'genoffice')
-    const state = linkState(link, opts.launcher)
+    const state = linkState(link, opts.launcher, platform)
     if (state === 'ours' && readlinkSync(link) === opts.launcher) {
       return { status: 'present', location: link }
     }
@@ -87,7 +87,7 @@ export function inspectCliLink(opts: InstallOptions): InstallOutcome {
   // same walk installCliLink does: an occupied name is skipped, the first free writable dir wins
   for (const dir of dirs) {
     const link = join(dir, 'genoffice')
-    const state = linkState(link, opts.launcher)
+    const state = linkState(link, opts.launcher, platform)
     if (state === 'ours' && readlinkSync(link) === opts.launcher) {
       return { status: 'present', location: link }
     }
@@ -105,20 +105,31 @@ function manualCommand(launcher: string): string {
   return `sudo mkdir -p /usr/local/bin && sudo ln -sf "${launcher}" /usr/local/bin/genoffice`
 }
 
-function linkState(path: string, launcher: string): 'missing' | 'ours' | 'file' | 'foreign' {
+function linkState(
+  path: string,
+  launcher: string,
+  platform: NodeJS.Platform,
+): 'missing' | 'ours' | 'file' | 'foreign' {
   try {
     const st = lstatSync(path)
     if (!st.isSymbolicLink()) return 'file'
     const target = readlinkSync(path)
-    return target === launcher || isOurLauncher(target) ? 'ours' : 'foreign'
+    return target === launcher || isOurLauncher(target, platform) ? 'ours' : 'foreign'
   } catch {
     return 'missing'
   }
 }
 
-/** Only launchers we shipped (<app resources>/cli/genoffice, any version or install dir) may be replaced. */
-function isOurLauncher(target: string): boolean {
-  return /[\\/]cli[\\/]genoffice$/.test(target)
+const OWNED_LAUNCHER_PATHS: Partial<Record<NodeJS.Platform, readonly string[]>> = {
+  darwin: ['Contents', 'Resources', 'cli', 'genoffice'],
+  linux: ['resources', 'cli', 'genoffice'],
+}
+
+function isOurLauncher(target: string, platform: NodeJS.Platform): boolean {
+  const expected = OWNED_LAUNCHER_PATHS[platform]
+  if (!expected) return false
+  const parts = target.replace(/[\\/]/g, '/').split('/').filter(Boolean)
+  return expected.every((part, index) => parts.at(-expected.length + index) === part)
 }
 
 function writable(dir: string): boolean {
