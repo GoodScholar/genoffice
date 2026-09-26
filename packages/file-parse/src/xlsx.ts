@@ -50,10 +50,18 @@ function textOf(node: unknown): string {
 
 /** shared string entry: <si><t>…</t></si> or rich-text runs <si><r><t>…</t></r>…</si> */
 function sharedStringText(si: Record<string, unknown>): string {
-  if (si['t'] !== undefined) return textOf(si['t'])
-  return asArray(si['r'] as unknown)
-    .map((run) => textOf((run as Record<string, unknown>)['t']))
-    .join('')
+  let out = ''
+  for (const key of Object.keys(si)) {
+    if (key === 't') {
+      for (const node of asArray(si[key] as unknown)) out += textOf(node)
+    } else if (key === 'r') {
+      for (const run of asArray(si[key] as unknown)) {
+        const r = run as Record<string, unknown>
+        for (const node of asArray(r['t'] as unknown)) out += textOf(node)
+      }
+    }
+  }
+  return out
 }
 
 /** "BC12" → zero-based column index 54 (cell refs are case-insensitive per ECMA-376) */
