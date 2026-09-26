@@ -262,6 +262,9 @@ async function anthropicTurn(
   if (!emitted && completedTools.length === 0 && !stopReason) {
     throw new Error('Claude returned no content (empty stream)')
   }
+  if (!stopReason) {
+    throw new Error('Claude stream ended before a stop_reason')
+  }
   if (stopReason) cb.onStopReason?.(stopReason)
 }
 

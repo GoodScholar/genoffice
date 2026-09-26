@@ -272,6 +272,9 @@ async function geminiTurn(
   if (!emitted && !sawFinish) {
     throw new Error('Gemini returned no content (empty stream)')
   }
+  if (!sawFinish) {
+    throw new Error('Gemini stream ended before a finishReason')
+  }
   if (stopReason) cb.onStopReason?.(stopReason)
 }
 

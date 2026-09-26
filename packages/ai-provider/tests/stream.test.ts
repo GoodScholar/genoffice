@@ -240,6 +240,7 @@ describe('streamForProvider: empty SSE streams surface as errors', () => {
       'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"do_thing"}}',
       'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}',
       'data: {"type":"content_block_stop","index":0}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { toolCalls, cb } = collector()
@@ -256,6 +257,53 @@ describe('streamForProvider: empty SSE streams surface as errors', () => {
   })
 })
 
+describe('streamForProvider: terminal framing', () => {
+  it.each([
+    [
+      'anthropic',
+      'claude-sonnet-5',
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}',
+      /Claude stream ended before a stop_reason/,
+    ],
+    [
+      'gemini',
+      'gemini-2.5-flash',
+      'data: {"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}',
+      /Gemini stream ended before a finishReason/,
+    ],
+    [
+      'openai',
+      'gpt-4.1-mini',
+      'data: {"choices":[{"delta":{"content":"partial"}}]}',
+      /model stream ended before a finish_reason or \[DONE\] marker/,
+    ],
+  ] as const)(
+    '%s rejects partial text without terminal framing',
+    async (provider, model, line, error) => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(sseStream([line]))))
+      await expect(
+        streamForProvider(provider, { apiKey: 'k', model }, 'sys', [], [], 100, collector().cb),
+      ).rejects.toThrow(error)
+    },
+  )
+
+  it('treats reasoning-only output as emitted when checking terminal framing', async () => {
+    const body = sseStream(['data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}'])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
+    await expect(
+      streamForProvider(
+        'openai',
+        { apiKey: 'k', model: 'gpt-4.1-mini' },
+        'sys',
+        [],
+        [],
+        100,
+        collector().cb,
+      ),
+    ).rejects.toThrow(/model stream ended before a finish_reason or \[DONE\] marker/)
+  })
+})
+
 describe('streamForProvider: anthropic', () => {
   it('emits text deltas and a completed tool call', async () => {
     const body = sseStream([
@@ -265,6 +313,7 @@ describe('streamForProvider: anthropic', () => {
       'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"1}"}}',
       'data: {"type":"content_block_stop","index":1}',
       'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"world"}}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { deltas, toolCalls, cb } = collector()
@@ -354,6 +403,7 @@ describe('streamForProvider: anthropic', () => {
       'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"gen"}}',
       `data: ${partial}`,
       'data: {"type":"content_block_stop","index":1}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { toolCalls, cb } = collector()
@@ -374,6 +424,7 @@ describe('streamForProvider: anthropic', () => {
       `data: ${partial}`,
       'data: {"type":"content_block_stop","index":1}',
       'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"after"}}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { deltas, toolCalls, cb } = collector()
@@ -647,7 +698,7 @@ describe('streamForProvider: gemini', () => {
   it('emits text and a whole (non-partial) function call', async () => {
     const body = sseStream([
       'data: {"candidates":[{"content":{"parts":[{"text":"hi there"}]}}]}',
-      'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"set_cell","args":{"a1":"42"}}}]}}]}',
+      'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"set_cell","args":{"a1":"42"}}}]},"finishReason":"STOP"}]}',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { deltas, toolCalls, cb } = collector()
@@ -1350,6 +1401,7 @@ describe('streamForProvider: 200 + non-stream JSON instead of SSE', () => {
   it('a missing Content-Type is still treated as a stream', async () => {
     const body = sseStream([
       'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { deltas, cb } = collector()
@@ -1472,9 +1524,10 @@ describe('streamForProvider: a connection dropped mid tool arguments is not an e
     expect(toolCalls).toEqual([])
   })
 
-  it('openai-compatible: complete arguments without a finish reason still flush as a tool call', async () => {
+  it('openai-compatible: complete arguments with [DONE] still flush as a tool call', async () => {
     const body = sseStream([
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"ping","arguments":"{\\"a\\":1}"}}]}}]}',
+      'data: [DONE]',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { cb, toolCalls } = collector()
