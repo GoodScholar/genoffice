@@ -49,6 +49,18 @@ describe('parseChartPartXml grouping and colors', () => {
     expect(parseChartPartXml(bar('clustered'), 'p')!.grouping).toBeUndefined()
   })
 
+  it('bounds declared and sparse cache indexes', () => {
+    const categories =
+      '<c:cat><c:strRef><c:f>S!$A$1</c:f><c:strCache><c:ptCount val="1000000000"/>' +
+      '<c:pt idx="999999999"><c:v>too far</c:v></c:pt></c:strCache></c:strRef></c:cat>'
+    const ser =
+      '<c:ser><c:idx val="0"/><c:order val="0"/>' +
+      `${strCache('tx', ['S1'])}${categories}${numCache('val', [1])}</c:ser>`
+    const display = parseChartPartXml(chartSpace(`<c:barChart>${ser}</c:barChart>`), 'p')!
+    expect(display.categories).toHaveLength(100_000)
+    expect(display.categories[99_999]).toBe('')
+  })
+
   it('reads explicit series solid fills, resolving schemeClr through the theme', () => {
     const srgb = '<c:spPr><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></c:spPr>'
     expect(parseChartPartXml(bar('clustered', srgb), 'p')!.series[0].color).toBe('FF0000')

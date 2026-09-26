@@ -29,6 +29,7 @@ const CHART_KINDS: Record<string, ChartDisplay['kind']> = {
 
 /** Word's chart-area border when c:chartSpace carries no c:spPr, as rendered by Word */
 const DEFAULT_FRAME_LINE = '868686'
+const MAX_CHART_CACHE_POINTS = 100_000
 
 /**
  * Read the display model of a chart part (word/charts/chartN.xml). Only the
@@ -677,10 +678,11 @@ function cachePoints(container: XNode): (string | null)[] {
   const points: (string | null)[] = []
   for (const pt of findChildren(cache, 'c:pt')) {
     const idx = parseInt(attrsOf(pt)['idx'] ?? '', 10)
-    if (!Number.isFinite(idx) || idx < 0) continue
+    if (!Number.isFinite(idx) || idx < 0 || idx >= MAX_CHART_CACHE_POINTS) continue
     points[idx] = textOf(findChild(pt, 'c:v') ?? {})
   }
-  const length = Number.isFinite(count) ? Math.max(count, points.length) : points.length
+  const requestedLength = Number.isFinite(count) ? Math.max(count, points.length) : points.length
+  const length = Math.min(Math.max(requestedLength, 0), MAX_CHART_CACHE_POINTS)
   const out: (string | null)[] = []
   for (let i = 0; i < length; i++) out.push(points[i] ?? null)
   return out
