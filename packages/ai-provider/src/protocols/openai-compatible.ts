@@ -6,6 +6,7 @@ import { modelEchoesReasoning } from '../registry'
 import type { AiChatResponse, AiProviderConfig } from '../types'
 import { createStreamWatchdog, type StreamWatchdog } from '../watchdog'
 import {
+  endpointUrl,
   jsonBodyInsteadOfSse,
   parseToolInput,
   readCappedResponseText,
@@ -152,7 +153,7 @@ async function openAiCompatibleTurn(
     wd.touch()
     cb.onActivity?.()
   }
-  const response = await aiFetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+  const response = await aiFetch(endpointUrl(baseUrl, 'chat/completions'), {
     method: 'POST',
     signal: wd.signal,
     headers: {
@@ -326,7 +327,7 @@ export async function chatOpenAiCompatible(
   user: string,
   options: OpenAiRequestOptions = {},
 ): Promise<AiChatResponse> {
-  const response = await aiFetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+  const response = await aiFetch(endpointUrl(baseUrl, 'chat/completions'), {
     method: 'POST',
     signal: wd.signal,
     headers: {

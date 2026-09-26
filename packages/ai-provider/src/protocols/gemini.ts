@@ -6,6 +6,7 @@ import type { AiChatResponse, AiProviderConfig } from '../types'
 import { createStreamWatchdog, type StreamWatchdog } from '../watchdog'
 import { toGeminiSchema } from './gemini-schema'
 import {
+  endpointUrl,
   jsonBodyInsteadOfSse,
   readCappedResponseText,
   sseErrorText,
@@ -148,7 +149,7 @@ async function geminiTurn(
     wd.touch()
     cb.onActivity?.()
   }
-  const url = `${baseUrl.replace(/\/$/, '')}/models/${config.model}:streamGenerateContent?alt=sse`
+  const url = endpointUrl(baseUrl, `models/${config.model}:streamGenerateContent`, '?alt=sse')
   const response = await aiFetch(url, {
     method: 'POST',
     signal: wd.signal,
@@ -271,7 +272,7 @@ export async function chatGemini(
   baseUrl = GEMINI_BASE_URL,
   options: GeminiRequestOptions = {},
 ): Promise<AiChatResponse> {
-  const url = `${baseUrl.replace(/\/$/, '')}/models/${config.model}:generateContent`
+  const url = endpointUrl(baseUrl, `models/${config.model}:generateContent`)
   const response = await aiFetch(url, {
     method: 'POST',
     signal: wd.signal,

@@ -1,5 +1,26 @@
 import type { AgentToolCall } from '@genoffice/agent-core'
 
+// ---- endpoint URL composition ----
+
+/**
+ * Append a provider endpoint path to a base URL without string concatenation.
+ *
+ * A custom base URL may carry a query string (Azure-style `?api-version=…`,
+ * gateways that pin a version) and a fragment. Concatenating would push the
+ * path into the query component, so the request 404s or lands on the wrong
+ * route. Setting `pathname` keeps the query in place and the fragment is
+ * dropped — it is never sent to the server anyway.
+ */
+export function endpointUrl(baseUrl: string, path: string, search?: string): string {
+  const url = new URL(baseUrl)
+  const base = url.pathname.replace(/\/+$/, '')
+  const suffix = path.replace(/^\/+/, '')
+  url.pathname = suffix ? `${base}/${suffix}` : base
+  url.hash = ''
+  if (search !== undefined) url.search = search
+  return url.toString()
+}
+
 // ---- streaming (SSE line splitting shared by all providers) ----
 
 /** Max buffered SSE line: a gateway sending GB without newline would OOM main. */
