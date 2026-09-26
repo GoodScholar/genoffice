@@ -39,6 +39,7 @@ import { categoryOptionForPattern, numberFormatCategories } from './number-forma
 import { type SelectionFormat } from './selection-format'
 import { fontFamilyGroups, useSystemFontFamilies } from './system-fonts'
 import { isGridKeyTarget, shouldInterceptClearSelection } from './clear-selection-keyboard'
+import { isModalOpen, resolveGlobalShortcut } from './global-shortcuts'
 
 import type { ChartSeriesVisualState } from '@genoffice/xlsx-gateway/domain/chart-visual'
 import type { ChangePlan } from '@genoffice/xlsx-gateway/domain/workbook.types'
@@ -434,70 +435,21 @@ export function ExcelShell({
     // rule panels, formula bar), which are native inputs INSIDE the Univer
     // container. isGridKeyTarget tells the grid's hidden focus host apart
     // from all of those; only Univer knows whether a cell is being edited.
-    const canEditSheet = (event: KeyboardEvent): boolean =>
-      !onIsCellEditingRef.current() && isGridKeyTarget(event.target)
     const onKeyDown = (event: KeyboardEvent): void => {
       if (openingWorkbookRef.current) return
-      if ((event.metaKey || event.ctrlKey) && event.key === '1') {
-        event.preventDefault()
-        setShowFormatCells(true)
+      const action = resolveGlobalShortcut(event, {
+        modalOpen: isModalOpen(),
+        cellEditing: onIsCellEditingRef.current(),
+        gridTarget: isGridKeyTarget(event.target),
+      })
+      if (!action) return
+      event.preventDefault()
+      if (action.kind === 'dialog') {
+        if (action.dialog === 'formatCells') setShowFormatCells(true)
+        else setShowGoTo(true)
+        return
       }
-      // Excel's Go To shortcut (⌘G / Ctrl+G).
-      if ((event.metaKey || event.ctrlKey) && event.key === 'g') {
-        event.preventDefault()
-        setShowGoTo(true)
-      }
-      // Excel's Show Formulas shortcut (⌘` / Ctrl+`).
-      if ((event.metaKey || event.ctrlKey) && event.key === '`') {
-        event.preventDefault()
-        onCommand('toggle-show-formulas')
-      }
-      // Excel's strikethrough toggle (⌘5 / Ctrl+5). While a cell is being
-      // edited the range-level toggle would hit the wrong target (Excel
-      // strikes the selected text instead), so it only acts on the grid.
-      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key === '5') {
-        if (canEditSheet(event)) {
-          event.preventDefault()
-          onCommand('strike')
-        }
-      }
-      // Excel's AutoSum (Alt+= / ⌥⌘= is reserved by macOS, Excel-mac uses ⇧⌘T;
-      // plain Alt+= covers win/linux and most mac keyboards).
-      if (event.altKey && !event.metaKey && !event.ctrlKey && event.key === '=') {
-        if (canEditSheet(event)) {
-          event.preventDefault()
-          onCommand('autofn:SUM')
-        }
-      }
-      // Excel's insert current date / time (Ctrl+; / Ctrl+Shift+;).
-      if ((event.metaKey || event.ctrlKey) && event.code === 'Semicolon') {
-        if (canEditSheet(event)) {
-          event.preventDefault()
-          onCommand(event.shiftKey ? 'insert-now:time' : 'insert-now:date')
-        }
-      }
-      // Excel's manual recalculation (F9 workbook, Shift+F9 active sheet).
-      if (event.key === 'F9' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        if (!onIsCellEditingRef.current()) {
-          event.preventDefault()
-          onCommand(event.shiftKey ? 'calculate-sheet' : 'calculate-now')
-        }
-      }
-      // Excel's PageUp/PageDown; Alt+ pages horizontally. In-cell editing is
-      // checked in the command handler via the workbook's own editing state.
-      if (
-        (event.key === 'PageDown' || event.key === 'PageUp') &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !event.shiftKey &&
-        !event.defaultPrevented
-      ) {
-        if (isGridKeyTarget(event.target)) {
-          event.preventDefault()
-          const axis = event.altKey ? 'page-col' : 'page-row'
-          onCommand(`${axis}:${event.key === 'PageDown' ? 1 : -1}`)
-        }
-      }
+      onCommand(action.command)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
