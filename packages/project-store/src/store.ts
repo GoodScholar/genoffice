@@ -748,9 +748,11 @@ export class ProjectStore {
 
   /**
    * Soft-deletes a project:
-   * 1. Move the directory into projects/.trash/<id>-<ts>/
-   * 2. Reassign all of its files in fileMap back to default
-   * 3. Remove the project from index.projects
+   * 1. Move each of its files' chats into the default project, so the transcript
+   *    follows the file instead of staying behind in the trashed directory
+   * 2. Move the directory into projects/.trash/<id>-<ts>/
+   * 3. Reassign all of its files in fileMap back to default
+   * 4. Remove the project from index.projects
    * The default project cannot be deleted.
    */
   deleteProject(id: string): void {
@@ -758,7 +760,20 @@ export class ProjectStore {
     const proj = this.readProject(id)
     if (!proj) throw new Error(`Project does not exist: ${id}`)
 
-    // 1. Soft-delete the directory
+    this.ensureDefaultProject()
+    const index = this.readIndex()
+    const ownedFiles = Object.entries(index.fileMap)
+      .filter(([, pid]) => pid === id)
+      .map(([filePath]) => filePath)
+
+    // 1. Migrate the chats first: the transcript has to be readable from the
+    // default project before the directory it lives in is moved to the trash.
+    for (const filePath of ownedFiles) {
+      const chatId = this.chatIdForPath(filePath)
+      this.renameOrMergeChat(id, chatId, 'default', chatId)
+    }
+
+    // 2. Soft-delete the directory
     const src = this.projectDir(id)
     const ts = Date.now()
     const trashDir = join(this.baseDir, '.trash')
@@ -770,9 +785,7 @@ export class ProjectStore {
       console.warn('[project-store] deleteProject rename to trash failed:', err)
     }
 
-    // 2. Reassign this project's files in fileMap back to default
-    this.ensureDefaultProject()
-    const index = this.readIndex()
+    // 3. Reassign this project's files in fileMap back to default
     const movedFiles: string[] = []
     for (const [filePath, pid] of Object.entries(index.fileMap)) {
       if (pid === id) {
@@ -792,7 +805,7 @@ export class ProjectStore {
       }
     }
 
-    // 3. Remove the index.projects entry
+    // 4. Remove the index.projects entry
     index.projects = index.projects.filter((p) => p.id !== id)
     this.writeIndex(index)
   }
