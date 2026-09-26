@@ -1301,13 +1301,17 @@ function transformRangedFeatures(xml: string, shift: Shift, axis: Axis): string 
       )
     },
   )
-  // dimension / autoFilter shift in place (kept even when degenerate).
+  // dimension shifts in place (kept even when degenerate).
   result = result.replace(
-    /(<(?:dimension|autoFilter)\b[^>]*?\bref=")([^"]+)(")/g,
+    /(<dimension\b[^>]*?\bref=")([^"]+)(")/g,
     (full, prefix: string, ref: string, suffix: string) => {
       const moved = moveRefRange(ref, shift, axis)
       return moved === null ? full : `${prefix}${moved}${suffix}`
     },
+  )
+  result = result.replace(
+    /<autoFilter\b[^>]*\/>|<autoFilter\b[^>]*>[\s\S]*?<\/autoFilter>/g,
+    (element) => shiftAutoFilterCriteria(element, shift, axis),
   )
   for (const tag of ['hyperlink', 'dataValidation', 'conditionalFormatting']) {
     const attribute = tag === 'hyperlink' ? 'ref' : 'sqref'
@@ -1336,6 +1340,47 @@ function transformRangedFeatures(xml: string, shift: Shift, axis: Axis): string 
     },
   )
   return result
+}
+
+function shiftAutoFilterCriteria(element: string, shift: Shift, axis: Axis): string {
+  const ref = /\bref="([^"]+)"/.exec(element)?.[1]
+  if (ref === undefined) return element
+  const movedRef = moveRefRange(ref, shift, axis)
+  if (movedRef === null) return element
+  let result = element.replace(/\bref="[^"]+"/, () => `ref="${movedRef}"`)
+  if (result.endsWith('/>')) return result
+
+  const from = refFirstColumn(ref)
+  const to = refFirstColumn(movedRef)
+  if (from === null || to === null) return result
+  result = result.replace(
+    /<filterColumn\b[^>]*?\bcolId="([0-9]+)"[^>]*?(?:\/>|>[\s\S]*?<\/filterColumn>)/g,
+    (full, colId: string) => {
+      if (axis !== 'column') return full
+      const column = movePosition(from + Number(colId), shift)
+      if (column === null) return ''
+      return full.replace(/\bcolId="[0-9]+"/, () => `colId="${column - to}"`)
+    },
+  )
+  result = result.replace(
+    /<sortCondition\b[^>]*?\bref="([^"]+)"[^>]*?\/>/g,
+    (full, conditionRef: string) => {
+      const moved = moveRefRange(conditionRef, shift, axis)
+      return moved === null ? '' : full.replace(/\bref="[^"]+"/, () => `ref="${moved}"`)
+    },
+  )
+  result = result.replace(
+    /(<sortState\b[^>]*?\bref=")([^"]+)(")/g,
+    (full, prefix: string, stateRef: string, suffix: string) => {
+      const moved = moveRefRange(stateRef, shift, axis)
+      return moved === null ? full : `${prefix}${moved}${suffix}`
+    },
+  )
+  return result.replace(/<sortState\b[^>]*>\s*<\/sortState>/g, '')
+}
+
+function refFirstColumn(ref: string): number | null {
+  return parseA1(ref.split(':')[0] ?? '')?.column ?? null
 }
 
 function assertSwapKeepsAnchorIntact(ref: string, swap: BlockSwap['swap']): void {
