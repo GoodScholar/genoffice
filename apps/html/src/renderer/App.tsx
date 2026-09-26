@@ -115,7 +115,7 @@ async function loadImageDataUrl(src: string): Promise<string | null> {
 }
 
 export default function App() {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
   const [status, setStatus] = useState<LoadStatus>('loading')
   const [path, setPath] = useState<string | null>(null)
   const [text, setText] = useState('')
@@ -1709,6 +1709,7 @@ export default function App() {
       {pictureDialog?.kind === 'crop' && (
         <CropDialog
           labels={imageDialogLabels}
+          lang={lang}
           image={pictureDialog.image}
           onApply={(png) => void applyPictureBytes(pictureDialog.sid, pictureDialog.src, png)}
           onCancel={() => setPictureDialog(null)}
