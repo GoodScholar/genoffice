@@ -2125,7 +2125,13 @@ function patchCellKeepingStyle(
       : existing
         ? readXmlAttribute(`${existing[1] ?? ''} ${existing[2] ?? ''}`, 's')
         : undefined
-  const replacement = serializeStyledCell(address, cell, styleIndex, rich)
+  const replacement = serializeStyledCell(
+    address,
+    cell,
+    styleIndex,
+    rich,
+    existingArrayRef(existing?.[0] ?? ''),
+  )
   // Function replacements throughout: user text can contain `$1`/`$&`, which
   // string replacements would expand as backreferences and corrupt the XML.
   if (existing) return worksheetXml.replace(cellPattern, () => replacement)
@@ -2757,10 +2763,11 @@ function serializeStyledCell(
   cell: CellState,
   styleIndex: string | undefined,
   rich?: readonly WorkbookRichRun[],
+  arrayRef?: string,
 ): string {
   const style = styleIndex === undefined ? '' : ` s="${styleIndex}"`
   if (cell.formula) {
-    return `<c r="${address}"${style}>${formulaXml(address, cell.formula.replace(/^=/, ''))}</c>`
+    return `<c r="${address}"${style}>${formulaXml(address, cell.formula.replace(/^=/, ''), arrayRef)}</c>`
   }
   if (cell.value === null) {
     // A cleared cell keeps its formatting only if it keeps a style index.
@@ -2834,11 +2841,30 @@ function lettersToColumn(letters: string): number {
   return column - 1
 }
 
-function formulaXml(address: string, formula: string): string {
+/// The `ref` of an existing `<f t="array" ref="…">` master, or undefined when
+/// the cell holds no array formula. `spillsDynamicArray` only recognises modern
+/// spilling functions, so a legacy CSE master such as `=SUM(A1:C1*A2:C2)` has
+/// no marker of its own: without carrying its extent, re-serializing the master
+/// drops t="array" and turns it into an ordinary formula while its followers
+/// keep stale cached values.
+function existingArrayRef(cellXml: string): string | undefined {
+  if (cellXml === '') return undefined
+  const ref = /<f\b[^>]*\bt="array"[^>]*\bref="([^"]+)"/.exec(cellXml)?.[1]
+  if (ref === undefined) return undefined
+  // The extent must name a real range; anything else is left to the default
+  // spelling rather than written out as a broken array master.
+  const [start, end] = ref.split(':')
+  if (start === undefined || !isGridCellAddress(start)) return undefined
+  if (end !== undefined && !isGridCellAddress(end)) return undefined
+  return ref
+}
+
+function formulaXml(address: string, formula: string, arrayRef?: string): string {
   const text = escapeXmlText(withFutureFunctionMarkers(formula))
-  return spillsDynamicArray(formula)
-    ? `<f t="array" ref="${address}">${text}</f>`
-    : `<f>${text}</f>`
+  // An existing array extent wins over the spill heuristic, which can only
+  // guess the master's own address.
+  const ref = arrayRef ?? (spillsDynamicArray(formula) ? address : undefined)
+  return ref === undefined ? `<f>${text}</f>` : `<f t="array" ref="${ref}">${text}</f>`
 }
 
 function serializeCell(address: string, cell: CellState): string {
