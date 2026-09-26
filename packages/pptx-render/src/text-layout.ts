@@ -909,15 +909,23 @@ function layoutParagraph(
 
 function hardBreak(tok: Token, availWidth: number, metrics: FontMetricsProvider): Token[] {
   const out: Token[] = []
+  const clusterW = new Map<string, number>()
   let buf = ''
+  let bufW = 0
   // Hard-cut per grapheme cluster: cut points never land inside combining-mark/ZWJ sequences
   for (const ch of graphemes(tok.text)) {
-    const test = buf + ch
-    if (buf && tokenWidth({ ...tok, text: test }, metrics) > availWidth) {
+    let cw = clusterW.get(ch)
+    if (cw === undefined) {
+      cw = tokenWidth({ ...tok, text: ch }, metrics)
+      clusterW.set(ch, cw)
+    }
+    if (buf && bufW + cw > availWidth) {
       out.push({ ...tok, text: buf })
       buf = ch
+      bufW = cw
     } else {
-      buf = test
+      buf += ch
+      bufW += cw
     }
   }
   if (buf) out.push({ ...tok, text: buf })
