@@ -266,6 +266,11 @@ async function applyPivotRelayout(
   touchedEntries: Set<string>,
 ): Promise<void> {
   const relayout = update.relayout!
+  const cacheXml = await pkg.readText(update.cachePath)
+  // Both parts are rebuilt from the model, so refuse before touching either when
+  // the original carries content the builders cannot reproduce.
+  assertOnlyModelledContent(pivotTableXml, 'table')
+  assertOnlyModelledContent(cacheXml, 'cache')
   const name = unescapeAttribute(
     /<pivotTableDefinition\b[^>]*?\bname="([^"]*)"/.exec(pivotTableXml)?.[1] ?? '',
   )
@@ -282,7 +287,6 @@ async function applyPivotRelayout(
   pkg.write(pivotTablePath, buildPivotTableXml(cacheId, addition))
   touchedEntries.add(pivotTablePath)
 
-  const cacheXml = await pkg.readText(update.cachePath)
   const recordsRelId = /<pivotCacheDefinition\b[^>]*?\br:id="([^"]+)"/.exec(cacheXml)?.[1]
   if (!recordsRelId) {
     throw new PivotExpandError('The pivot cache definition is missing its records relationship.')
@@ -309,6 +313,148 @@ async function applyPivotRelayout(
           'count="0"/>',
       )
       touchedEntries.add(recordsPath)
+    }
+  }
+}
+
+// ─── Unmodelled-content guard ──────────────────────────────────────────────────
+
+/// One element start tag, as found by scanTags.
+interface ScannedTag {
+  readonly name: string
+  readonly attributes: readonly string[]
+  /// The raw attribute text, for the tags whose written value is fixed.
+  readonly raw: string
+}
+
+/// Every element `buildPivotTableXml` / `buildCacheDefinitionXml` can write, as
+/// the space-separated attribute and child-element names the builder emits for
+/// it. A layout edit regenerates both parts from the model, so any element or
+/// attribute outside this table would be silently dropped on save; the guard
+/// below fails closed rather than destroying it.
+const MODELLED_ELEMENTS: Readonly<Record<string, { attrs: string; children: string }>> = {
+  pivotTableDefinition: {
+    attrs:
+      'name cacheId applyNumberFormats applyBorderFormats applyFontFormats applyPatternFormats ' +
+      'applyAlignmentFormats applyWidthHeightFormats dataCaption updatedVersion createdVersion ' +
+      'minRefreshableVersion useAutoFormatting itemPrintTitles compact compactData outline ' +
+      'outlineData multipleFieldFilters',
+    children:
+      'location pivotFields rowFields rowItems pageFields colFields colItems dataFields ' +
+      'pivotTableStyleInfo filters extLst',
+  },
+  location: { attrs: 'ref firstHeaderRow firstDataRow firstDataCol', children: '' },
+  pivotFields: { attrs: 'count', children: 'pivotField' },
+  pivotField: { attrs: 'axis showAll compact outline dataField', children: 'items' },
+  items: { attrs: 'count', children: 'item' },
+  item: { attrs: 'x h t', children: '' },
+  rowFields: { attrs: 'count', children: 'field' },
+  colFields: { attrs: 'count', children: 'field' },
+  field: { attrs: 'x', children: '' },
+  rowItems: { attrs: 'count', children: 'i' },
+  colItems: { attrs: 'count', children: 'i' },
+  i: { attrs: 'r t', children: 'x' },
+  x: { attrs: 'v', children: '' },
+  pageFields: { attrs: 'count', children: 'pageField' },
+  pageField: { attrs: 'fld hier', children: '' },
+  dataFields: { attrs: 'count', children: 'dataField' },
+  dataField: { attrs: 'name fld subtotal showDataAs baseField baseItem numFmtId', children: '' },
+  pivotTableStyleInfo: {
+    attrs: 'name showRowHeaders showColHeaders showRowStripes showColStripes showLastColumn',
+    children: '',
+  },
+  filters: { attrs: 'count', children: 'filter' },
+  filter: { attrs: 'fld type evalOrder id stringValue1 iMeasureFld', children: 'autoFilter' },
+  autoFilter: { attrs: 'ref', children: 'filterColumn' },
+  filterColumn: { attrs: 'colId', children: 'customFilters top10' },
+  customFilters: { attrs: 'and', children: 'customFilter' },
+  customFilter: { attrs: 'operator val', children: '' },
+  top10: { attrs: 'val', children: '' },
+  extLst: { attrs: '', children: 'ext' },
+  ext: { attrs: 'uri', children: 'aio:aioPivotGroupings' },
+  'aio:aioPivotGroupings': { attrs: 'v', children: '' },
+  pivotCacheDefinition: {
+    attrs: 'r:id refreshedBy createdVersion refreshedVersion minRefreshableVersion recordCount',
+    children: 'cacheSource cacheFields',
+  },
+  cacheSource: { attrs: 'type', children: 'worksheetSource' },
+  worksheetSource: { attrs: 'ref sheet', children: '' },
+  cacheFields: { attrs: 'count', children: 'cacheField' },
+  cacheField: { attrs: 'name numFmtId formula databaseField', children: 'sharedItems' },
+  sharedItems: { attrs: 'count', children: 's' },
+  s: { attrs: 'v', children: '' },
+}
+
+/// The only pivotTableStyleInfo the builder writes; any other name is a style
+/// the model does not carry.
+const MODELLED_PIVOT_STYLE = 'PivotStyleLight16'
+
+/// Every element start tag with its attribute names, without namespace
+/// declarations (which the builder always rewrites verbatim).
+function scanTags(xml: string): ScannedTag[] {
+  const tags: ScannedTag[] = []
+  const open: string[] = []
+  // The closing slash is captured apart from the attributes so an attribute
+  // value ending in "/" (ref="A1/") is not mistaken for a self-closing tag.
+  const pattern = /<(\/?)([A-Za-z_][\w.:-]*)((?:"[^"]*"|'[^']*'|[^>"'])*?)(\/?)>/g
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(xml)) !== null) {
+    if (match[1] === '/') {
+      open.pop()
+      continue
+    }
+    const raw = match[3] ?? ''
+    const attributes: string[] = []
+    const attributePattern = /([A-Za-z_][\w.:-]*)\s*=/g
+    let attribute: RegExpExecArray | null
+    while ((attribute = attributePattern.exec(raw)) !== null) {
+      if (attribute[1] !== 'xmlns' && !attribute[1]!.startsWith('xmlns:')) {
+        attributes.push(attribute[1]!)
+      }
+    }
+    tags.push({ name: match[2]!, attributes, raw })
+    if (match[4] !== '/') open.push(match[2]!)
+  }
+  return tags
+}
+
+function attributeValue(tag: ScannedTag, name: string): string | undefined {
+  return new RegExp(`\\b${name}="([^"]*)"`).exec(tag.raw)?.[1]
+}
+
+/// Fail closed when a pivot or cache part carries content the relayout
+/// builders cannot reproduce. Without this, editing a layout silently drops
+/// styles, sort/subtotal settings, chart formats, conditional formats and
+/// extension content that the in-memory model never modelled.
+function assertOnlyModelledContent(xml: string, part: string): void {
+  const unmodelled = (detail: string): PivotExpandError =>
+    new PivotExpandError(
+      `The pivot ${part} has ${detail}, which a layout edit cannot preserve. ` +
+        'Re-create the pivot after changing its layout.',
+    )
+  for (const tag of scanTags(xml)) {
+    const spec = MODELLED_ELEMENTS[tag.name]
+    if (spec === undefined) throw unmodelled(`an unmodelled <${tag.name}> section`)
+    for (const attribute of tag.attributes) {
+      if (!spec.attrs.split(' ').includes(attribute)) {
+        throw unmodelled(`an unmodelled <${tag.name} ${attribute}="…"> attribute`)
+      }
+    }
+    // Attributes the builders write with a fixed value: a different original
+    // value is user content the model does not carry.
+    if (tag.name === 'pivotTableStyleInfo') {
+      const style = attributeValue(tag, 'name')
+      if (style !== undefined && style !== MODELLED_PIVOT_STYLE) {
+        throw unmodelled(`the pivot table style "${style}"`)
+      }
+    }
+    if (tag.name === 'dataField') {
+      for (const base of ['baseField', 'baseItem']) {
+        const value = attributeValue(tag, base)
+        if (value !== undefined && value !== '0') {
+          throw unmodelled(`a dataField ${base}`)
+        }
+      }
     }
   }
 }
