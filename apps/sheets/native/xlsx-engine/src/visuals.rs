@@ -22,6 +22,8 @@ pub(crate) use charts::*;
 pub(crate) use colors::*;
 pub(crate) use drawing::*;
 pub use source_formats::SourceFormats;
+#[cfg(test)]
+pub(crate) use source_formats::{reset_sheet_passes, sheet_passes};
 pub(crate) use styles::*;
 
 const MAX_MEDIA_BYTES: u64 = 20 * 1024 * 1024;
@@ -776,12 +778,44 @@ fn collect_mc_children<'a, 'input>(
     }
 }
 
+/// `xl/charts/chartN.xml` and its case/separator variants, without matching
+/// `xl/chartsheets/…` or the `xl/charts/styleN.xml` chart-format parts.
+fn is_chart_part(name: &str) -> bool {
+    let lowered = name.to_ascii_lowercase().replace('\\', "/");
+    let Some(rest) = lowered.strip_prefix("xl/") else {
+        return false;
+    };
+    let Some(file) = rest.strip_prefix("charts/chart") else {
+        return false;
+    };
+    let Some(stem) = file.strip_suffix(".xml") else {
+        return false;
+    };
+    !stem.is_empty() && !stem.contains('/')
+}
+
 pub fn read_visual_objects(
     archive: &mut ZipArchive<File>,
     sheets: &[SheetVisualSource],
     colors: &ColorContext,
     formats: &mut SourceFormats,
 ) -> Result<Vec<VisualObject>, SidecarError> {
+    // Warm the source-format cache for every chart reference first: the
+    // per-lookup fallback reopens a sheet part and streams it from byte zero,
+    // so a workbook with many source-linked series would rescan the same large
+    // worksheet dozens of times during the walk below.
+    let chart_paths: Vec<String> = archive
+        .file_names()
+        .filter(|name| is_chart_part(name))
+        .map(ToOwned::to_owned)
+        .collect();
+    if !chart_paths.is_empty() {
+        let references: Vec<String> = chart_paths
+            .iter()
+            .flat_map(|path| charts::chart_formula_references(archive, path))
+            .collect();
+        formats.prefetch(archive, &references);
+    }
     let mut visuals = Vec::new();
     // Workbook-wide serial for `ole-N` ids: the list position is not usable
     // because an OLE visual may take a fallback shape's slot mid-list.
