@@ -184,16 +184,19 @@ test('sheets: typing works when a spare view opens the next workbook', async () 
           return {
             visible: view?.getVisible(),
             focused: view?.webContents.isFocused(),
+            windowFocused: win.isFocused(),
           }
         }, spareId),
       )
-      .toEqual({ visible: true, focused: true })
+      .toEqual({ visible: true, focused: true, windowFocused: true })
     // The debug API is published before the file's first range streams in.
     // Wait for the fixture data and the opening guard before sending keys.
     await expect.poll(() => cellA1Value(sheets)).toBe('Old')
     await expect(sheets.locator('main.app-shell')).toHaveAttribute('aria-busy', 'false')
     await waitForEditableFocus(sheets)
-    await sheets.keyboard.type('4242')
+    // Character key simulation can omit input events in an adopted Electron
+    // view. Use the text-input channel after asserting native/editor focus.
+    await sheets.keyboard.insertText('4242')
     await sheets.keyboard.press('Enter')
     await expect.poll(() => cellA1Value(sheets)).toBe(4242)
   } finally {
