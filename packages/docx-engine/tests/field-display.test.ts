@@ -524,6 +524,26 @@ describe('generateTocFieldXml', () => {
       expect(block.fieldDisplay?.level).toBe(entries[i].level)
     }
   })
+
+  it('handles more entries than the argument limit and clamps the level range', () => {
+    const many = Array.from({ length: 200_000 }, (_, i) => ({
+      level: (i % 9) + 1,
+      text: `H${i}`,
+    }))
+    const frags = generateTocFieldXml(many)
+    expect(frags).toHaveLength(many.length)
+    expect(frags[0]).toContain(' TOC \\o "1-9" \\h \\z \\u ')
+    // a level above 9 still clamps the instruction range
+    expect(generateTocFieldXml([{ level: 42, text: 'deep' }])[0]).toContain(
+      ' TOC \\o "1-9" \\h \\z \\u ',
+    )
+    expect(
+      generateTocFieldXml([
+        { level: 1, text: 'a' },
+        { level: 4, text: 'b' },
+      ])[0],
+    ).toContain(' TOC \\o "1-4" \\h \\z \\u ')
+  })
 })
 
 describe('HYPERLINK field folding', () => {

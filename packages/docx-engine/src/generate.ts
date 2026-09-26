@@ -2236,7 +2236,11 @@ export interface TocEntry {
  */
 export function generateTocFieldXml(entries: TocEntry[]): string[] {
   if (entries.length === 0) return []
-  const maxLevel = Math.min(Math.max(...entries.map((e) => e.level), 1), 9)
+  let deepest = 1
+  for (const entry of entries) {
+    if (entry.level > deepest) deepest = entry.level
+  }
+  const maxLevel = Math.min(deepest, 9)
   const pPr = (level: number) =>
     `<w:pPr><w:pStyle w:val="TOC${Math.min(Math.max(level, 1), 9)}"/>` +
     '<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9350"/></w:tabs>' +
