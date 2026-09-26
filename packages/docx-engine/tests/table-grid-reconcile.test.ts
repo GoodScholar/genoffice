@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { generateTableModelXml, parseDocx } from '../src/index'
+import { generateTableModelXml, parseDocx, reconcileGridColumns } from '../src/index'
 import { buildDocx } from './helpers/build-docx'
 
 function tc(text: string, tcPr = ''): string {
@@ -407,5 +407,19 @@ describe('hostile colSpan values', () => {
     // the clamped model round-trips through the parser with a finite grid
     const doc = await parseDocx(await buildDocx({ bodyXml: xml }))
     expect(doc.blocks[0].table).toBeDefined()
+  })
+
+  it('reconciles a table with more rows than the argument limit', () => {
+    const rows = Array.from({ length: 150_000 }, () => [{ paras: ['a'] }])
+    const rowTcws = rows.map(() => [1000])
+    expect(reconcileGridColumns(rows, rowTcws, undefined)).toBeUndefined()
+    // a ragged row still rebuilds the grid from the tcW boundaries
+    const ragged = [...rows.slice(0, 149_999), [{ paras: ['a'] }, { paras: ['b'] }]]
+    const widths = reconcileGridColumns(
+      ragged,
+      [...rowTcws.slice(0, 149_999), [1000, 1000]],
+      undefined,
+    )
+    expect(widths).toEqual([1000, 1000])
   })
 })

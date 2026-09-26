@@ -4496,13 +4496,17 @@ const GRID_SNAP_TOL = 20
  * Mutates the cells' colSpan and returns the rebuilt column widths, or
  * undefined when the grid is already consistent or a width is unresolvable.
  */
-function reconcileGridColumns(
+export function reconcileGridColumns(
   rows: TableCell[][],
   rowTcws: Array<Array<number | undefined>>,
   gridCols: number[] | undefined,
 ): number[] | undefined {
   const spanSums = rows.map((row) => row.reduce((sum, c) => sum + (c.colSpan ?? 1), 0))
-  const colCount = gridCols?.length ?? Math.max(...spanSums)
+  let widestSpan = 0
+  for (const sum of spanSums) {
+    if (sum > widestSpan) widestSpan = sum
+  }
+  const colCount = gridCols?.length ?? widestSpan
   if (spanSums.every((sum) => sum === colCount)) return undefined
   const rowBounds: number[][] = []
   for (let r = 0; r < rows.length; r++) {
