@@ -683,7 +683,12 @@ export class AgentLoop<TSnapshot = unknown> {
     this.history.push({
       role: 'assistant',
       text: this.turnText,
-      toolCalls: toolCalls.map(({ id, name, input }) => ({ id, name, input })),
+      toolCalls: toolCalls.map(({ id, name, input, thoughtSignature }) => ({
+        id,
+        name,
+        input,
+        ...(thoughtSignature ? { thoughtSignature } : {}),
+      })),
       // interleaved-thinking models degrade in tool loops unless their reasoning is echoed back
       ...(this.turnReasoning ? { reasoning: this.turnReasoning } : {}),
     })

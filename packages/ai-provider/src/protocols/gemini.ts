@@ -34,7 +34,10 @@ function geminiContents(messages: AgentMessage[]): unknown[] {
       const parts: unknown[] = []
       if (m.text) parts.push({ text: m.text })
       for (const call of m.toolCalls ?? []) {
-        parts.push({ functionCall: { name: call.name, args: call.input } })
+        parts.push({
+          functionCall: { name: call.name, args: call.input },
+          ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {}),
+        })
       }
       // Gemini rejects model turns with empty parts lists.
       if (parts.length === 0) parts.push({ text: '(no content)' })
@@ -70,6 +73,8 @@ function emitGeminiJsonMessage(bodyText: string, cb: StreamCallbacks): void {
         parts?: Array<{
           text?: string
           functionCall?: { name?: string; args?: Record<string, unknown> }
+          thoughtSignature?: string
+          thought_signature?: string
         }>
       }
       finishReason?: string
@@ -95,10 +100,12 @@ function emitGeminiJsonMessage(bodyText: string, cb: StreamCallbacks): void {
       }
       if (part.functionCall?.name) {
         emitted = true
+        const thoughtSignature = part.thoughtSignature ?? part.thought_signature
         cb.onToolCall({
           id: crypto.randomUUID(),
           name: part.functionCall.name,
           input: part.functionCall.args ?? {},
+          ...(typeof thoughtSignature === 'string' && thoughtSignature ? { thoughtSignature } : {}),
         })
       }
     }
@@ -217,6 +224,8 @@ async function geminiTurn(
             parts?: Array<{
               text?: string
               functionCall?: { name?: string; args?: Record<string, unknown> }
+              thoughtSignature?: string
+              thought_signature?: string
             }>
           }
           finishReason?: string
@@ -244,10 +253,12 @@ async function geminiTurn(
       if (part.functionCall?.name) {
         throwIfToolCountOverBudget(++toolCallCount, 'gemini')
         emitted = true
+        const thoughtSignature = part.thoughtSignature ?? part.thought_signature
         cb.onToolCall({
           id: crypto.randomUUID(),
           name: part.functionCall.name,
           input: part.functionCall.args ?? {},
+          ...(typeof thoughtSignature === 'string' && thoughtSignature ? { thoughtSignature } : {}),
         })
       }
     }

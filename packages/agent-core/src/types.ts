@@ -10,6 +10,8 @@ export interface AgentToolCall {
   id: string
   name: string
   input: Record<string, unknown>
+  /** Opaque Gemini signature attached to this functionCall part; echoed in tool-loop history. */
+  thoughtSignature?: string | undefined
   /** Parse error when the model emitted invalid input JSON; the loop feeds back an is_error result for retry instead of aborting the run */
   inputError?: string | undefined
   /** The argument stream was cut off by the token limit (stop_reason max_tokens); the loop asks the model to split the call instead of "fixing JSON" */
