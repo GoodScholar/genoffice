@@ -111,6 +111,10 @@ describe('parsePageSpec near-duplicate text', () => {
     paragraphs: [{ runs: [{ text, sizePt: 14 }] }],
   })
 
+  /** Both phrasings the advice uses: "near-duplicate text" and "identical text". */
+  const dupWarnings = (warnings: string[]): string[] =>
+    warnings.filter((w) => w.includes('duplicate') || w.includes('identical text'))
+
   it('warns when two boxes restate each other (a subtitle repeating the chart caption)', () => {
     const r = parsePageSpec(
       JSON.stringify({
@@ -164,6 +168,61 @@ describe('parsePageSpec near-duplicate text', () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.warnings).toEqual([])
+  })
+
+  it('ignores duplicate text among elements the parse discarded', () => {
+    const r = parsePageSpec(
+      JSON.stringify({
+        elements: [
+          box('Quarterly revenue by region and channel', 60),
+          // same text, but pushed off-canvas and dropped before any advice runs
+          { ...box('Quarterly revenue by region and channel', 60), x: 99999 },
+        ],
+      }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.spec.elements).toHaveLength(1)
+    expect(dupWarnings(r.warnings)).toEqual([])
+  })
+
+  it('names the model element numbers, not positions in the retained set', () => {
+    const r = parsePageSpec(
+      JSON.stringify({
+        elements: [
+          { ...box('Quarterly revenue by region and channel', 60), x: 99999 },
+          box('Quarterly revenue by region and channel', 60),
+          box('QUARTERLY REVENUE, BY REGION AND CHANNEL.', 100),
+        ],
+      }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    // Raw indices 1 and 2 are retained and duplicate; the dropped index 0 is not
+    // position 0 in the kept set, so the advice must still say 1 and 2.
+    const dupes = r.warnings.filter((w) => w.includes('identical text'))
+    expect(dupes).toHaveLength(1)
+    expect(dupes[0]).toContain('elements 1 and 2: identical text')
+  })
+
+  it('keeps duplicate analysis bounded when a spec is mostly discarded', () => {
+    const dup = 'Quarterly revenue by region and channel'
+    // Thousands of elements past the canvas are discarded, and they all duplicate
+    // one another: only the first survives, so the pairwise pass must not scale
+    // with the raw input. Quadratic over the raw array also emits ~millions of
+    // warnings, so the count below is the real regression signal.
+    const elements = [
+      box(dup, 60),
+      ...Array.from({ length: 4000 }, (_x, i) => ({ ...box(dup, 60), x: 99999 + i })),
+    ]
+    const started = performance.now()
+    const r = parsePageSpec(JSON.stringify({ elements }))
+    const elapsed = performance.now() - started
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.spec.elements).toHaveLength(1)
+    expect(dupWarnings(r.warnings)).toEqual([])
+    expect(elapsed).toBeLessThan(2000)
   })
 })
 
