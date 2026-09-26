@@ -154,6 +154,19 @@ describe('parseCellValue', () => {
     expect(parseCellValue('1e5')).toEqual(num(100000))
     expect(parseCellValue('1.5E-3')).toEqual(num(0.0015))
   })
+
+  it('keeps huge comma-grouped integers as text', () => {
+    expect(parseCellValue('123,456,789,012,345,678').kind).toBe('text')
+    expect(parseCellValue('-123,456,789,012,345,678').kind).toBe('text')
+    expect(parseCellValue('$1,234,567,890,123,456').kind).toBe('text')
+    expect(parseCellValue('1,234,567,890,123,456元').kind).toBe('text')
+    expect(parseCellValue('1,234,567,890,123,456%').kind).toBe('text')
+  })
+
+  it('parses comma-grouped integers within Excel precision as numbers', () => {
+    expect(parseCellValue('123,456,789,012,345')).toEqual(num(123456789012345, '#,##0'))
+    expect(parseCellValue('1,234,567,890,123.45')).toEqual(num(1234567890123.45, '#,##0.00'))
+  })
 })
 
 // ── column width conversion ──
