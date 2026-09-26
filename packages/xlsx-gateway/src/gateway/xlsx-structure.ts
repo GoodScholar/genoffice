@@ -1316,7 +1316,7 @@ function transformRangedFeatures(xml: string, shift: Shift, axis: Axis): string 
   for (const tag of ['hyperlink', 'dataValidation', 'conditionalFormatting']) {
     const attribute = tag === 'hyperlink' ? 'ref' : 'sqref'
     result = result.replace(
-      new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?</${tag}>|<${tag}\\b[^>]*/>`, 'g'),
+      new RegExp(`<${tag}\\b[^>]*/>|<${tag}\\b[^>]*>[\\s\\S]*?</${tag}>`, 'g'),
       (element) => {
         const refMatch = new RegExp(`\\b${attribute}="([^"]+)"`).exec(element)
         if (!refMatch?.[1]) return element
