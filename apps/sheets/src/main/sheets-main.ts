@@ -53,6 +53,7 @@ import {
   installRendererProtocol,
   registerRendererScheme,
   rendererUrl,
+  writeJsonAtomic,
 } from '@genoffice/electron-utils'
 import { createI18n, getUiLang, type Lang, normalizeLang, setUiLang } from '@genoffice/i18n'
 import { ProjectStore } from '@genoffice/project-store'
@@ -1840,11 +1841,6 @@ function readJson<T>(path: string, fallback: T): T {
   return fallback
 }
 
-function writeJson(path: string, value: unknown): void {
-  mkdirSync(join(path, '..'), { recursive: true })
-  writeFileSync(path, JSON.stringify(value, null, 2))
-}
-
 const SETTINGS_PATH = () => userDataPath('ai-settings.json')
 
 // Dev-only automation hooks: a fixed CDP port for driving the app from test
@@ -3293,10 +3289,10 @@ export function registerSheetsAiIpc(): void {
     ensureGenofficeLogin((url) => void shell.openExternal(url))
   })
 
-  ipcMain.handle(IPC_CHANNELS.aiSetSettings, (event, input: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.aiSetSettings, async (event, input: unknown) => {
     sessionFor(event)
     const settings = aiSettingsInputSchema.parse(input)
-    writeJson(SETTINGS_PATH(), settings)
+    await writeJsonAtomic(SETTINGS_PATH(), settings)
   })
 
   ipcMain.handle(IPC_CHANNELS.aiChat, async (event, input: unknown) => {

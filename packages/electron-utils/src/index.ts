@@ -63,6 +63,7 @@ export {
   remoteImageHeaders,
 } from './remote-image'
 export { GENERATED_IMAGE_DIR, readGeneratedImage, storeGeneratedImage } from './generated-images'
+export { writeJsonAtomic } from './atomic-json'
 export {
   buildPrintableHtml,
   printHtmlToPdf,

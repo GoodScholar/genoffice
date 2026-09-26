@@ -63,6 +63,7 @@ import {
   rendererUrl,
   MAX_REMOTE_IMAGE_BYTES,
   readBodyCapped,
+  writeJsonAtomic,
 } from '@genoffice/electron-utils'
 import { configureMetricsCache, familyVerticalMetrics } from '@genoffice/font-metrics'
 import { createI18n, getUiLang, normalizeLang, setUiLang } from '@genoffice/i18n'
@@ -2906,7 +2907,7 @@ const activeAiStreams = new Map<string, AbortController>()
  */
 export function registerAiIpc(): void {
   app.once('before-quit', shutdownCodexAppServers)
-  ipcMain.handle('ai:get-settings', (): AiSettings => {
+  ipcMain.handle('ai:get-settings', async (): Promise<AiSettings> => {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(SETTINGS_PATH(), {})
     // pre-lock legacy file: genspark selected with cloud tools opted out. The
     // settings UI locks the tools switch on with genspark and apps read this
@@ -2915,7 +2916,7 @@ export function registerAiIpc(): void {
     // file and clobber a saved (half-configured) BYOK selection.
     if ((stored.provider ?? 'genspark') === 'genspark' && stored.gskToolsEnabled === false) {
       stored.gskToolsEnabled = true
-      writeJson(SETTINGS_PATH(), stored)
+      await writeJsonAtomic(SETTINGS_PATH(), stored)
     }
     const settings = resolveAiSettings(stored, defaultAiSettings())
     // a stored BYOK provider is honored when usable; half-filled configs fall back to genspark
@@ -2938,8 +2939,8 @@ export function registerAiIpc(): void {
     ensureGenofficeLogin((url) => void shell.openExternal(url))
   })
 
-  ipcMain.handle('ai:set-settings', (_event, settings: AiSettings) => {
-    writeJson(SETTINGS_PATH(), settings)
+  ipcMain.handle('ai:set-settings', async (_event, settings: AiSettings) => {
+    await writeJsonAtomic(SETTINGS_PATH(), settings)
   })
 
   ipcMain.handle('ai:codex-models', async (_event, cliPath: unknown) => {
