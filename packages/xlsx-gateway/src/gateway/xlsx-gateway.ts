@@ -886,8 +886,21 @@ export async function planCellEditsToXlsx(
     partPath: string
     insertions: TableColumnInsertion[]
   }> = []
+  const pivotCacheDefinitionPaths = structuralOps.some(({ ops }) => ops.length > 0)
+    ? (await pkg.paths()).filter((path) =>
+        /^xl\/pivotCache\/pivotCacheDefinition[^/]*\.xml$/.test(path),
+      )
+    : []
   for (const { sheetName, ops } of structuralOps) {
     if (ops.length === 0) continue
+    for (const cachePath of pivotCacheDefinitionPaths) {
+      if (pivotCacheReadsFromSheet(await pkg.readText(cachePath), sheetName)) {
+        throw new StructuralShiftError(
+          `A pivot table reads its source data from "${sheetName}" — ` +
+            'row/column changes there cannot be saved.',
+        )
+      }
+    }
     worksheetXmls.set(
       sheetName,
       applyStructuralOps(worksheetXmls.get(sheetName) ?? '', ops, sheetName, resolveColStyle),
