@@ -16,6 +16,7 @@ import {
   buildTwoColumnPdf,
   cjkFontBytes,
   buildCheckboxFormPdf,
+  buildTextFormPdf,
   buildWideScannedPdf,
 } from './helpers/fixtures'
 import { loadPdfium } from './helpers/wasm'
@@ -116,6 +117,23 @@ describe('integration: AcroForm checkbox widgets (P29)', () => {
     // glyphs interleave in reading order: box before its own label
     expect(line!.indexOf('\u2612')).toBeLessThan(line!.indexOf('Individual'))
     expect(line!.indexOf('\u2610')).toBeLessThan(line!.indexOf('Corporation'))
+  })
+})
+
+describe('integration: AcroForm text widgets', () => {
+  it('includes server-filled text field values and skips empty ones', async () => {
+    const pdfium = await loadPdfium()
+    const result = await convertPdfToDocx(await buildTextFormPdf(), { pdfium })
+    const texts = await paraTexts(result.docx)
+    const filled = texts.find((t) => t.includes('Ada Lovelace'))
+    expect(filled).toBeDefined()
+    // the /V text lands exactly once — no duplicate from a second pass
+    expect(filled!.match(/Ada Lovelace/g)).toHaveLength(1)
+    expect(filled!).toContain('Full name')
+    // an empty text field contributes no glyphs of its own
+    const refLine = texts.find((t) => t.includes('Reference'))
+    expect(refLine).toBeDefined()
+    expect(refLine!.trim()).toBe('Reference')
   })
 })
 

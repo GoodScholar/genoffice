@@ -7,7 +7,7 @@ import { detectVectorRegions } from '../analyze/vector'
 import type { Rect } from '../geometry'
 import { coversBox, intersectArea, overlapRatio, printContentBox, rectArea } from '../geometry'
 import type { PdfChar, PageRender, RawPath, RawSubpath } from '../ir'
-import { scriptOf } from '../script'
+import { isEastAsianScript, scriptOf } from '../script'
 import type { PdfiumModule } from './pdfium'
 import {
   BITMAP_FORMAT_BGR,
@@ -17,6 +17,7 @@ import {
   FPDF_ANNOT_WIDGET,
   FPDF_FORMFIELD_CHECKBOX,
   FPDF_FORMFIELD_RADIOBUTTON,
+  FPDF_FORMFIELD_TEXT,
   FPDF_PAGEOBJ_FORM,
   FPDF_PAGEOBJ_IMAGE,
   FPDF_PAGEOBJ_PATH,
@@ -2255,6 +2256,11 @@ const WIDGET_BOX_MAX_PT = 24
 /** snap a glyph beside its label when the gap is under this (pt) */
 const WIDGET_SNAP_MAX_GAP_PT = 24
 
+const WIDGET_TEXT_PAD_PT = 2
+const WIDGET_TEXT_MIN_PT = 5
+const WIDGET_TEXT_MAX_PT = 14
+const WIDGET_TEXT_LEADING = 1.15
+
 /** UTF-16LE annotation string/name value ('' when absent or API missing) */
 function annotStringValue(m: PdfiumModule, annot: number, key: string): string {
   if (typeof m._FPDFAnnot_GetStringValue !== 'function') return ''
@@ -2270,7 +2276,70 @@ function annotStringValue(m: PdfiumModule, annot: number, key: string): string {
   })
 }
 
-function readWidgetCheckboxChars(m: PdfiumModule, doc: number, page: number): PdfChar[] {
+function widgetTextWeight(code: number): number {
+  if (isEastAsianScript(scriptOf(code))) return 1
+  const ch = String.fromCodePoint(code)
+  if (ch === ' ') return 0.4
+  if (/[0-9A-Z]/.test(ch)) return 0.6
+  if (/[.,:;!'"|()[\]{}]/.test(ch)) return 0.3
+  return 0.5
+}
+
+function textFieldChars(box: Rect, value: string): PdfChar[] {
+  const out: PdfChar[] = []
+  const innerH = box.y1 - box.y0 - 2 * WIDGET_TEXT_PAD_PT
+  const innerW = box.x1 - box.x0 - 2 * WIDGET_TEXT_PAD_PT
+  if (innerH <= 0 || innerW <= 0) return out
+  const fontSize = Math.min(Math.max(innerH, WIDGET_TEXT_MIN_PT), WIDGET_TEXT_MAX_PT)
+  const rows = value.split(/\r\n|[\r\n]/)
+  for (let r = 0; r < rows.length; r++) {
+    const glyphs = [...rows[r]!]
+    if (glyphs.length === 0) continue
+    const baseline =
+      box.y0 + WIDGET_TEXT_PAD_PT + fontSize * 0.21 + r * fontSize * WIDGET_TEXT_LEADING
+    if (baseline > box.y1 - fontSize * 0.21) break
+    const weights = glyphs.map((g) => widgetTextWeight(g.codePointAt(0) ?? 0))
+    const total = weights.reduce((a, b) => a + b, 0)
+    if (total <= 0) continue
+    let x = box.x0 + WIDGET_TEXT_PAD_PT
+    for (let i = 0; i < glyphs.length; i++) {
+      const w = (weights[i]! / total) * innerW
+      const g = glyphs[i]!
+      const code = g.codePointAt(0) ?? 0
+      out.push({
+        code,
+        text: g.trim() === '' ? ' ' : g,
+        box: { x0: x, x1: x + w, y0: baseline - fontSize * 0.21, y1: baseline + fontSize * 0.72 },
+        looseBox: {
+          x0: x,
+          x1: x + w,
+          y0: baseline - fontSize * 0.25,
+          y1: baseline + fontSize * 0.95,
+        },
+        originX: x,
+        originY: baseline,
+        angle: 0,
+        fontSize,
+        fontWeight: 400,
+        fontFamily: 'Helvetica',
+        italic: false,
+        color: '000000',
+        isGenerated: true,
+        isHyphen: false,
+        script: scriptOf(code),
+      })
+      x += w
+    }
+  }
+  return out
+}
+
+interface WidgetChars {
+  glyphs: PdfChar[]
+  text: PdfChar[]
+}
+
+function readWidgetChars(m: PdfiumModule, doc: number, page: number): WidgetChars {
   if (
     typeof m._FPDFPage_GetAnnotCount !== 'function' ||
     typeof m._FPDFPage_GetAnnot !== 'function' ||
@@ -2284,17 +2353,18 @@ function readWidgetCheckboxChars(m: PdfiumModule, doc: number, page: number): Pd
     typeof m._PDFiumExt_ExitFormFillEnvironment !== 'function' ||
     typeof m._PDFiumExt_CloseFormFillInfo !== 'function'
   ) {
-    return []
+    return { glyphs: [], text: [] }
   }
   const total = m._FPDFPage_GetAnnotCount(page)
-  if (total <= 0) return []
-  const out: PdfChar[] = []
+  if (total <= 0) return { glyphs: [], text: [] }
+  const glyphs: PdfChar[] = []
+  const text: PdfChar[] = []
   const formInfo = m._PDFiumExt_OpenFormFillInfo()
-  if (!formInfo) return []
+  if (!formInfo) return { glyphs: [], text: [] }
   let form = 0
   try {
     form = m._PDFiumExt_InitFormFillEnvironment(doc, formInfo)
-    if (!form) return []
+    if (!form) return { glyphs: [], text: [] }
     withAlloc(m, 4 * 4, (f4) => {
       for (let i = 0; i < total; i++) {
         const annot = m._FPDFPage_GetAnnot!(page, i)
@@ -2303,7 +2373,8 @@ function readWidgetCheckboxChars(m: PdfiumModule, doc: number, page: number): Pd
           if (m._FPDFAnnot_GetSubtype!(annot) !== FPDF_ANNOT_WIDGET) continue
           const fieldType = m._FPDFAnnot_GetFormFieldType!(form, annot)
           const radio = fieldType === FPDF_FORMFIELD_RADIOBUTTON
-          if (fieldType !== FPDF_FORMFIELD_CHECKBOX && !radio) continue
+          const isText = fieldType === FPDF_FORMFIELD_TEXT
+          if (fieldType !== FPDF_FORMFIELD_CHECKBOX && !radio && !isText) continue
           if (!m._FPDFAnnot_GetRect!(annot, f4)) continue
           const v = m.HEAPF32.subarray(f4 >> 2, (f4 >> 2) + 4) // left top right bottom
           const box: Rect = {
@@ -2311,6 +2382,10 @@ function readWidgetCheckboxChars(m: PdfiumModule, doc: number, page: number): Pd
             x1: Math.max(v[0]!, v[2]!),
             y0: Math.min(v[1]!, v[3]!),
             y1: Math.max(v[1]!, v[3]!),
+          }
+          if (isText) {
+            text.push(...textFieldChars(box, annotStringValue(m, annot, 'V')))
+            continue
           }
           const side = Math.max(box.x1 - box.x0, box.y1 - box.y0)
           if (side < WIDGET_BOX_MIN_PT || side > WIDGET_BOX_MAX_PT) continue
@@ -2322,7 +2397,7 @@ function readWidgetCheckboxChars(m: PdfiumModule, doc: number, page: number): Pd
             m._FPDFAnnot_IsChecked!(form, annot) === 1 ||
             (appearanceState !== '' && appearanceState !== 'Off')
           const code = radio ? (checked ? 0x25c9 : 0x25cb) : checked ? 0x2612 : 0x2610
-          out.push({
+          glyphs.push({
             code,
             text: String.fromCodePoint(code),
             box,
@@ -2348,7 +2423,7 @@ function readWidgetCheckboxChars(m: PdfiumModule, doc: number, page: number): Pd
     if (form) m._PDFiumExt_ExitFormFillEnvironment(form)
     m._PDFiumExt_CloseFormFillInfo(formInfo)
   }
-  return out
+  return { glyphs, text }
 }
 
 function rotateToDisplay(
@@ -2441,10 +2516,12 @@ export function extractPage(
     }
 
     // interactive checkbox/radio widgets → synthesized glyph chars (P29),
-    // through the same crop-shift / rotation normalization as real chars
-    const widgetChars = readWidgetCheckboxChars(m, doc, page)
-    if (widgetChars.length > 0) {
-      for (const c of widgetChars) {
+    // text field values → laid-out runs, through the same crop-shift /
+    // rotation normalization as real chars
+    const widgetChars = readWidgetChars(m, doc, page)
+    const allWidgetChars = [...widgetChars.text, ...widgetChars.glyphs]
+    if (allWidgetChars.length > 0) {
+      for (const c of allWidgetChars) {
         if (shifted) {
           shiftRect(c.box, dx, dy)
           shiftRect(c.looseBox, dx, dy)
@@ -2459,6 +2536,9 @@ export function extractPage(
           c.originX = ox
           c.originY = oy
         }
+      }
+      chars.push(...widgetChars.text)
+      for (const c of widgetChars.glyphs) {
         // ride the neighboring label's line: a widget box is taller than the
         // text beside it, and an unaligned baseline mints a lone line that
         // adds flow height per field (a 261-field form grew 24 → 36 pages).

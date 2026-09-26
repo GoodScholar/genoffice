@@ -228,6 +228,7 @@ export const FPDF_PAGEOBJ_FORM = 5
 export const FPDF_ANNOT_WIDGET = 20
 export const FPDF_FORMFIELD_CHECKBOX = 2
 export const FPDF_FORMFIELD_RADIOBUTTON = 3
+export const FPDF_FORMFIELD_TEXT = 6
 
 // path segment types (fpdf_edit.h FPDF_SEGMENT_*)
 export const FPDF_SEGMENT_LINETO = 0
