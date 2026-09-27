@@ -110,7 +110,12 @@ export function groupValue(
   if (!Number.isFinite(numeric)) return { label: String(value), sort: null }
   const start = grouping.rangeStart ?? 0
   const step = grouping.rangeStep
-  const bucketStart = start + Math.floor((numeric - start) / step) * step
+  const quotient = (numeric - start) / step
+  const nearest = Math.round(quotient)
+  // Account for subtraction/division rounding, including nonzero range starts.
+  const tolerance = (2 * Number.EPSILON * Math.max(Math.abs(numeric), Math.abs(start), step)) / step
+  const bucket = Math.abs(quotient - nearest) <= tolerance ? nearest : Math.floor(quotient)
+  const bucketStart = start + bucket * step
   // Labels are half-open intervals [bucketStart, bucketStart+step).
   return {
     label: `${formatBoundary(bucketStart)}-${formatBoundary(bucketStart + step)}`,

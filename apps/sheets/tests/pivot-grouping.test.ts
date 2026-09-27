@@ -42,6 +42,46 @@ describe('groupValue', () => {
     expect(groupValue(rule, '150').label).toBe('100-200')
   })
 
+  it.each([
+    [0.1, 0, 0.3, '0.3-0.4', 0.3],
+    [0.1, 0, 0.7, '0.7-0.8', 0.7],
+    [0.1, 0, 1.1, '1.1-1.2', 1.1],
+    [0.1, 0, 2.7, '2.7-2.8', 2.7],
+    [0.05, 0, 0.3, '0.3-0.35', 0.3],
+    [0.01, 0, 0.29, '0.29-0.3', 0.29],
+    [0.1, 0.1, 0.3, '0.3-0.4', 0.3],
+    [0.1, 100.1, 100.3, '100.3-100.4', 100.3],
+    [0.1, 0, -2.1, '-2.1--2', -2.1],
+    [0.1, -0.3, -0.1, '-0.1-0', -0.1],
+    [0.1, 0, '0.3', '0.3-0.4', 0.3],
+  ] as const)(
+    'puts boundary %s/%s/%s in its own range',
+    (rangeStep, rangeStart, value, label, sort) => {
+      const result = groupValue({ kind: 'range', rangeStep, rangeStart }, value)
+      expect(result.label).toBe(label)
+      expect(result.sort).toBeCloseTo(sort, 10)
+    },
+  )
+
+  it.each([
+    [0.1, 0, 0.2999999999, '0.2-0.3'],
+    [0.1, 0, 0.3000000001, '0.3-0.4'],
+    [0.1, 0, -2.1000000001, '-2.2--2.1'],
+    [0.1, 0, -2.0999999999, '-2.1--2'],
+    [0.1, 100.1, 100.2999999999, '100.2-100.3'],
+    [0.1, 100.1, 100.3000000001, '100.3-100.4'],
+  ] as const)(
+    'keeps non-boundary %s/%s/%s in its half-open range',
+    (rangeStep, rangeStart, value, label) => {
+      expect(groupValue({ kind: 'range', rangeStep, rangeStart }, value).label).toBe(label)
+    },
+  )
+
+  it('scales the tolerance for tiny steps without advancing large integer buckets', () => {
+    expect(groupValue({ kind: 'range', rangeStep: 1e-12 }, 2.999999999e-12).sort).toBe(2e-12)
+    expect(groupValue({ kind: 'range', rangeStep: 1 }, 1e16).sort).toBe(1e16)
+  })
+
   it('passes blanks and unparseable values through', () => {
     expect(groupValue({ kind: 'date', dateUnit: 'month' }, null)).toEqual({ label: '', sort: null })
     expect(groupValue({ kind: 'date', dateUnit: 'month' }, 'not a date')).toEqual({
@@ -84,6 +124,30 @@ const GROUPED_CACHE_XML =
   '</pivotCacheDefinition>'
 
 describe('grouped-field recompute', () => {
+  it('aggregates decimal boundaries separately from values below the boundary', () => {
+    const parsed = parsePivotDefinition(GROUPED_PIVOT_XML, GROUPED_CACHE_XML)
+    const definition = {
+      ...parsed,
+      fields: parsed.fields.map((field, index) =>
+        index === 0
+          ? {
+              ...field,
+              name: 'Value',
+              grouping: { kind: 'range', rangeStep: 0.1 } as const,
+              sharedItems: ['0.2-0.3', '0.3-0.4'],
+            }
+          : field,
+      ),
+    }
+    const result = recomputePivotData(definition, [
+      ['Value', 'Amount'],
+      [0.2999999999, 5],
+      [0.3, 10],
+      [0.3000000001, 7],
+    ])
+    expect(result.data).toEqual([[5], [17], [22]])
+  })
+
   it('parses the grouping extension and recomputes by group label', () => {
     const definition = parsePivotDefinition(GROUPED_PIVOT_XML, GROUPED_CACHE_XML)
     expect(definition.unsupported).toEqual([])
