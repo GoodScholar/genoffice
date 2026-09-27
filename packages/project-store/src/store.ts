@@ -254,9 +254,74 @@ function readJson<T>(filePath: string): T | null {
 /** Atomic write: write to .tmp then rename, so a process interruption can't leave half-written JSON */
 function writeJson(filePath: string, data: unknown): void {
   ensureDir(dirname(filePath))
-  const tmpPath = `${filePath}.tmp`
-  writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8')
-  renameSync(tmpPath, filePath)
+  const tmpPath = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
+  try {
+    writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8')
+    renameSync(tmpPath, filePath)
+  } catch (error) {
+    try {
+      unlinkSync(tmpPath)
+    } catch {}
+    throw error
+  }
+}
+
+const LOCK_RETRY_MS = 10
+const LOCK_TIMEOUT_MS = 10_000
+
+function lockOwnerIsGone(lockPath: string): boolean {
+  try {
+    const pid = Number(readFileSync(lockPath, 'utf8').split(':', 1)[0])
+    if (!Number.isSafeInteger(pid) || pid <= 0) return false
+    try {
+      process.kill(pid, 0)
+      return false
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ESRCH'
+    }
+  } catch {
+    return false
+  }
+}
+
+function withFileLock<T>(targetPath: string, operation: () => T): T {
+  ensureDir(dirname(targetPath))
+  const lockPath = `${targetPath}.lock`
+  const owner = `${process.pid}:${randomBytes(8).toString('hex')}`
+  const deadline = Date.now() + LOCK_TIMEOUT_MS
+  const sleeper = new Int32Array(new SharedArrayBuffer(4))
+
+  while (true) {
+    try {
+      const fd = openSync(lockPath, 'wx')
+      try {
+        writeFileSync(fd, owner, 'utf8')
+      } finally {
+        closeSync(fd)
+      }
+      break
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      if (lockOwnerIsGone(lockPath)) {
+        try {
+          unlinkSync(lockPath)
+          continue
+        } catch {}
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for lock: ${targetPath}`, { cause: error })
+      }
+      Atomics.wait(sleeper, 0, 0, LOCK_RETRY_MS)
+    }
+  }
+
+  try {
+    return operation()
+  } finally {
+    try {
+      if (readFileSync(lockPath, 'utf8') === owner) unlinkSync(lockPath)
+    } catch {}
+  }
 }
 
 // ────────────────────────────────────────────────────────────
@@ -335,6 +400,8 @@ export class ProjectStore {
 
   /** projectId:chatId → current max seq */
   private readonly seqCounters = new Map<string, number>()
+  /** File size observed after the cached seq was written; a mismatch means another process wrote. */
+  private readonly seqFileSizes = new Map<string, number>()
 
   private seqKey(projectId: string, chatId: string): string {
     return `${projectId}:${chatId}`
@@ -342,18 +409,28 @@ export class ProjectStore {
 
   private nextSeq(projectId: string, chatId: string): number {
     const key = this.seqKey(projectId, chatId)
+    const filePath = this.chatPath(projectId, chatId)
+    const fileSize = existsSync(filePath) ? statSync(filePath).size : 0
     const cur = this.seqCounters.get(key)
-    if (cur !== undefined) {
+    if (cur !== undefined && this.seqFileSizes.get(key) === fileSize) {
       const next = cur + 1
       this.seqCounters.set(key, next)
       return next
     }
-    // Initialization: scan the existing file for the max seq
+    // Initialize or refresh after another process appended to the chat.
     const existing = this.loadChat(projectId, chatId, 10_000)
     const maxSeq = existing.reduce((m, msg) => Math.max(m, msg.seq), -1)
-    const next = maxSeq + 1
+    const next = Math.max(cur ?? -1, maxSeq) + 1
     this.seqCounters.set(key, next)
     return next
+  }
+
+  private rememberChatFileSize(projectId: string, chatId: string): void {
+    const filePath = this.chatPath(projectId, chatId)
+    this.seqFileSizes.set(
+      this.seqKey(projectId, chatId),
+      existsSync(filePath) ? statSync(filePath).size : 0,
+    )
   }
 
   // ── Index read/write ──────────────────────────────────────
@@ -365,6 +442,10 @@ export class ProjectStore {
   private writeIndex(index: ProjectIndex): void {
     ensureDir(this.baseDir)
     writeJson(this.indexPath(), index)
+  }
+
+  private withIndexLock<T>(operation: () => T): T {
+    return withFileLock(this.indexPath(), operation)
   }
 
   // ── Project read/write ────────────────────────────────────
@@ -389,23 +470,28 @@ export class ProjectStore {
     const existing = this.readProject('default')
     if (existing) return existing
 
-    const now = nowIso()
-    const data: ProjectData = {
-      id: 'default',
-      name: 'Default Project',
-      createdAt: now,
-      updatedAt: now,
-      files: [],
-    }
-    ensureDir(this.projectDir('default'))
-    this.writeProject(data)
+    return this.withIndexLock(() => {
+      const lockedExisting = this.readProject('default')
+      if (lockedExisting) return lockedExisting
 
-    const index = this.readIndex()
-    if (!index.projects.find((p) => p.id === 'default')) {
-      index.projects.unshift({ id: data.id, name: data.name, createdAt: now, updatedAt: now })
-      this.writeIndex(index)
-    }
-    return data
+      const now = nowIso()
+      const data: ProjectData = {
+        id: 'default',
+        name: 'Default Project',
+        createdAt: now,
+        updatedAt: now,
+        files: [],
+      }
+      ensureDir(this.projectDir('default'))
+      this.writeProject(data)
+
+      const index = this.readIndex()
+      if (!index.projects.find((p) => p.id === 'default')) {
+        index.projects.unshift({ id: data.id, name: data.name, createdAt: now, updatedAt: now })
+        this.writeIndex(index)
+      }
+      return data
+    })
   }
 
   /**
@@ -414,30 +500,33 @@ export class ProjectStore {
    */
   resolveProjectForFile(filePath: string): string {
     this.ensureDefaultProject()
-    const index = this.readIndex()
-    const key = canonicalPathKey(filePath)
-    const existingKey = this.findMapKey(index.fileMap, filePath)
-    if (existingKey !== undefined) {
-      const projectId = index.fileMap[existingKey]!
-      if (existingKey !== key) {
-        ProjectStore.rekeyEntry(index.fileMap, existingKey, key)
-        this.writeIndex(index)
+    return this.withIndexLock(() => {
+      const index = this.readIndex()
+      const key = canonicalPathKey(filePath)
+      const existingKey = this.findMapKey(index.fileMap, filePath)
+      if (existingKey !== undefined) {
+        const projectId = index.fileMap[existingKey]!
+        if (existingKey !== key) {
+          ProjectStore.rekeyEntry(index.fileMap, existingKey, key)
+          this.writeIndex(index)
+        }
+        return projectId
       }
-      return projectId
-    }
 
-    // Assign to default
-    index.fileMap[key] = 'default'
-    this.writeIndex(index)
+      // Assign to default
+      index.fileMap[key] = 'default'
+      this.writeIndex(index)
 
-    // Update the files list in project.json
-    const proj = this.readProject('default')
-    if (proj && !ProjectStore.ownsFile(proj.files, filePath)) {
-      proj.files.push(filePath)
-      proj.updatedAt = nowIso()
-      this.writeProject(proj)
-    }
-    return 'default'
+      // Update the files list in project.json under the same lock so concurrent
+      // registrations cannot overwrite each other's project membership.
+      const proj = this.readProject('default')
+      if (proj && !ProjectStore.ownsFile(proj.files, filePath)) {
+        proj.files.push(filePath)
+        proj.updatedAt = nowIso()
+        this.writeProject(proj)
+      }
+      return 'default'
+    })
   }
 
   /**
@@ -490,21 +579,23 @@ export class ProjectStore {
    */
   resolveChatForFile(filePath: string): { projectId: string; chatId: string } {
     const projectId = this.resolveProjectForFile(filePath)
-    const index = this.readIndex()
-    const key = canonicalPathKey(filePath)
-    const mappedKey = this.findMapKey(index.chatIdByPath, filePath)
-    if (mappedKey !== undefined) {
-      const chatId = index.chatIdByPath![mappedKey]!
-      if (mappedKey !== key) {
-        ProjectStore.rekeyEntry(index.chatIdByPath!, mappedKey, key)
-        this.writeIndex(index)
+    return this.withIndexLock(() => {
+      const index = this.readIndex()
+      const key = canonicalPathKey(filePath)
+      const mappedKey = this.findMapKey(index.chatIdByPath, filePath)
+      if (mappedKey !== undefined) {
+        const chatId = index.chatIdByPath![mappedKey]!
+        if (mappedKey !== key) {
+          ProjectStore.rekeyEntry(index.chatIdByPath!, mappedKey, key)
+          this.writeIndex(index)
+        }
+        return { projectId, chatId }
       }
+      const chatId = this.fallbackChatId(projectId, filePath)
+      index.chatIdByPath = { ...(index.chatIdByPath ?? {}), [key]: chatId }
+      this.writeIndex(index)
       return { projectId, chatId }
-    }
-    const chatId = this.fallbackChatId(projectId, filePath)
-    index.chatIdByPath = { ...(index.chatIdByPath ?? {}), [key]: chatId }
-    this.writeIndex(index)
-    return { projectId, chatId }
+    })
   }
 
   /**
@@ -520,30 +611,32 @@ export class ProjectStore {
 
   fileRenamed(oldPath: string, newPath: string): void {
     if (oldPath === newPath) return
-    const index = this.readIndex()
-    const oldKey = canonicalPathKey(oldPath)
-    const newKey = canonicalPathKey(newPath)
-    const pidKey = this.findMapKey(index.fileMap, oldPath)
-    if (pidKey !== undefined) {
-      const pid = index.fileMap[pidKey]!
-      delete index.fileMap[pidKey]
-      index.fileMap[newKey] = pid
-      const proj = this.readProject(pid)
-      if (proj) {
-        proj.files = proj.files.map((f) => (canonicalPathKey(f) === oldKey ? newPath : f))
-        proj.updatedAt = nowIso()
-        this.writeProject(proj)
+    this.withIndexLock(() => {
+      const index = this.readIndex()
+      const oldKey = canonicalPathKey(oldPath)
+      const newKey = canonicalPathKey(newPath)
+      const pidKey = this.findMapKey(index.fileMap, oldPath)
+      if (pidKey !== undefined) {
+        const pid = index.fileMap[pidKey]!
+        delete index.fileMap[pidKey]
+        index.fileMap[newKey] = pid
+        const proj = this.readProject(pid)
+        if (proj) {
+          proj.files = proj.files.map((f) => (canonicalPathKey(f) === oldKey ? newPath : f))
+          proj.updatedAt = nowIso()
+          this.writeProject(proj)
+        }
       }
-    }
-    // Old data without a mapping: the chatId was derived from the old path hash; register the mapping under that hash on rename so history keeps up
-    const chatKey = this.findMapKey(index.chatIdByPath, oldPath)
-    const chatId =
-      chatKey !== undefined
-        ? index.chatIdByPath![chatKey]!
-        : this.fallbackChatId(pidKey !== undefined ? index.fileMap[pidKey] : undefined, oldPath)
-    if (chatKey !== undefined) delete index.chatIdByPath![chatKey]
-    index.chatIdByPath = { ...(index.chatIdByPath ?? {}), [newKey]: chatId }
-    this.writeIndex(index)
+      // Old data without a mapping: the chatId was derived from the old path hash; register the mapping under that hash on rename so history keeps up
+      const chatKey = this.findMapKey(index.chatIdByPath, oldPath)
+      const chatId =
+        chatKey !== undefined
+          ? index.chatIdByPath![chatKey]!
+          : this.fallbackChatId(pidKey !== undefined ? index.fileMap[pidKey] : undefined, oldPath)
+      if (chatKey !== undefined) delete index.chatIdByPath![chatKey]
+      index.chatIdByPath = { ...(index.chatIdByPath ?? {}), [newKey]: chatId }
+      this.writeIndex(index)
+    })
   }
 
   /**
@@ -587,53 +680,61 @@ export class ProjectStore {
     assertSafeId(projectId, 'projectId')
     assertSafeId(chatId, 'chatId')
     try {
-      const seq = this.nextSeq(projectId, chatId)
-      const ts = msg.ts ?? nowIso()
-      const text =
-        msg.text.length > TEXT_MAX_CHARS
-          ? msg.text.slice(0, TEXT_MAX_CHARS) + TEXT_TRUNCATED_MARK
-          : msg.text
-      const record: ChatMessage = { seq, ts, role: msg.role, text }
-      if (msg.fileRef !== undefined) record.fileRef = msg.fileRef
-      if (msg.tools && msg.tools.length > 0) {
-        // Truncate tool inputs/outputs so one JSONL line can't blow up on a huge payload
-        record.tools = msg.tools.map((t) => ({
-          ...t,
-          ...(t.input !== undefined ? { input: t.input.slice(0, TOOL_FIELD_MAX_CHARS) } : {}),
-          ...(t.output !== undefined ? { output: t.output.slice(0, TOOL_FIELD_MAX_CHARS) } : {}),
-        }))
-      }
-      if (msg.attachments !== undefined) record.attachments = msg.attachments
-      if (msg.scope !== undefined) {
-        record.scope = {
-          label: msg.scope.label,
-          ...(msg.scope.text !== undefined
-            ? { text: msg.scope.text.slice(0, SCOPE_TEXT_MAX_CHARS) }
-            : {}),
-        }
-      }
+      withFileLock(this.chatPath(projectId, chatId), () => {
+        try {
+          const seq = this.nextSeq(projectId, chatId)
+          const ts = msg.ts ?? nowIso()
+          const text =
+            msg.text.length > TEXT_MAX_CHARS
+              ? msg.text.slice(0, TEXT_MAX_CHARS) + TEXT_TRUNCATED_MARK
+              : msg.text
+          const record: ChatMessage = { seq, ts, role: msg.role, text }
+          if (msg.fileRef !== undefined) record.fileRef = msg.fileRef
+          if (msg.tools && msg.tools.length > 0) {
+            // Truncate tool inputs/outputs so one JSONL line can't blow up on a huge payload
+            record.tools = msg.tools.map((t) => ({
+              ...t,
+              ...(t.input !== undefined ? { input: t.input.slice(0, TOOL_FIELD_MAX_CHARS) } : {}),
+              ...(t.output !== undefined
+                ? { output: t.output.slice(0, TOOL_FIELD_MAX_CHARS) }
+                : {}),
+            }))
+          }
+          if (msg.attachments !== undefined) record.attachments = msg.attachments
+          if (msg.scope !== undefined) {
+            record.scope = {
+              label: msg.scope.label,
+              ...(msg.scope.text !== undefined
+                ? { text: msg.scope.text.slice(0, SCOPE_TEXT_MAX_CHARS) }
+                : {}),
+            }
+          }
 
-      const key = this.seqKey(projectId, chatId)
-      if (msg.role !== 'assistant' && !existsSync(this.chatPath(projectId, chatId))) {
-        const buf = this.pendingFirstWrite.get(key) ?? []
-        buf.push(record)
-        // Bound the in-memory buffer: overflow materializes the file early
-        // instead of dropping user messages.
-        if (buf.length >= MAX_PENDING_OPENING_MESSAGES) {
+          const key = this.seqKey(projectId, chatId)
+          if (msg.role !== 'assistant' && !existsSync(this.chatPath(projectId, chatId))) {
+            const buf = this.pendingFirstWrite.get(key) ?? []
+            buf.push(record)
+            // Bound the in-memory buffer: overflow materializes the file early
+            // instead of dropping user messages.
+            if (buf.length >= MAX_PENDING_OPENING_MESSAGES) {
+              ensureDir(this.chatsDir(projectId))
+              this.pendingFirstWrite.delete(key)
+              const lines = buf.map((r) => JSON.stringify(r) + '\n').join('')
+              appendJsonLines(this.chatPath(projectId, chatId), lines)
+              return
+            }
+            this.pendingFirstWrite.set(key, buf)
+            return
+          }
           ensureDir(this.chatsDir(projectId))
+          const buf = this.pendingFirstWrite.get(key) ?? []
           this.pendingFirstWrite.delete(key)
-          const lines = buf.map((r) => JSON.stringify(r) + '\n').join('')
+          const lines = [...buf, record].map((r) => JSON.stringify(r) + '\n').join('')
           appendJsonLines(this.chatPath(projectId, chatId), lines)
-          return
+        } finally {
+          this.rememberChatFileSize(projectId, chatId)
         }
-        this.pendingFirstWrite.set(key, buf)
-        return
-      }
-      ensureDir(this.chatsDir(projectId))
-      const buf = this.pendingFirstWrite.get(key) ?? []
-      this.pendingFirstWrite.delete(key)
-      const lines = [...buf, record].map((r) => JSON.stringify(r) + '\n').join('')
-      appendJsonLines(this.chatPath(projectId, chatId), lines)
+      })
     } catch (err) {
       console.warn('[project-store] appendChatMessage failed:', err)
     }
@@ -722,12 +823,15 @@ export class ProjectStore {
 
     // Migrate the seq counter (when merged, the renumbered max seq wins)
     const oldKey = this.seqKey(fromProjectId, fromId)
+    const newKey = this.seqKey(toProjectId, toId)
     const curSeq = this.seqCounters.get(oldKey)
     this.seqCounters.delete(oldKey)
-    this.seqCounters.delete(this.seqKey(toProjectId, toId))
+    this.seqCounters.delete(newKey)
+    this.seqFileSizes.delete(oldKey)
+    this.seqFileSizes.delete(newKey)
     const next = mergedMaxSeq ?? curSeq
     if (next !== undefined) {
-      this.seqCounters.set(this.seqKey(toProjectId, toId), next)
+      this.seqCounters.set(newKey, next)
     }
   }
 
@@ -830,13 +934,15 @@ export class ProjectStore {
       updatedAt: now,
       files: [],
     }
-    ensureDir(this.projectDir(id))
-    this.writeProject(data)
-    const index = this.readIndex()
-    // Append at the end (default always stays first)
-    index.projects.push({ id, name: trimmed, createdAt: now, updatedAt: now })
-    this.writeIndex(index)
-    return data
+    return this.withIndexLock(() => {
+      ensureDir(this.projectDir(id))
+      this.writeProject(data)
+      const index = this.readIndex()
+      // Append at the end (default always stays first)
+      index.projects.push({ id, name: trimmed, createdAt: now, updatedAt: now })
+      this.writeIndex(index)
+      return data
+    })
   }
 
   /**
@@ -851,19 +957,21 @@ export class ProjectStore {
         `Project name too long: ${trimmed.length} chars (max ${MAX_PROJECT_NAME_CHARS})`,
       )
     }
-    const now = nowIso()
-    const proj = this.readProject(id)
-    if (!proj) throw new Error(`Project does not exist: ${id}`)
-    proj.name = trimmed
-    proj.updatedAt = now
-    this.writeProject(proj)
-    const index = this.readIndex()
-    const entry = index.projects.find((p) => p.id === id)
-    if (entry) {
-      entry.name = trimmed
-      entry.updatedAt = now
-    }
-    this.writeIndex(index)
+    this.withIndexLock(() => {
+      const now = nowIso()
+      const proj = this.readProject(id)
+      if (!proj) throw new Error(`Project does not exist: ${id}`)
+      proj.name = trimmed
+      proj.updatedAt = now
+      this.writeProject(proj)
+      const index = this.readIndex()
+      const entry = index.projects.find((p) => p.id === id)
+      if (entry) {
+        entry.name = trimmed
+        entry.updatedAt = now
+      }
+      this.writeIndex(index)
+    })
   }
 
   /**
@@ -877,59 +985,61 @@ export class ProjectStore {
    */
   deleteProject(id: string): void {
     if (id === 'default') throw new Error('The default project cannot be deleted')
-    const proj = this.readProject(id)
-    if (!proj) throw new Error(`Project does not exist: ${id}`)
-
     this.ensureDefaultProject()
-    const index = this.readIndex()
-    const ownedFiles = Object.entries(index.fileMap)
-      .filter(([, pid]) => pid === id)
-      .map(([filePath]) => filePath)
+    this.withIndexLock(() => {
+      const proj = this.readProject(id)
+      if (!proj) throw new Error(`Project does not exist: ${id}`)
 
-    // 1. Migrate the chats first: the transcript has to be readable from the
-    // default project before the directory it lives in is moved to the trash.
-    for (const filePath of ownedFiles) {
-      const chatId = this.chatIdForPath(filePath, id)
-      this.renameOrMergeChat(id, chatId, 'default', chatId)
-    }
+      const index = this.readIndex()
+      const ownedFiles = Object.entries(index.fileMap)
+        .filter(([, pid]) => pid === id)
+        .map(([filePath]) => filePath)
 
-    // 2. Soft-delete the directory
-    const src = this.projectDir(id)
-    const ts = Date.now()
-    const trashDir = join(this.baseDir, '.trash')
-    ensureDir(trashDir)
-    const dst = join(trashDir, `${id}-${ts}`)
-    try {
-      if (existsSync(src)) renameSync(src, dst)
-    } catch (err) {
-      console.warn('[project-store] deleteProject rename to trash failed:', err)
-    }
-
-    // 3. Reassign this project's files in fileMap back to default
-    const movedFiles: string[] = []
-    for (const [filePath, pid] of Object.entries(index.fileMap)) {
-      if (pid === id) {
-        index.fileMap[filePath] = 'default'
-        movedFiles.push(filePath)
+      // 1. Migrate the chats first: the transcript has to be readable from the
+      // default project before the directory it lives in is moved to the trash.
+      for (const filePath of ownedFiles) {
+        const chatId = this.chatIdForPath(filePath, id)
+        this.renameOrMergeChat(id, chatId, 'default', chatId)
       }
-    }
-    // Update the default project.json, listing each file under the spelling the
-    // deleted project showed it as rather than under its canonical map key
-    if (movedFiles.length > 0) {
-      const defaultProj = this.readProject('default')
-      if (defaultProj) {
-        for (const key of movedFiles) {
-          const f = proj.files.find((listed) => canonicalPathKey(listed) === key) ?? key
-          if (!ProjectStore.ownsFile(defaultProj.files, f)) defaultProj.files.push(f)
+
+      // 2. Soft-delete the directory
+      const src = this.projectDir(id)
+      const ts = Date.now()
+      const trashDir = join(this.baseDir, '.trash')
+      ensureDir(trashDir)
+      const dst = join(trashDir, `${id}-${ts}`)
+      try {
+        if (existsSync(src)) renameSync(src, dst)
+      } catch (err) {
+        console.warn('[project-store] deleteProject rename to trash failed:', err)
+      }
+
+      // 3. Reassign this project's files in fileMap back to default
+      const movedFiles: string[] = []
+      for (const [filePath, pid] of Object.entries(index.fileMap)) {
+        if (pid === id) {
+          index.fileMap[filePath] = 'default'
+          movedFiles.push(filePath)
         }
-        defaultProj.updatedAt = nowIso()
-        this.writeProject(defaultProj)
       }
-    }
+      // Update the default project.json, listing each file under the spelling the
+      // deleted project showed it as rather than under its canonical map key
+      if (movedFiles.length > 0) {
+        const defaultProj = this.readProject('default')
+        if (defaultProj) {
+          for (const key of movedFiles) {
+            const f = proj.files.find((listed) => canonicalPathKey(listed) === key) ?? key
+            if (!ProjectStore.ownsFile(defaultProj.files, f)) defaultProj.files.push(f)
+          }
+          defaultProj.updatedAt = nowIso()
+          this.writeProject(defaultProj)
+        }
+      }
 
-    // 4. Remove the index.projects entry
-    index.projects = index.projects.filter((p) => p.id !== id)
-    this.writeIndex(index)
+      // 4. Remove the index.projects entry
+      index.projects = index.projects.filter((p) => p.id !== id)
+      this.writeIndex(index)
+    })
   }
 
   /**
@@ -940,57 +1050,61 @@ export class ProjectStore {
    */
   moveFileToProject(filePath: string, targetProjectId: string): void {
     this.ensureDefaultProject()
-    const index = this.readIndex()
-    const existingKey = this.findMapKey(index.fileMap, filePath)
-    const fromProjectId = existingKey !== undefined ? index.fileMap[existingKey]! : 'default'
-    const newKey = canonicalPathKey(filePath)
+    this.withIndexLock(() => {
+      const index = this.readIndex()
+      const existingKey = this.findMapKey(index.fileMap, filePath)
+      const fromProjectId = existingKey !== undefined ? index.fileMap[existingKey]! : 'default'
+      const newKey = canonicalPathKey(filePath)
 
-    if (fromProjectId === targetProjectId) return // nothing to move
+      if (fromProjectId === targetProjectId) return // nothing to move
 
-    // The target project must exist
-    const targetProj = this.readProject(targetProjectId)
-    if (!targetProj) throw new Error(`Target project does not exist: ${targetProjectId}`)
+      // The target project must exist
+      const targetProj = this.readProject(targetProjectId)
+      if (!targetProj) throw new Error(`Target project does not exist: ${targetProjectId}`)
 
-    // 1. Update fileMap
-    if (existingKey !== undefined && existingKey !== newKey) delete index.fileMap[existingKey]
-    index.fileMap[newKey] = targetProjectId
-    this.writeIndex(index)
+      // 1. Update fileMap
+      if (existingKey !== undefined && existingKey !== newKey) delete index.fileMap[existingKey]
+      index.fileMap[newKey] = targetProjectId
+      this.writeIndex(index)
 
-    // 2. Update fromProject.files
-    const fromProj = this.readProject(fromProjectId)
-    if (fromProj) {
-      fromProj.files = fromProj.files.filter(
-        (f) => canonicalPathKey(f) !== canonicalPathKey(filePath),
-      )
-      fromProj.updatedAt = nowIso()
-      this.writeProject(fromProj)
-    }
-
-    // 3. Update targetProject.files
-    if (!ProjectStore.ownsFile(targetProj.files, filePath)) targetProj.files.push(filePath)
-    targetProj.updatedAt = nowIso()
-    this.writeProject(targetProj)
-
-    // 4. Move the corresponding chat's JSONL (materialize buffered opening messages first)
-    const chatId = this.chatIdForPath(filePath, fromProjectId)
-    this.flushPending(fromProjectId, chatId)
-    const srcChatPath = this.chatPath(fromProjectId, chatId)
-    const dstChatPath = this.chatPath(targetProjectId, chatId)
-    try {
-      if (existsSync(srcChatPath)) {
-        ensureDir(this.chatsDir(targetProjectId))
-        renameSync(srcChatPath, dstChatPath)
+      // 2. Update fromProject.files
+      const fromProj = this.readProject(fromProjectId)
+      if (fromProj) {
+        fromProj.files = fromProj.files.filter(
+          (f) => canonicalPathKey(f) !== canonicalPathKey(filePath),
+        )
+        fromProj.updatedAt = nowIso()
+        this.writeProject(fromProj)
       }
-    } catch (err) {
-      console.warn('[project-store] moveFileToProject chat rename failed:', err)
-    }
 
-    // 5. Migrate the seq counter cache
-    const oldKey = this.seqKey(fromProjectId, chatId)
-    const movedSeqKey = this.seqKey(targetProjectId, chatId)
-    const cur = this.seqCounters.get(oldKey)
-    this.seqCounters.delete(oldKey)
-    if (cur !== undefined) this.seqCounters.set(movedSeqKey, cur)
+      // 3. Update targetProject.files
+      if (!ProjectStore.ownsFile(targetProj.files, filePath)) targetProj.files.push(filePath)
+      targetProj.updatedAt = nowIso()
+      this.writeProject(targetProj)
+
+      // 4. Move the corresponding chat's JSONL (materialize buffered opening messages first)
+      const chatId = this.chatIdForPath(filePath, fromProjectId)
+      this.flushPending(fromProjectId, chatId)
+      const srcChatPath = this.chatPath(fromProjectId, chatId)
+      const dstChatPath = this.chatPath(targetProjectId, chatId)
+      try {
+        if (existsSync(srcChatPath)) {
+          ensureDir(this.chatsDir(targetProjectId))
+          renameSync(srcChatPath, dstChatPath)
+        }
+      } catch (err) {
+        console.warn('[project-store] moveFileToProject chat rename failed:', err)
+      }
+
+      // 5. Migrate the seq counter cache
+      const oldKey = this.seqKey(fromProjectId, chatId)
+      const movedSeqKey = this.seqKey(targetProjectId, chatId)
+      const cur = this.seqCounters.get(oldKey)
+      this.seqCounters.delete(oldKey)
+      if (cur !== undefined) this.seqCounters.set(movedSeqKey, cur)
+      this.seqFileSizes.delete(oldKey)
+      this.seqFileSizes.delete(movedSeqKey)
+    })
   }
 
   /**
