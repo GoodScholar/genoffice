@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, expect } from '@playwright/test'
+import type { Editor } from '@tiptap/core'
 import { launchShell, closeAndSaveVideo, waitForPageWithUrl, screenshotPath } from './helpers'
 
 test.describe('markdown editor', () => {
@@ -125,14 +126,10 @@ test.describe('markdown editor', () => {
       // type at the end of the document, save with ⌘/Ctrl+S
       await editor.focus()
       await editor.evaluate((element) => {
-        const last = element.lastElementChild
-        const selection = window.getSelection()
-        if (!last || !selection) throw new Error('Markdown editor has no final block')
-        const range = document.createRange()
-        range.selectNodeContents(last)
-        range.collapse(false)
-        selection.removeAllRanges()
-        selection.addRange(range)
+        // A DOM range reaches ProseMirror asynchronously through selectionchange.
+        // Set the model selection before sending the first editing key.
+        const tiptap = (element as HTMLElement & { editor: Editor }).editor
+        tiptap.commands.focus('end')
       })
       await editorPage.keyboard.press('Enter')
       await editorPage.keyboard.type('Appended line.')
