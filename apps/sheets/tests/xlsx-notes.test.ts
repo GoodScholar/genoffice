@@ -90,6 +90,54 @@ describe('note snapshots', () => {
     expect(worksheet).toContain('<legacyDrawing r:id="')
   })
 
+  it('keeps control shapes unchanged and note ids unique across saves', async () => {
+    const zip = await JSZip.loadAsync(await buildEditFixture())
+    const vmlPath = 'xl/drawings/vmlDrawing1.vml'
+    const controls =
+      '<v:shape id=\'_x0000_s4096\' type="#_x0000_t201"><x:ClientData ObjectType="Checkbox"/></v:shape>' +
+      '<v:shape id="_x0000_s1025" type="#_x0000_t201"><x:ClientData ObjectType="Button"/></v:shape>'
+    zip.file(
+      vmlPath,
+      '<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:x="urn:schemas-microsoft-com:office:excel">' +
+        controls +
+        '</xml>',
+    )
+    zip.file(
+      'xl/worksheets/_rels/sheet1.xml.rels',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing1.vml"/>' +
+        '</Relationships>',
+    )
+    const worksheetPath = 'xl/worksheets/sheet1.xml'
+    const worksheet = await zip.file(worksheetPath)!.async('string')
+    zip.file(
+      worksheetPath,
+      worksheet.replace('</worksheet>', '<legacyDrawing r:id="rId1"/></worksheet>'),
+    )
+
+    for (let save = 0; save < 2; save += 1) {
+      const fixture = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+      const plan = await planNotes(NOTES, fixture)
+      for (const [path, xml] of plan.replaced) zip.file(path, xml)
+      for (const [path, xml] of plan.added) zip.file(path, xml)
+      const vml = await zip.file(vmlPath)!.async('string')
+      expect(vml).toContain(controls)
+      const ids = [...vml.matchAll(/\bid=["'](_x0000_s\d+)["']/g)].map((match) => match[1])
+      expect(new Set(ids).size).toBe(4)
+      expect(ids).toHaveLength(4)
+      expect(ids.slice(2)).toEqual(['_x0000_s4097', '_x0000_s4098'])
+      expect(vml.match(/ObjectType="Note"/g)).toHaveLength(2)
+      expect(vml).toContain('<x:Row>0</x:Row><x:Column>1</x:Column>')
+      expect(vml).toContain('<x:Row>4</x:Row><x:Column>0</x:Column>')
+    }
+
+    const fixture = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+    const cleared = await planNotes([{ sheetName: 'Data', notes: [] }], fixture)
+    expect(cleared.replaced.get(vmlPath)).toContain(controls)
+    expect(cleared.replaced.get(vmlPath)).not.toContain('ObjectType="Note"')
+    expect(cleared.removedEntries).not.toContain(vmlPath)
+  })
+
   it('allocates a relationship id without spreading a large id set', async () => {
     const zip = await JSZip.loadAsync(await buildEditFixture())
     const relationships = Array.from(
