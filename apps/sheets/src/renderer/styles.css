@@ -5536,6 +5536,13 @@ textarea:focus {
   display: none;
 }
 
+/* Chromium rejects text input into an empty zero-size editor even while it
+   owns DOM focus. Keep Univer's hidden input target editable after prewarming. */
+#univer-container [data-u-comp='editor'][contenteditable='true'] {
+  min-width: 1px;
+  min-height: 1px;
+}
+
 /* ── Shared dropdown (@genoffice/ui gs-dd) app sizing ──────────────────────
    Ports the old native-select metrics per container so replacing <select>
    with the themed Dropdown doesn't shift layout (reference: the matching
